@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-REPO="https://github.com/adsbfi/adsb-fi-scripts.git"
-BRANCH="master"
-IPATH=/usr/local/share/adsbfi
+REPO="https://github.com/airplanes-live/feed.git"
+BRANCH="main"
+IPATH=/usr/local/share/airplanes
 mkdir -p $IPATH
 
 if [ "$(id -u)" != "0" ]; then

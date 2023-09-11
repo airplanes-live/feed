@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #####################################################################################
-#                        adsb.fi SETUP SCRIPT                                       #
+#                        airplanes.live SETUP SCRIPT                                       #
 #####################################################################################
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                                                   #
@@ -42,9 +42,9 @@ if [ "$(id -u)" != "0" ]; then
     exit 1
 fi
 
-if [ -f /boot/adsbfi-config.txt ]; then
+if [ -f /boot/airplanes-config.txt ]; then
     echo --------
-    echo "You are using the adsb.fi image, the feed setup script does not need to be installed."
+    echo "You are using the airplanes.live image, the feed setup script does not need to be installed."
     echo --------
     exit 1
 fi
@@ -101,10 +101,10 @@ function getGIT() {
     echo "--- end getGIT() ---"
 }
 
-REPO="https://github.com/adsbfi/adsb-fi-scripts.git"
-BRANCH="master"
+REPO="https://github.com/airplanes-live/feed.git"
+BRANCH="main"
 
-IPATH=/usr/local/share/adsbfi
+IPATH=/usr/local/share/airplanes
 GIT="$IPATH/git"
 mkdir -p $IPATH
 
@@ -127,12 +127,12 @@ if diff "$GIT/update.sh" "$IPATH/update.sh" &>/dev/null; then
     exit $?
 fi
 
-if [ -f /boot/adsbfi-env ]; then
-    source /boot/adsbfi-env
+if [ -f /boot/airplanes-env ]; then
+    source /boot/airplanes-env
 else
-    source /etc/default/adsbfi
-    if ! grep -qs -e UAT_INPUT /etc/default/adsbfi; then
-        cat >> /etc/default/adsbfi <<"EOF"
+    source /etc/default/airplanes
+    if ! grep -qs -e UAT_INPUT /etc/default/airplanes; then
+        cat >> /etc/default/airplanes <<"EOF"
 
 # this is the source for 978 data, use port 30978 from dump978 --raw-port
 # if you're not receiving 978, don't worry about it, not doing any harm!
@@ -157,7 +157,7 @@ fi
 cp "$GIT/uninstall.sh" "$IPATH"
 cp "$GIT"/scripts/*.sh "$IPATH"
 
-UNAME=adsbfi
+UNAME=airplanes
 if ! id -u "${UNAME}" &>/dev/null
 then
     # 2nd syntax is for fedora / centos
@@ -184,17 +184,17 @@ echo
 bash "$IPATH/git/create-uuid.sh"
 
 VENV=$IPATH/venv
-if [[ -f /usr/local/share/adsbfi/venv/bin/python3.7 ]] && command -v python3.9 &>/dev/null;
+if [[ -f /usr/local/share/airplanes/venv/bin/python3.7 ]] && command -v python3.9 &>/dev/null;
 then
     rm -rf "$VENV"
 fi
 
 
-MLAT_REPO="https://github.com/adsbfi/mlat-client-adsbfi"
+MLAT_REPO="https://github.com/airplanes-live/mlat-client"
 MLAT_BRANCH="master"
 MLAT_VERSION="$(git ls-remote $MLAT_REPO $MLAT_BRANCH | cut -f1 || echo $RANDOM-$RANDOM )"
 if [[ $REINSTALL != yes ]] && grep -e "$MLAT_VERSION" -qs $IPATH/mlat_version \
-    && grep -qs -e '#!' "$VENV/bin/mlat-client" && { systemctl is-active adsbfi-mlat &>/dev/null || [[ "${MLAT_DISABLED}" == "1" ]]; }
+    && grep -qs -e '#!' "$VENV/bin/mlat-client" && { systemctl is-active airplanes-mlat &>/dev/null || [[ "${MLAT_DISABLED}" == "1" ]]; }
 then
     echo
     echo "mlat-client already installed, git hash:"
@@ -242,43 +242,43 @@ fi
 
 echo 50
 
-# copy adsbfi-mlat service file
-cp "$GIT"/scripts/adsbfi-mlat.service /lib/systemd/system
+# copy airplanes-mlat service file
+cp "$GIT"/scripts/airplanes-mlat.service /lib/systemd/system
 
 echo 60
 
-if ls -l /etc/systemd/system/adsbfi-mlat.service 2>&1 | grep '/dev/null' &>/dev/null; then
+if ls -l /etc/systemd/system/airplanes-mlat.service 2>&1 | grep '/dev/null' &>/dev/null; then
     echo "--------------------"
-    echo "CAUTION, adsbfi-mlat is masked and won't run!"
+    echo "CAUTION, airplanes-mlat is masked and won't run!"
     echo "If this is unexpected for you, please report this issue."
     echo "--------------------"
     sleep 3
 else
     if [[ "${MLAT_DISABLED}" == "1" ]]; then
-        systemctl disable adsbfi-mlat || true
-        systemctl stop adsbfi-mlat || true
+        systemctl disable airplanes-mlat || true
+        systemctl stop airplanes-mlat || true
     else
-        # Enable adsbfi-mlat service
-        systemctl enable adsbfi-mlat >> $LOGFILE || true
-        # Start or restart adsbfi-mlat service
-        systemctl restart adsbfi-mlat || true
+        # Enable airplanes-mlat service
+        systemctl enable airplanes-mlat >> $LOGFILE || true
+        # Start or restart airplanes-mlat service
+        systemctl restart airplanes-mlat || true
     fi
 fi
 
 echo 70
 
-# SETUP FEEDER TO SEND DUMP1090 DATA TO adsb.fi
+# SETUP FEEDER TO SEND DUMP1090 DATA TO airplanes.live
 
-READSB_REPO="https://github.com/adsbfi/readsb.git"
-READSB_BRANCH="master"
+READSB_REPO="https://github.com/airplanes-live/readsb.git"
+READSB_BRANCH="dev"
 if grep -E 'wheezy|jessie' /etc/os-release -qs; then
     READSB_BRANCH="jessie"
 fi
 READSB_VERSION="$(git ls-remote $READSB_REPO $READSB_BRANCH | cut -f1 || echo $RANDOM-$RANDOM )"
 READSB_GIT="$IPATH/readsb-git"
-READSB_BIN="$IPATH/feed-adsbfi"
+READSB_BIN="$IPATH/feed-airplanes"
 if [[ $REINSTALL != yes ]] && grep -e "$READSB_VERSION" -qs $IPATH/readsb_version \
-    && "$READSB_BIN" -V && systemctl is-active adsbfi-feed &>/dev/null
+    && "$READSB_BIN" -V && systemctl is-active airplanes-feed &>/dev/null
 then
     echo
     echo "Feed client already installed, git hash:"
@@ -315,19 +315,19 @@ fi
 
 #end compile readsb
 
-cp "$GIT"/scripts/adsbfi-feed.service /lib/systemd/system
+cp "$GIT"/scripts/airplanes-feed.service /lib/systemd/system
 
 echo 82
 
-if ! ls -l /etc/systemd/system/adsbfi-feed.service 2>&1 | grep '/dev/null' &>/dev/null; then
-    # Enable adsbfi-feed service
-    systemctl enable adsbfi-feed >> $LOGFILE || true
+if ! ls -l /etc/systemd/system/airplanes-feed.service 2>&1 | grep '/dev/null' &>/dev/null; then
+    # Enable airplanes-feed service
+    systemctl enable airplanes-feed >> $LOGFILE || true
     echo 92
-    # Start or restart adsbfi-feed service
-    systemctl restart adsbfi-feed || true
+    # Start or restart airplanes-feed service
+    systemctl restart airplanes-feed || true
 else
     echo "--------------------"
-    echo "CAUTION, adsbfi-feed.service is masked and won't run!"
+    echo "CAUTION, airplanes-feed.service is masked and won't run!"
     echo "If this is unexpected for you, please report this issue."
     echo "--------------------"
     sleep 3
@@ -335,32 +335,32 @@ fi
 
 echo 94
 
-systemctl is-active adsbfi-feed &>/dev/null || {
+systemctl is-active airplanes-feed &>/dev/null || {
     rm -f $IPATH/readsb_version
     echo "---------------------------------"
-    journalctl -u adsbfi-feed | tail -n10
+    journalctl -u airplanes-feed | tail -n10
     echo "---------------------------------"
-    echo "adsbfi-feed service couldn't be started, please report this error on Discord."
+    echo "airplanes-feed service couldn't be started, please report this error on Discord."
     echo "Try an copy as much of the output above and include it in your report, thank you!"
     echo "---------------------------------"
     exit 1
 }
 
 echo 96
-[[ "${MLAT_DISABLED}" == "1" ]] || systemctl is-active adsbfi-mlat &>/dev/null || {
+[[ "${MLAT_DISABLED}" == "1" ]] || systemctl is-active airplanes-mlat &>/dev/null || {
     rm -f $IPATH/mlat_version
     echo "---------------------------------"
-    journalctl -u adsbfi-mlat | tail -n10
+    journalctl -u airplanes-mlat | tail -n10
     echo "---------------------------------"
-    echo "adsbfi-mlat service couldn't be started, please report this error on Discord."
+    echo "airplanes-mlat service couldn't be started, please report this error on Discord."
     echo "Try an copy as much of the output above and include it in your report, thank you!"
     echo "---------------------------------"
     exit 1
 }
 
 # Remove old method of starting the feed scripts if present from rc.local
-# Kill the old adsb.fi scripts in case they are still running from a previous install including spawned programs
-for name in adsbfi-netcat_maint.sh adsbfi-socat_maint.sh adsbfi-mlat_maint.sh; do
+# Kill the old airplanes.live scripts in case they are still running from a previous install including spawned programs
+for name in airplanes-netcat_maint.sh airplanes-socat_maint.sh airplanes-mlat_maint.sh; do
     if grep -qs -e "$name" /etc/rc.local; then
         sed -i -e "/$name/d" /etc/rc.local || true
     fi
@@ -370,13 +370,13 @@ for name in adsbfi-netcat_maint.sh adsbfi-socat_maint.sh adsbfi-mlat_maint.sh; d
     fi
 done
 
-# in case the mlat-client service using /etc/default/mlat-client as config is using adsb.fi as a host, disable the service
-if grep -qs 'SERVER_HOSTPORT.*feed.adsb.fi' /etc/default/mlat-client &>/dev/null; then
+# in case the mlat-client service using /etc/default/mlat-client as config is using airplanes.live as a host, disable the service
+if grep -qs 'SERVER_HOSTPORT.*feed.airplanes.live' /etc/default/mlat-client &>/dev/null; then
     systemctl disable --now mlat-client >> $LOGFILE 2>&1 || true
 fi
 
-if [[ -f /etc/default/adsbfi ]]; then
-    sed -i -e 's/feed.adsb.fi,30004,beast_reduce_out,feed.adsb.fi,64004/feed.adsb.fi,30004,beast_reduce_out,feed.adsb.fi,64004/' /etc/default/adsbfi || true
+if [[ -f /etc/default/airplanes ]]; then
+    sed -i -e 's/feed.airplanes.live,30004,beast_reduce_out,feed.airplanes.live,64004/feed.airplanes.live,30004,beast_reduce_out,feed.airplanes.live,64004/' /etc/default/airplanes || true
 fi
 
 
@@ -387,16 +387,16 @@ echo "---------------------"
 ## SETUP COMPLETE
 
 ENDTEXT="
-Thanks for choosing to share your data with adsb.fi!
+Thanks for choosing to share your data with airplanes.live!
 
-Your feed should be active within 5 minutes, you can confirm by running the following command and looking for the IP address 103.196.37.90
+Your feed should be active within 5 minutes, you can confirm by running the following command and looking for the IP address 78.46.234.18
 netstat -t -n | grep -E '30004|31090'
 
 Question? Issues? Go here:
 https://discord.gg/jfVRF2XRwF
 
 Web interface to show the data transmitted? Run this command:
-sudo bash /usr/local/share/adsbfi/git/install-or-update-interface.sh
+sudo bash /usr/local/share/airplanes/git/install-or-update-interface.sh
 "
 
 INPUT_IP=$(echo $INPUT | cut -d: -f1)
@@ -428,10 +428,10 @@ https://github.com/wiedehopf/adsb-scripts/wiki/Automatic-installation-for-readsb
 fi
 
 if ! timeout 5 nc -z "$INPUT_IP" "$INPUT_PORT" && command -v nc &>/dev/null; then
-    #whiptail --title "adsb.fi Setup Script" --msgbox "$ENDTEXT2" 24 73
+    #whiptail --title "airplanes.live Setup Script" --msgbox "$ENDTEXT2" 24 73
     echo -e "$ENDTEXT2"
 else
     # Display the thank you message box.
-    #whiptail --title "adsb.fi Setup Script" --msgbox "$ENDTEXT" 24 73
+    #whiptail --title "airplanes.live Setup Script" --msgbox "$ENDTEXT" 24 73
     echo -e "$ENDTEXT"
 fi

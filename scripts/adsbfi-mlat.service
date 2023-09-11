@@ -1,19 +1,19 @@
 
 [Unit]
-Description=adsbfi-mlat
+Description=airplanes-mlat
 Wants=network.target
 After=network.target
 
 [Service]
-User=adsbfi
-RuntimeDirectory=adsbfi-mlat
-ExecStart=/usr/local/share/adsbfi/adsbfi-mlat.sh
+User=airplanes
+RuntimeDirectory=airplanes-mlat
+ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh
 Type=simple
 Restart=always
 RestartSec=30
 StartLimitInterval=1
 StartLimitBurst=100
-SyslogIdentifier=adsbfi-mlat
+SyslogIdentifier=airplanes-mlat
 Nice=-1
 
 [Install]

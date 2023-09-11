@@ -1,14 +1,14 @@
 #!/bin/bash
 
-if grep -qs -e 'LATITUDE' /boot/adsb-config.txt &>/dev/null && [[ -f /boot/adsbfi-env ]]; then
+if grep -qs -e 'LATITUDE' /boot/adsb-config.txt &>/dev/null && [[ -f /boot/airplanes-env ]]; then
     source /boot/adsb-config.txt
-    source /boot/adsbfi-env
+    source /boot/airplanes-env
 else
-    source /etc/default/adsbfi
+    source /etc/default/airplanes
 fi
 
-if ! [[ -d /run/adsbfi-feed/ ]]; then
-    mkdir -p /run/adsbfi-feed
+if ! [[ -d /run/airplanes-feed/ ]]; then
+    mkdir -p /run/airplanes-feed
 fi
 
 if [[ -z $INPUT ]]; then
@@ -28,8 +28,8 @@ UAT_PORT=$(echo $UAT_INPUT | cut -d: -f2)
 UAT_SOURCE="--net-connector $UAT_IP,$UAT_PORT,uat_in,silent_fail"
 
 
-exec /usr/local/share/adsbfi/feed-adsbfi --net --net-only --quiet \
-    --write-json /run/adsbfi-feed \
+exec /usr/local/share/airplanes/feed-airplanes --net --net-only --quiet \
+    --write-json /run/airplanes-feed \
     --net-beast-reduce-interval $REDUCE_INTERVAL \
     $TARGET $NET_OPTIONS \
     --lat "$LATITUDE" --lon "$LONGITUDE" \
