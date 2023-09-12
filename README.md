@@ -44,7 +44,7 @@ sudo bash /usr/local/share/tar1090/uninstall.sh airplanes
 ### Update the feed client without reconfiguring
 
 ```
-curl -L -o /tmp/update.sh https://raw.githubusercontent.com/airplanes/feed/main/update.sh
+curl -L -o /tmp/update.sh https://raw.githubusercontent.com/airplanes-live/feed/main/update.sh
 sudo bash /tmp/update.sh
 ```
 
