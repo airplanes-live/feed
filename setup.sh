@@ -39,7 +39,7 @@ if [ "$(id -u)" != "0" ]; then
     exit 1
 fi
 
-## REFUSE INSTALLATION ON ADSBX IMAGE
+## REFUSE INSTALLATION ON AIRPLANES.LIVE IMAGE
 
 if [ -f /boot/airplanes-config.txt ]; then
     echo --------
