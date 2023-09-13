@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ -f /boot/adsb-config.txt ]; then
+if [ -f /boot/airplanes-config.txt ]; then
     UUID_FILE="/boot/airplanes-uuid"
 else
     mkdir -p /usr/local/share/airplanes
