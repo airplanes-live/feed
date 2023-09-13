@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #####################################################################################
-#                        airplanes.live SETUP SCRIPT                                       #
+#                        airplanes.live SETUP SCRIPT                                #
 #####################################################################################
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                                                   #
-# Copyright (c) 2020 ADSBx                                                          #
+# Copyright (c) 2020 AirDG                                                          #
 #                                                                                   #
 # Permission is hereby granted, free of charge, to any person obtaining a copy      #
 # of this software and associated documentation files (the "Software"), to deal     #
