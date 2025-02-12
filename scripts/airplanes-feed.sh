@@ -27,9 +27,14 @@ UAT_IP=$(echo $UAT_INPUT | cut -d: -f1)
 UAT_PORT=$(echo $UAT_INPUT | cut -d: -f2)
 UAT_SOURCE="--net-connector $UAT_IP,$UAT_PORT,uat_in,silent_fail"
 
-
+if [ -f /boot/airplanes-config.txt ]; then
+    UUID_FILE="/boot/airplanes-uuid"
+else
+    UUID_FILE="/usr/local/share/airplanes/airplanes-uuid"
+fi
+    
 exec /usr/local/share/airplanes/feed-airplanes --net --net-only --quiet \
-    --uuid-file=/boot/airplanes-uuid \
+    --uuid-file=$UUID_FILE \
     --write-json /run/airplanes-feed \
     --net-beast-reduce-interval $REDUCE_INTERVAL \
     $TARGET $NET_OPTIONS \
