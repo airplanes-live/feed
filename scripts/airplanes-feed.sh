@@ -29,6 +29,7 @@ UAT_SOURCE="--net-connector $UAT_IP,$UAT_PORT,uat_in,silent_fail"
 
 
 exec /usr/local/share/airplanes/feed-airplanes --net --net-only --quiet \
+    --uuid-file=/boot/airplanes-uuid \
     --write-json /run/airplanes-feed \
     --net-beast-reduce-interval $REDUCE_INTERVAL \
     $TARGET $NET_OPTIONS \
