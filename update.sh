@@ -224,6 +224,7 @@ else
         && python3 -c "import setuptools" || python3 -m pip install setuptools \
         && echo 39 \
         && python3 -c "import asyncore" || python3 -m pip install pyasyncore \
+        && python3 -m pip install wheel \
         && echo 40 \
         && pip install . \
         && echo 46 \
