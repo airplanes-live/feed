@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-REPO="https://github.com/airplanes-live/feed.git"
+REPO="https://github.com/adsb-related-code/feed.git"
 BRANCH="main"
 IPATH=/usr/local/share/airplanes
 mkdir -p $IPATH
