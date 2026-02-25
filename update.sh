@@ -221,11 +221,11 @@ else
         && echo 36 \
         && source $VENV/bin/activate >> $LOGFILE \
         && echo 37 \
-        && python3 -c "import setuptools" || python3 -m pip install setuptools
+        && python3 -c "import setuptools" || python3 -m pip install setuptools \
         && echo 39 \
-        && python3 -c "import asyncore" || python3 -m pip install pyasyncore
+        && python3 -c "import asyncore" || python3 -m pip install pyasyncore \
         && echo 40 \
-        && pip install .   
+        && pip install . \
         && echo 46 \
         && revision > $IPATH/mlat_version || rm -f $IPATH/mlat_version \
         && echo 48 \
