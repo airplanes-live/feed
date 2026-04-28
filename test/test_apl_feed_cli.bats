@@ -8,11 +8,37 @@ setup() {
     echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
     MOCK_PORT_FILE="$(mktemp)"
     MOCK_PID_FILE="$(mktemp)"
+
+    # Stub external commands `apl-feed status` calls so the result-text
+    # assertions don't depend on whether the host runner has systemctl,
+    # active services, or established sockets. Defaults: services active,
+    # receiver port reachable, ingest link established.
+    STUB_BIN_DIR="$(mktemp -d)"
+    cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+    "is-active --quiet "*) exit 0 ;;
+    "is-enabled "*) echo "enabled"; exit 0 ;;
+esac
+exit 0
+STUB
+    cat > "$STUB_BIN_DIR/nc" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+    cat > "$STUB_BIN_DIR/ss" <<'STUB'
+#!/usr/bin/env bash
+printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:31090 \n'
+exit 0
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl" "$STUB_BIN_DIR/nc" "$STUB_BIN_DIR/ss"
+    PATH="$STUB_BIN_DIR:$PATH"
+    export PATH STUB_BIN_DIR
 }
 
 teardown() {
     stop_mock_server || true
-    rm -rf "$ROOT_DIR"
+    rm -rf "$ROOT_DIR" "$STUB_BIN_DIR"
     rm -f "$MOCK_PORT_FILE" "$MOCK_PID_FILE"
 }
 
@@ -173,7 +199,7 @@ PY
     [[ "$output" =~ "registered and claimed (v3)" ]]
     [[ "$output" =~ "Website feed" ]]
     [[ "$output" =~ "last data seen 1m ago" ]]
-    [[ "$output" =~ "Result: some checks need attention" ]]
+    [[ "$output" =~ "Result: feeding looks healthy" ]]
     [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret.version")" = "3" ]
 }
 
