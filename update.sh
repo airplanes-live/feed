@@ -170,8 +170,12 @@ cp "$GIT"/scripts/*.sh "$IPATH"
 UNAME=airplanes
 if ! id -u "${UNAME}" &>/dev/null
 then
-    # 2nd syntax is for fedora / centos
-    adduser --system --home "$IPATH" --no-create-home --quiet "$UNAME" || adduser --system --home-dir "$IPATH" --no-create-home "$UNAME"
+    # Try Debian-style adduser, then Fedora-style adduser, then useradd.
+    # `||` chains are set -e safe; the trailing block makes the all-failed case explicit.
+    adduser --system --home "$IPATH" --no-create-home --quiet "$UNAME" \
+        || adduser --system --home-dir "$IPATH" --no-create-home "$UNAME" \
+        || useradd --system --home-dir "$IPATH" --no-create-home "$UNAME" \
+        || { echo "ERROR: failed to create user '$UNAME' (no working adduser/useradd)." >&2; exit 1; }
 fi
 
 echo 4
