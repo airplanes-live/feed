@@ -61,7 +61,7 @@ function aptInstall() {
 }
 
 
-packages="git wget unzip curl build-essential python3-dev socat python3-venv ncurses-dev ncurses-bin uuid-runtime zlib1g-dev zlib1g"
+packages="git wget unzip curl jq build-essential python3-dev socat python3-venv ncurses-dev ncurses-bin uuid-runtime zlib1g-dev zlib1g"
 if ! grep -E 'wheezy|jessie' /etc/os-release -qs; then
     packages+=" libzstd-dev libzstd1"
 fi
@@ -72,9 +72,9 @@ if command -v apt &>/dev/null; then
         aptInstall netcat-openbsd || true
     fi
 elif command -v yum &>/dev/null; then
-    yum install -y git curl socat python3-virtualenv python3-devel gcc make ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
+    yum install -y git curl jq socat python3-virtualenv python3-devel gcc make ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
 elif command -v dnf &>/dev/null; then
-    dnf install -y git curl socat python3-virtualenv python3-devel gcc make ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
+    dnf install -y git curl jq socat python3-virtualenv python3-devel gcc make ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
 fi
 
 hash -r
@@ -166,6 +166,8 @@ fi
 
 cp "$GIT/uninstall.sh" "$IPATH"
 cp "$GIT"/scripts/*.sh "$IPATH"
+mkdir -p /usr/local/bin
+install -m 0755 "$GIT/scripts/apl-feed.sh" /usr/local/bin/apl-feed
 
 UNAME=airplanes
 if ! id -u "${UNAME}" &>/dev/null
@@ -363,6 +365,20 @@ echo 96
     echo "---------------------------------"
     exit 1
 }
+
+APL_FEED_MAX_RETRY_TIME="${APL_FEED_MAX_RETRY_TIME:-15}"
+echo "Registering feeder claim secret"
+if ! APL_FEED_MAX_RETRY_TIME="$APL_FEED_MAX_RETRY_TIME" \
+    /usr/local/bin/apl-feed claim register \
+        --max-retry-time "$APL_FEED_MAX_RETRY_TIME"
+then
+    echo "---------------------------------"
+    echo "WARNING: claim registration did not complete."
+    echo "Your feeder will continue feeding. The next update will retry registration."
+    echo "You can also retry manually:"
+    echo "sudo apl-feed claim register"
+    echo "---------------------------------"
+fi
 
 # Remove old method of starting the feed scripts if present from rc.local
 # Kill the old airplanes.live scripts in case they are still running from a previous install including spawned programs

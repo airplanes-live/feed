@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test-container entrypoint for claim_secret_register.sh. Generates a fresh
+# Test-container entrypoint for apl-feed claim register. Generates a fresh
 # UUID for the container if none exists yet, so each `docker run` produces
 # an independent registration rather than replaying the same UUID.
 set -euo pipefail
@@ -10,4 +10,4 @@ if [[ ! -s "$UUID_PATH" ]]; then
     cat /proc/sys/kernel/random/uuid > "$UUID_PATH"
 fi
 
-exec /usr/local/bin/claim_secret_register.sh "$@"
+exec /usr/local/bin/apl-feed claim register "$@"
