@@ -6,10 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY scripts/apl-feed.sh /usr/local/bin/apl-feed
 RUN chmod +x /usr/local/bin/apl-feed
+COPY scripts/apl-feed /usr/local/share/airplanes/apl-feed
 
 # UUID is generated at container start (entrypoint.sh), not baked into the
 # image, so each `docker run` produces a fresh registration.
-RUN mkdir -p /usr/local/share/airplanes /etc/airplanes
+RUN mkdir -p /etc/airplanes
 
 COPY test/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

@@ -129,6 +129,8 @@ fi
 
 # shellcheck source=scripts/lib/systemd-helpers.sh
 source "$GIT/scripts/lib/systemd-helpers.sh"
+# shellcheck source=scripts/lib/claim-registration.sh
+source "$GIT/scripts/lib/claim-registration.sh"
 
 # Migrate the env file from /etc/default/airplanes to /etc/airplanes/feed.env.
 # Idempotent: only fires when a regular file still exists at the legacy path.
@@ -166,6 +168,8 @@ fi
 
 cp "$GIT/uninstall.sh" "$IPATH"
 cp "$GIT"/scripts/*.sh "$IPATH"
+install -d -m 0755 "$IPATH/apl-feed"
+install -m 0644 "$GIT"/scripts/apl-feed/*.sh "$IPATH/apl-feed"
 mkdir -p /usr/local/bin
 install -m 0755 "$GIT/scripts/apl-feed.sh" /usr/local/bin/apl-feed
 
@@ -366,19 +370,7 @@ echo 96
     exit 1
 }
 
-APL_FEED_MAX_RETRY_TIME="${APL_FEED_MAX_RETRY_TIME:-15}"
-echo "Registering feeder claim secret"
-if ! APL_FEED_MAX_RETRY_TIME="$APL_FEED_MAX_RETRY_TIME" \
-    /usr/local/bin/apl-feed claim register \
-        --max-retry-time "$APL_FEED_MAX_RETRY_TIME"
-then
-    echo "---------------------------------"
-    echo "WARNING: claim registration did not complete."
-    echo "Your feeder will continue feeding. The next update will retry registration."
-    echo "You can also retry manually:"
-    echo "sudo apl-feed claim register"
-    echo "---------------------------------"
-fi
+register_claim_secret
 
 # Remove old method of starting the feed scripts if present from rc.local
 # Kill the old airplanes.live scripts in case they are still running from a previous install including spawned programs

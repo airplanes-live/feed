@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "secret": {
+    "create_success": {
+      "request": {
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "current_secret": null,
+        "new_secret": "ABCDEFGHIJKLMNOP"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "version": 1
+        }
+      }
+    },
+    "noop_replay": {
+      "request": {
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "current_secret": null,
+        "new_secret": "ABCDEFGHIJKLMNOP"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "version": 1
+        }
+      }
+    },
+    "rotate_success": {
+      "request": {
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "current_secret": "ABCDEFGHIJKLMNOP",
+        "new_secret": "QRSTUVWXYZ012345"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "version": 2
+        }
+      }
+    },
+    "invalid_uuid": {
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "invalid_uuid"
+        }
+      }
+    },
+    "invalid_claim_secret": {
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "invalid_claim_secret",
+          "detail": "claim secret must be 16 chars after canonicalization, got 8"
+        }
+      }
+    },
+    "legacy_unclaimed": {
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "legacy_unclaimed",
+          "reinstall_url": "https://airplanes.live/account/feeders/reinstall"
+        }
+      }
+    },
+    "rotation_rejected": {
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "rotation_rejected"
+        }
+      }
+    },
+    "reset_locked": {
+      "response": {
+        "status": 423,
+        "body": {
+          "error": "reset_locked",
+          "reset_until": "2026-04-29T18:42:00+00:00"
+        }
+      }
+    },
+    "feeder_blocked": {
+      "response": {
+        "status": 423,
+        "body": {
+          "error": "feeder_blocked",
+          "reason": "data_blocked"
+        }
+      }
+    },
+    "rate_limited": {
+      "response": {
+        "status": 429,
+        "body": {
+          "error": "rate_limited",
+          "retry_after": 60
+        }
+      }
+    }
+  },
+  "status": {
+    "unregistered": {
+      "request": {
+        "uuid": "22222222-3333-4444-5555-666666666666"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "registered": false
+        }
+      }
+    },
+    "registered_minimal": {
+      "request": {
+        "uuid": "11111111-2222-3333-4444-555555555555"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "registered": true
+        }
+      }
+    },
+    "authenticated_recent": {
+      "request": {
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "current_secret": "ABCDEFGHIJKLMNOP"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "registered": true,
+          "version": 3,
+          "set_at": "2026-04-28T18:00:00+00:00",
+          "owner_present": true,
+          "reset_until": null,
+          "last_seen_at": "2026-04-28T18:40:30+00:00",
+          "last_seen_age_seconds": 90
+        }
+      }
+    },
+    "authenticated_stale": {
+      "request": {
+        "uuid": "33333333-4444-5555-6666-777777777777",
+        "current_secret": "ABCDEFGHIJKLMNOP"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "registered": true,
+          "version": 1,
+          "set_at": "2026-04-28T18:00:00+00:00",
+          "owner_present": false,
+          "reset_until": null,
+          "last_seen_at": "2026-04-28T18:12:00+00:00",
+          "last_seen_age_seconds": 1800
+        }
+      }
+    },
+    "authenticated_never_seen": {
+      "request": {
+        "uuid": "44444444-5555-6666-7777-888888888888",
+        "current_secret": "ABCDEFGHIJKLMNOP"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "registered": true,
+          "version": 1,
+          "set_at": "2026-04-28T18:00:00+00:00",
+          "owner_present": false,
+          "reset_until": null,
+          "last_seen_at": null,
+          "last_seen_age_seconds": null
+        }
+      }
+    },
+    "data_blocked": {
+      "response": {
+        "status": 423,
+        "body": {
+          "error": "feeder_blocked",
+          "reason": "data_blocked"
+        }
+      }
+    },
+    "rate_limited": {
+      "response": {
+        "status": 429,
+        "body": {
+          "error": "rate_limited",
+          "retry_after": 60
+        }
+      }
+    }
+  }
+}
