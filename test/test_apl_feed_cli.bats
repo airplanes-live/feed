@@ -2,6 +2,7 @@
 
 setup() {
     SCRIPT="$BATS_TEST_DIRNAME/../scripts/apl-feed.sh"
+    CONTRACT="$BATS_TEST_DIRNAME/contracts/feeder-api-v1.json"
     ROOT_DIR="$(mktemp -d)"
     mkdir -p "$ROOT_DIR/usr/local/share/airplanes" "$ROOT_DIR/etc/airplanes"
     echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
@@ -24,6 +25,12 @@ stop_mock_server() {
 
 mock_url() {
     echo "http://127.0.0.1:$(cat "$MOCK_PORT_FILE")"
+}
+
+contract_body() {
+    local section="$1"
+    local name="$2"
+    jq -c --arg section "$section" --arg name "$name" '.[$section][$name].response.body' "$CONTRACT"
 }
 
 start_fixed_server() {
@@ -97,6 +104,8 @@ class H(http.server.BaseHTTPRequestHandler):
                     "set_at": "2026-04-28T00:00:00+00:00",
                     "owner_present": False,
                     "reset_until": None,
+                    "last_seen_at": None,
+                    "last_seen_age_seconds": None,
                 }
             elif current == pending_secret:
                 out = {
@@ -105,6 +114,8 @@ class H(http.server.BaseHTTPRequestHandler):
                     "set_at": "2026-04-28T00:00:00+00:00",
                     "owner_present": False,
                     "reset_until": None,
+                    "last_seen_at": None,
+                    "last_seen_age_seconds": None,
                 }
             else:
                 out = {"registered": True}
@@ -137,19 +148,49 @@ PY
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "ABCD-EFGH-IJKL-MNOP" ]]
+    [[ "$output" =~ "Claim page: https://airplanes.live/feeder/claim" ]]
+}
+
+@test "claim show uses overridden server URL for claim page" {
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+
+    run "$SCRIPT" claim show --root "$ROOT_DIR" --server-url "https://staging.airplanes.test/"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Claim page: https://staging.airplanes.test/feeder/claim" ]]
 }
 
 @test "top-level status authenticates local secret and stores version" {
     echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
     chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
-    start_fixed_server 200 '{"registered": true, "version": 7, "set_at": "2026-04-28T00:00:00+00:00", "owner_present": false, "reset_until": null}'
+    start_fixed_server 200 "$(contract_body status authenticated_recent)"
 
     run "$SCRIPT" status --root "$ROOT_DIR" --server-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Website claim" ]]
-    [[ "$output" =~ "registered, not yet claimed (v7)" ]]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret.version")" = "7" ]
+    [[ "$output" =~ "registered and claimed (v3)" ]]
+    [[ "$output" =~ "Website feed" ]]
+    [[ "$output" =~ "last data seen 1m ago" ]]
+    [[ "$output" =~ "Result: some checks need attention" ]]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret.version")" = "3" ]
+}
+
+@test "top-level status json omits raw claim secret" {
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    start_fixed_server 200 "$(contract_body status authenticated_recent)"
+
+    run "$SCRIPT" status --json --root "$ROOT_DIR" --server-url "$(mock_url)"
+
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.schema_version' <<< "$output")" = "1" ]
+    [ "$(jq -r '.claim.version' <<< "$output")" = "3" ]
+    [ "$(jq -r '.website.feed_state' <<< "$output")" = "recent" ]
+    [ "$(jq -r '.website.last_seen_age_seconds' <<< "$output")" = "90" ]
+    [[ ! "$output" =~ "ABCDEFGHIJKLMNOP" ]]
+    [[ ! "$output" =~ "ABCD-EFGH-IJKL-MNOP" ]]
 }
 
 @test "claim rotate promotes pending on 200" {
@@ -206,6 +247,7 @@ PY
     [ "$status" -eq 0 ]
     [ "$(stat -c '%a' "$backup_file")" = "600" ]
     [ "$(jq -r '.feeder_uuid' "$backup_file")" = "11111111-2222-3333-4444-555555555555" ]
+    [ "$(jq -r '.created_at | type' "$backup_file")" = "string" ]
     [ "$(jq -r '.claim.secret' "$backup_file")" = "ABCDEFGHIJKLMNOP" ]
     [ "$(jq -r '.claim.version' "$backup_file")" = "4" ]
     rm "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
@@ -217,6 +259,72 @@ PY
     [ "$(cat "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid")" = "11111111-2222-3333-4444-555555555555" ]
     [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "ABCDEFGHIJKLMNOP" ]
     [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret.version")" = "4" ]
+}
+
+@test "backup rejects --force instead of overwriting" {
+    local backup_file="$ROOT_DIR/backup.json"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+
+    run "$SCRIPT" backup --force "$backup_file" --root "$ROOT_DIR"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "unknown flag for backup: --force" ]]
+    [ ! -e "$backup_file" ]
+}
+
+@test "restore rejects --dry-run without writing" {
+    local backup_file="$ROOT_DIR/backup.json"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    run "$SCRIPT" backup "$backup_file" --root "$ROOT_DIR"
+    [ "$status" -eq 0 ]
+    rm "$ROOT_DIR/etc/airplanes/claim-secret"
+
+    run "$SCRIPT" restore --dry-run "$backup_file" --root "$ROOT_DIR"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "unknown flag for restore: --dry-run" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret" ]
+}
+
+@test "claim rotate rejects --dry-run without writing pending secret" {
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+
+    run "$SCRIPT" claim rotate --dry-run --root "$ROOT_DIR" --server-url "http://127.0.0.1:1"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "unknown flag for claim rotate: --dry-run" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
+}
+
+@test "status rejects --dry-run" {
+    run "$SCRIPT" status --dry-run --root "$ROOT_DIR"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "unknown flag for status: --dry-run" ]]
+}
+
+@test "status rejects restore-only --force flag" {
+    run "$SCRIPT" status --force --root "$ROOT_DIR"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "unknown flag for status: --force" ]]
+}
+
+@test "restore --check validates backup without writing" {
+    local backup_file="$ROOT_DIR/backup.json"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    run "$SCRIPT" backup "$backup_file" --root "$ROOT_DIR"
+    rm "$ROOT_DIR/etc/airplanes/claim-secret"
+
+    run "$SCRIPT" restore --check "$backup_file" --root "$ROOT_DIR"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Backup is valid" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret" ]
 }
 
 @test "register sends raw secret through stdin, not curl argv" {

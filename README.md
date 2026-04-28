@@ -40,6 +40,9 @@ OK    Airplanes.live link  connected
 OK    Feeder ID            11111111-2222-3333-4444-555555555555
 OK    Claim secret         present
 OK    Website claim        registered, not yet claimed (v1)
+OK    Website feed         last data seen 1m ago
+
+Result: feeding looks healthy
 ```
 
 `OK` means that part is working. `CHECK` means the feeder may still work, but
@@ -81,6 +84,12 @@ Restore it on the new install:
 
 ```
 sudo apl-feed restore airplanes-feeder-backup.json
+```
+
+Check a backup before restoring it:
+
+```
+sudo apl-feed restore --check airplanes-feeder-backup.json
 ```
 
 If the new install already created a different feeder identity, use:

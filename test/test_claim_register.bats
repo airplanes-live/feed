@@ -5,6 +5,7 @@
 
 setup() {
     SCRIPT="$BATS_TEST_DIRNAME/../scripts/apl-feed.sh"
+    CONTRACT="$BATS_TEST_DIRNAME/contracts/feeder-api-v1.json"
     ROOT_DIR="$(mktemp -d)"
     mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
     echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
@@ -71,6 +72,15 @@ write_response() {
     local ct="${3:-application/json}"
     python3 -c "import json,sys; print(json.dumps({'status': int(sys.argv[1]), 'body': sys.argv[2], 'content_type': sys.argv[3]}))" \
         "$status" "$body" "$ct" > "$MOCK_RESP_FILE"
+}
+
+write_contract_response() {
+    local section="$1"
+    local name="$2"
+    local status body
+    status="$(jq -r --arg section "$section" --arg name "$name" '.[$section][$name].response.status' "$CONTRACT")"
+    body="$(jq -c --arg section "$section" --arg name "$name" '.[$section][$name].response.body' "$CONTRACT")"
+    write_response "$status" "$body"
 }
 
 mock_url() {
@@ -149,7 +159,7 @@ mock_url() {
 # --- POST + JSON-body response dispatch -----------------------------------
 
 @test "201 success exits 0 and prints SUCCESS" {
-    write_response 201 '{"version": 1}'
+    write_contract_response secret create_success
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
@@ -157,7 +167,7 @@ mock_url() {
 }
 
 @test "200 NOOP_REPLAY exits 0 (treated as success)" {
-    write_response 200 '{"version": 1}'
+    write_contract_response secret noop_replay
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
@@ -165,21 +175,21 @@ mock_url() {
 }
 
 @test "409 legacy_unclaimed exits 4 (reinstall flow)" {
-    write_response 409 '{"error": "legacy_unclaimed"}'
+    write_contract_response secret legacy_unclaimed
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 4 ]
 }
 
 @test "409 rotation_rejected exits 1" {
-    write_response 409 '{"error": "rotation_rejected"}'
+    write_contract_response secret rotation_rejected
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 1 ]
 }
 
 @test "423 feeder_blocked exits 1 (terminal — no retry, fast)" {
-    write_response 423 '{"error": "feeder_blocked", "reason": "spam"}'
+    write_contract_response secret feeder_blocked
     start_mock_server
     local start_ts; start_ts=$(date +%s)
     run timeout 5 "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
@@ -189,7 +199,7 @@ mock_url() {
 }
 
 @test "400 bad request exits 1" {
-    write_response 400 '{"error": "bad_request"}'
+    write_contract_response secret invalid_claim_secret
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 1 ]
@@ -213,7 +223,7 @@ mock_url() {
 # --- Atomic persistence + idempotent reuse --------------------------------
 
 @test "201 success persists secret atomically (mode 0600, .pending cleaned)" {
-    write_response 201 '{"version": 1}'
+    write_contract_response secret create_success
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
@@ -245,7 +255,7 @@ mock_url() {
     mkdir -p "$ROOT_DIR/etc/airplanes"
     echo "PRESERVEDSECRET1" > "$ROOT_DIR/etc/airplanes/claim-secret"
     chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
-    write_response 200 '{"version": 1}'
+    write_contract_response secret noop_replay
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
@@ -258,7 +268,7 @@ mock_url() {
 @test "existing pending file is reused (mid-POST resume scenario)" {
     mkdir -p "$ROOT_DIR/etc/airplanes"
     echo "RESUMEPENDING123" > "$ROOT_DIR/etc/airplanes/claim-secret.pending"
-    write_response 201 '{"version": 1}'
+    write_contract_response secret create_success
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
