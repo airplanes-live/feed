@@ -127,6 +127,9 @@ if diff "$GIT/update.sh" "$IPATH/update.sh" &>/dev/null; then
     exit $?
 fi
 
+# shellcheck source=scripts/lib/systemd-helpers.sh
+source "$GIT/scripts/lib/systemd-helpers.sh"
+
 # Migrate the env file from /etc/default/airplanes to /etc/airplanes/feed.env.
 # Idempotent: only fires when a regular file still exists at the legacy path.
 mkdir -p /etc/airplanes
@@ -175,17 +178,6 @@ echo 4
 sleep 0.25
 
 # BUILD AND CONFIGURE THE MLAT-CLIENT PACKAGE
-
-progress=4
-echo "Checking and installing prerequesites ..."
-
-# Check that the prerequisite packages needed to build and install mlat-client are installed.
-
-# only install chrony if chrony and ntp aren't running
-if ! systemctl status chrony &>/dev/null && ! systemctl status ntp &>/dev/null; then
-    required_packages="chrony "
-fi
-
 
 echo
 bash "$IPATH/git/create-uuid.sh"
@@ -257,7 +249,7 @@ cp "$GIT"/scripts/airplanes-mlat.service /lib/systemd/system
 
 echo 60
 
-if ls -l /etc/systemd/system/airplanes-mlat.service 2>&1 | grep '/dev/null' &>/dev/null; then
+if is_unit_masked airplanes-mlat.service; then
     echo "--------------------"
     echo "CAUTION, airplanes-mlat is masked and won't run!"
     echo "If this is unexpected for you, please report this issue."
@@ -329,7 +321,7 @@ cp "$GIT"/scripts/airplanes-feed.service /lib/systemd/system
 
 echo 82
 
-if ! ls -l /etc/systemd/system/airplanes-feed.service 2>&1 | grep '/dev/null' &>/dev/null; then
+if ! is_unit_masked airplanes-feed.service; then
     # Enable airplanes-feed service
     systemctl enable airplanes-feed >> $LOGFILE || true
     echo 92
