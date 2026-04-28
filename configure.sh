@@ -111,7 +111,8 @@ if [[ $(hostname) == "radarcape" ]] || pgrep rcd &>/dev/null; then
     INPUT_TYPE="radarcape_gps"
 fi
 
-tee /etc/default/airplanes >/dev/null <<EOF
+mkdir -p /etc/airplanes
+tee /etc/airplanes/feed.env >/dev/null <<EOF
 INPUT="$INPUT"
 REDUCE_INTERVAL="0.5"
 

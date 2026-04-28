@@ -127,12 +127,19 @@ if diff "$GIT/update.sh" "$IPATH/update.sh" &>/dev/null; then
     exit $?
 fi
 
+# Migrate the env file from /etc/default/airplanes to /etc/airplanes/feed.env.
+# Idempotent: only fires when a regular file still exists at the legacy path.
+mkdir -p /etc/airplanes
+if [[ -f /etc/default/airplanes && ! -L /etc/default/airplanes ]]; then
+    cp -fp /etc/default/airplanes /etc/airplanes/feed.env
+fi
+
 if [ -f /boot/airplanes-env ]; then
     source /boot/airplanes-env
 else
-    source /etc/default/airplanes
-    if ! grep -qs -e UAT_INPUT /etc/default/airplanes; then
-        cat >> /etc/default/airplanes <<"EOF"
+    source /etc/airplanes/feed.env
+    if ! grep -qs -e UAT_INPUT /etc/airplanes/feed.env; then
+        cat >> /etc/airplanes/feed.env <<"EOF"
 
 # this is the source for 978 data, use port 30978 from dump978 --raw-port
 # if you're not receiving 978, don't worry about it, not doing any harm!
@@ -378,9 +385,17 @@ if grep -qs 'SERVER_HOSTPORT.*feed.airplanes.live' /etc/default/mlat-client &>/d
     systemctl disable --now mlat-client >> $LOGFILE 2>&1 || true
 fi
 
-if [[ -f /etc/default/airplanes ]]; then
-    sed -i -e 's/feed.airplanes.live,30004,beast_reduce_out,feed.airplanes.live,64004/feed.airplanes.live,30004,beast_reduce_out,feed.airplanes.live,64004/' /etc/default/airplanes || true
+if [[ -f /etc/airplanes/feed.env ]]; then
+    sed -i -e 's/feed.airplanes.live,30004,beast_reduce_out,feed.airplanes.live,64004/feed.airplanes.live,30004,beast_reduce_out,feed.airplanes.live,64004/' /etc/airplanes/feed.env || true
 fi
+
+# Replace the legacy regular file with a compat symlink, only after the
+# services have been restarted using the new path (above). Idempotent —
+# ln -sfn updates an existing symlink in place.
+if [[ -f /etc/default/airplanes && ! -L /etc/default/airplanes ]]; then
+    rm -f /etc/default/airplanes
+fi
+ln -sfn /etc/airplanes/feed.env /etc/default/airplanes
 
 
 echo 100
