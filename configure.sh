@@ -104,7 +104,9 @@ RECEIVERALTITUDE="$ALT"
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 
-if [[ $(hostname) == "radarcape" ]] || pgrep rcd &>/dev/null; then
+# `hostname` and `pgrep` (procps) are absent on some minimal images — guard both.
+HOSTNAME_VAL="$(hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null || true)"
+if [[ "$HOSTNAME_VAL" == "radarcape" ]] || { command -v pgrep &>/dev/null && pgrep rcd &>/dev/null; }; then
     INPUT="127.0.0.1:10003"
     INPUT_TYPE="radarcape_gps"
 fi
