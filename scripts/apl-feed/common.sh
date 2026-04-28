@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 
 ROOT='/'
+# shellcheck disable=SC2034  # SERVER_URL/MAX_RETRY_TIME/DRY_RUN/FORCE are read by sibling modules sourced from apl-feed.sh
 SERVER_URL="${APL_FEED_SERVER_URL:-https://airplanes.live}"
+# shellcheck disable=SC2034
 MAX_RETRY_TIME="${APL_FEED_MAX_RETRY_TIME:-60}"
+# shellcheck disable=SC2034
 DRY_RUN=0
+# shellcheck disable=SC2034
 FORCE=0
 TMP_FILES=()
 
@@ -197,11 +201,13 @@ parse_common_option() {
             ;;
         --server-url)
             [[ $# -ge 2 ]] || die "--server-url requires URL"
+            # shellcheck disable=SC2034  # consumed by http.sh/claim.sh after parse
             SERVER_URL="$2"
             return 2
             ;;
         --max-retry-time)
             [[ $# -ge 2 ]] || die "--max-retry-time requires N"
+            # shellcheck disable=SC2034  # consumed by claim.sh after parse
             MAX_RETRY_TIME="$2"
             return 2
             ;;
