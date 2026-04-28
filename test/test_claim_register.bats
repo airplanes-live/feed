@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
-# Tests for claim_secret_register.sh. Each test starts an inline Python
+# Tests for apl-feed claim register. Each test starts an inline Python
 # HTTP server bound on 127.0.0.1:0 (kernel-assigned port) so parallel or
 # stale runs don't collide.
 
 setup() {
-    SCRIPT="$BATS_TEST_DIRNAME/../scripts/claim_secret_register.sh"
+    SCRIPT="$BATS_TEST_DIRNAME/../scripts/apl-feed.sh"
     ROOT_DIR="$(mktemp -d)"
     mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
     echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
@@ -78,34 +78,34 @@ mock_url() {
 }
 
 @test "shows usage on --help" {
-    run "$SCRIPT" --help
+    run "$SCRIPT" claim register --help
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Usage:" ]]
 }
 
-@test "fails fast when --target-url missing" {
-    run "$SCRIPT" --root "$ROOT_DIR"
-    [ "$status" -eq 1 ]
-    [[ "$output" =~ "target-url" ]]
+@test "defaults server URL when --server-url missing" {
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "https://airplanes.live/api/feeders/secret" ]]
 }
 
 @test "reads existing UUID from --root in --dry-run" {
-    run timeout 2 "$SCRIPT" --root "$ROOT_DIR" \
-        --target-url "http://127.0.0.1:1" --dry-run
+    run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
+        --server-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 0 ]
     [[ "$output" =~ "11111111-2222-3333-4444-555555555555" ]]
 }
 
 @test "fails when no UUID file exists at --root" {
     rm "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "http://127.0.0.1:1" --dry-run
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 1 ]
     [[ "$output" =~ "UUID" || "$output" =~ "uuid" ]]
 }
 
 @test "rejects malformed UUID" {
     echo "not-a-uuid" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "http://127.0.0.1:1" --dry-run
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 1 ]
     [[ "$output" =~ "UUID" || "$output" =~ "format" ]]
 }
@@ -114,8 +114,8 @@ mock_url() {
     rm "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
     mkdir -p "$ROOT_DIR/boot"
     echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > "$ROOT_DIR/boot/airplanes-uuid"
-    run timeout 2 "$SCRIPT" --root "$ROOT_DIR" \
-        --target-url "http://127.0.0.1:1" --dry-run
+    run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
+        --server-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 0 ]
     [[ "$output" =~ "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]]
 }
@@ -124,8 +124,8 @@ mock_url() {
 # --- Secret generation ----------------------------------------------------
 
 @test "secret is 16 chars, A-Z + 0-9 only" {
-    run timeout 2 "$SCRIPT" --root "$ROOT_DIR" \
-        --target-url "http://127.0.0.1:1" --dry-run
+    run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
+        --server-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 0 ]
     secret=$(echo "$output" | grep -E '^SECRET: ' | awk '{print $2}')
     [ -n "$secret" ]
@@ -134,11 +134,11 @@ mock_url() {
 }
 
 @test "two consecutive generations produce different secrets" {
-    s1=$(timeout 2 "$SCRIPT" --root "$ROOT_DIR" \
-        --target-url "http://127.0.0.1:1" --dry-run \
+    s1=$(timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
+        --server-url "http://127.0.0.1:1" --dry-run \
         | grep -E '^SECRET: ' | awk '{print $2}')
-    s2=$(timeout 2 "$SCRIPT" --root "$ROOT_DIR" \
-        --target-url "http://127.0.0.1:1" --dry-run \
+    s2=$(timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
+        --server-url "http://127.0.0.1:1" --dry-run \
         | grep -E '^SECRET: ' | awk '{print $2}')
     [ -n "$s1" ]
     [ -n "$s2" ]
@@ -151,7 +151,7 @@ mock_url() {
 @test "201 success exits 0 and prints SUCCESS" {
     write_response 201 '{"version": 1}'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "SUCCESS" ]]
 }
@@ -159,7 +159,7 @@ mock_url() {
 @test "200 NOOP_REPLAY exits 0 (treated as success)" {
     write_response 200 '{"version": 1}'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "SUCCESS" ]]
 }
@@ -167,14 +167,14 @@ mock_url() {
 @test "409 legacy_unclaimed exits 4 (reinstall flow)" {
     write_response 409 '{"error": "legacy_unclaimed"}'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 4 ]
 }
 
 @test "409 rotation_rejected exits 1" {
     write_response 409 '{"error": "rotation_rejected"}'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 1 ]
 }
 
@@ -182,7 +182,7 @@ mock_url() {
     write_response 423 '{"error": "feeder_blocked", "reason": "spam"}'
     start_mock_server
     local start_ts; start_ts=$(date +%s)
-    run timeout 5 "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run timeout 5 "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     local elapsed=$(( $(date +%s) - start_ts ))
     [ "$status" -eq 1 ]
     [ "$elapsed" -lt 3 ]
@@ -191,20 +191,20 @@ mock_url() {
 @test "400 bad request exits 1" {
     write_response 400 '{"error": "bad_request"}'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 1 ]
 }
 
 @test "non-JSON 404 exits 1 (endpoint disabled / wrong URL)" {
     write_response 404 '<html>Not Found</html>' 'text/html'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 1 ]
 }
 
 @test "network unreachable (RFC 2606 .invalid) exits 2" {
-    run "$SCRIPT" --root "$ROOT_DIR" \
-        --target-url "http://nonexistent-host-deliberately-broken.invalid" \
+    run "$SCRIPT" claim register --root "$ROOT_DIR" \
+        --server-url "http://nonexistent-host-deliberately-broken.invalid" \
         --max-retry-time 5
     [ "$status" -eq 2 ]
 }
@@ -215,7 +215,7 @@ mock_url() {
 @test "201 success persists secret atomically (mode 0600, .pending cleaned)" {
     write_response 201 '{"version": 1}'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
     local final="$ROOT_DIR/etc/airplanes/claim-secret"
     [ -f "$final" ]
@@ -230,8 +230,8 @@ mock_url() {
 @test "writes pending file before first POST so crash mid-POST recovers" {
     # Use a non-routable address so the POST hangs/fails, but pending was
     # written first and survives.
-    run timeout 4 "$SCRIPT" --root "$ROOT_DIR" \
-        --target-url "http://127.0.0.1:1" \
+    run timeout 4 "$SCRIPT" claim register --root "$ROOT_DIR" \
+        --server-url "http://127.0.0.1:1" \
         --max-retry-time 1
     # Either curl-rc network-error (exit 2) or rate-limit-cap (exit 3).
     [ "$status" -eq 2 ] || [ "$status" -eq 3 ]
@@ -243,27 +243,28 @@ mock_url() {
 
 @test "existing claim-secret is reused (NOOP_REPLAY scenario)" {
     mkdir -p "$ROOT_DIR/etc/airplanes"
-    echo "PRESERVEDSECRET12" > "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "PRESERVEDSECRET1" > "$ROOT_DIR/etc/airplanes/claim-secret"
     chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
     write_response 200 '{"version": 1}'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "SECRET: PRESERVEDSECRET12" ]]
+    [[ "$output" =~ "SUCCESS" ]]
+    [[ ! "$output" =~ "PRESERVEDSECRET1" ]]
     # Final still has the original secret unchanged.
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "PRESERVEDSECRET12" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "PRESERVEDSECRET1" ]
 }
 
 @test "existing pending file is reused (mid-POST resume scenario)" {
     mkdir -p "$ROOT_DIR/etc/airplanes"
-    echo "RESUMEDFROMPENDIN" > "$ROOT_DIR/etc/airplanes/claim-secret.pending"
+    echo "RESUMEPENDING123" > "$ROOT_DIR/etc/airplanes/claim-secret.pending"
     write_response 201 '{"version": 1}'
     start_mock_server
-    run "$SCRIPT" --root "$ROOT_DIR" --target-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "SECRET: RESUMEDFROMPENDIN" ]]
+    [[ "$output" =~ "RESU-MEPE-NDIN-G123" ]]
     # Pending was promoted to final on success.
     [ -f "$ROOT_DIR/etc/airplanes/claim-secret" ]
     [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "RESUMEDFROMPENDIN" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "RESUMEPENDING123" ]
 }
