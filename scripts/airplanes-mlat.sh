@@ -4,7 +4,7 @@ if grep -qs -e 'LATITUDE' /boot/adsb-config.txt &>/dev/null && [[ -f /boot/airpl
     source /boot/adsb-config.txt
     source /boot/airplanes-env
 else
-    source /etc/default/airplanes
+    source /etc/airplanes/feed.env
 fi
 
 if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$USER" == 0 ]] || [[ "$USER" == "disable" ]]; then
