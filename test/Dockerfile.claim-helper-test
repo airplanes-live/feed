@@ -1,0 +1,17 @@
+FROM debian:13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash curl jq ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/claim_secret_register.sh /usr/local/bin/claim_secret_register.sh
+RUN chmod +x /usr/local/bin/claim_secret_register.sh
+
+# UUID is generated at container start (entrypoint.sh), not baked into the
+# image, so each `docker run` produces a fresh registration.
+RUN mkdir -p /usr/local/share/airplanes /etc/airplanes
+
+COPY test/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
