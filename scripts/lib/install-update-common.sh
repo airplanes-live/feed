@@ -41,17 +41,9 @@ airplanes_require_root() {
     fi
 }
 
-airplanes_refuse_image_install() {
-    [[ -f "$BOOT_CONFIG" ]] || return 0
-    echo --------
-    echo "You are using the airplanes.live image, the feed setup script does not need to be installed."
-    echo --------
-    exit 1
-}
-
 airplanes_apt_install() {
     if ! apt-get install -y --no-install-recommends --no-install-suggests "$@"; then
-        apt-get update
+        apt-get update || true
         if ! apt-get install -y --no-install-recommends --no-install-suggests "$@"; then
             apt-get clean || true
             apt-get -f install -y || true
@@ -73,7 +65,7 @@ airplanes_install_bootstrap_deps() {
 
 airplanes_update_packages() {
     local packages
-    packages="git wget unzip curl jq build-essential pkg-config python3-dev socat python3-venv ncurses-dev ncurses-bin uuid-runtime zlib1g-dev zlib1g"
+    packages="git wget unzip curl jq build-essential pkg-config python3-dev socat python3-venv ncurses-dev ncurses-bin uuid-runtime zlib1g-dev zlib1g whiptail mawk"
     if ! airplanes_is_legacy_os; then
         packages+=" libzstd-dev libzstd1"
     fi
@@ -91,10 +83,10 @@ airplanes_install_update_deps() {
         if ! command -v nc &>/dev/null; then
             airplanes_apt_install netcat-openbsd || true
         fi
-    elif [[ "$package_manager" == "yum" ]] || { [[ "$package_manager" == "auto" ]] && command -v yum &>/dev/null; }; then
-        yum install -y git curl jq socat python3-virtualenv python3-devel gcc make pkgconfig ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
     elif [[ "$package_manager" == "dnf" ]] || { [[ "$package_manager" == "auto" ]] && command -v dnf &>/dev/null; }; then
-        dnf install -y git curl jq socat python3-virtualenv python3-devel gcc make pkgconf-pkg-config ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
+        dnf install -y git wget unzip curl jq socat python3-virtualenv python3-devel gcc make pkgconf-pkg-config ncurses-devel newt gawk nc uuid zlib-devel zlib libzstd-devel libzstd
+    elif [[ "$package_manager" == "yum" ]] || { [[ "$package_manager" == "auto" ]] && command -v yum &>/dev/null; }; then
+        yum install -y git wget unzip curl jq socat python3-virtualenv python3-devel gcc make pkgconfig ncurses-devel newt gawk nc uuid zlib-devel zlib libzstd-devel libzstd
     elif [[ "$package_manager" != "none" ]]; then
         echo "No supported package manager found; continuing with existing system packages." >&2
     fi
@@ -131,7 +123,9 @@ getGIT() {
         return 0
     fi
     if wget -O "$tmp" "${repo%".git"}/archive/$branch.zip" && unzip "$tmp" -d "$tmp.folder"; then
-        if mv -fT "$tmp.folder/$(ls "$tmp.folder")" "$target"; then
+        local entries
+        mapfile -t entries < <(find "$tmp.folder" -mindepth 1 -maxdepth 1 -print)
+        if [[ "${#entries[@]}" -eq 1 ]] && mv -fT "${entries[0]}" "$target"; then
             rm -rf "$tmp" "$tmp.folder"
             cd "$previous_dir" || return 1
             return 0

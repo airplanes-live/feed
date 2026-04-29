@@ -77,7 +77,7 @@ else
 
     airplanes_apt_install() {
         if ! apt-get install -y --no-install-recommends --no-install-suggests "$@"; then
-            apt-get update
+            apt-get update || true
             if ! apt-get install -y --no-install-recommends --no-install-suggests "$@"; then
                 apt-get clean || true
                 apt-get -f install -y || true
@@ -92,7 +92,7 @@ else
 
     airplanes_update_packages() {
         local packages
-        packages="git wget unzip curl jq build-essential pkg-config python3-dev socat python3-venv ncurses-dev ncurses-bin uuid-runtime zlib1g-dev zlib1g"
+        packages="git wget unzip curl jq build-essential pkg-config python3-dev socat python3-venv ncurses-dev ncurses-bin uuid-runtime zlib1g-dev zlib1g whiptail mawk"
         if ! airplanes_is_legacy_os; then
             packages+=" libzstd-dev libzstd1"
         fi
@@ -110,10 +110,10 @@ else
             if ! command -v nc &>/dev/null; then
                 airplanes_apt_install netcat-openbsd || true
             fi
-        elif [[ "$package_manager" == "yum" ]] || { [[ "$package_manager" == "auto" ]] && command -v yum &>/dev/null; }; then
-            yum install -y git curl jq socat python3-virtualenv python3-devel gcc make pkgconfig ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
         elif [[ "$package_manager" == "dnf" ]] || { [[ "$package_manager" == "auto" ]] && command -v dnf &>/dev/null; }; then
-            dnf install -y git curl jq socat python3-virtualenv python3-devel gcc make pkgconf-pkg-config ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
+            dnf install -y git wget unzip curl jq socat python3-virtualenv python3-devel gcc make pkgconf-pkg-config ncurses-devel newt gawk nc uuid zlib-devel zlib libzstd-devel libzstd
+        elif [[ "$package_manager" == "yum" ]] || { [[ "$package_manager" == "auto" ]] && command -v yum &>/dev/null; }; then
+            yum install -y git wget unzip curl jq socat python3-virtualenv python3-devel gcc make pkgconfig ncurses-devel newt gawk nc uuid zlib-devel zlib libzstd-devel libzstd
         elif [[ "$package_manager" != "none" ]]; then
             echo "No supported package manager found; continuing with existing system packages." >&2
         fi
@@ -149,7 +149,9 @@ else
             return 0
         fi
         if wget -O "$tmp" "${repo%".git"}/archive/$branch.zip" && unzip "$tmp" -d "$tmp.folder"; then
-            if mv -fT "$tmp.folder/$(ls "$tmp.folder")" "$target"; then
+            local entries
+            mapfile -t entries < <(find "$tmp.folder" -mindepth 1 -maxdepth 1 -print)
+            if [[ "${#entries[@]}" -eq 1 ]] && mv -fT "${entries[0]}" "$target"; then
                 rm -rf "$tmp" "$tmp.folder"
                 cd "$previous_dir" || return 1
                 return 0
@@ -197,7 +199,7 @@ if [[ -f "$GIT/scripts/lib/install-update-common.sh" ]]; then
     airplanes_init_paths
 fi
 
-if [[ ! -f "$IPATH/update.sh" ]] || ! diff "$GIT/update.sh" "$IPATH/update.sh" &>/dev/null; then
+if [[ "$1" != "test" ]] && { [[ ! -f "$IPATH/update.sh" ]] || ! diff "$GIT/update.sh" "$IPATH/update.sh" &>/dev/null; }; then
     rm -f "$IPATH/update.sh"
     cp "$GIT/update.sh" "$IPATH/update.sh"
     bash "$IPATH/update.sh" "$@"
@@ -217,7 +219,7 @@ if [[ -f "$LEGACY_FEED_ENV" && ! -L "$LEGACY_FEED_ENV" ]]; then
 fi
 
 if [[ -f "$FEED_ENV" ]]; then
-    sed -i -e 's/beast_reduce_out,feed.airplanes.live,64004/beast_reduce_plus_out,feed.airplanes.live,64004/g' "$FEED_ENV" || true
+    sed -i -e 's/beast_reduce_out,/beast_reduce_plus_out,/g' "$FEED_ENV" || true
 fi
 
 if [[ -f "$BOOT_ENV" ]]; then
