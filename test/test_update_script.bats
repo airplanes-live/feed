@@ -207,11 +207,11 @@ SH
     [ -f "$root/lib/systemd/system/airplanes-mlat.service" ]
     [ -f "$ipath/airplanes-uuid" ]
     grep -q 'UAT_INPUT="127.0.0.1:30978"' "$root/etc/airplanes/feed.env"
-    grep -q 'beast_reduce_plus_out,feed.airplanes.live,64004' "$root/etc/airplanes/feed.env"
+    grep -q 'beast_reduce_plus_out,feed2.airplanes.live,64004' "$root/etc/airplanes/feed.env"
     [ -L "$root/etc/default/airplanes" ]
     [ "$(readlink "$root/etc/default/airplanes")" = "$root/etc/airplanes/feed.env" ]
     grep -q 'claim register' "$ROOT_DIR/claim.log"
     grep -q -- '--max-retry-time 15' "$ROOT_DIR/claim.log"
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
-    grep -q 'target-at-restart=TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed.airplanes.live,64004"' "$ROOT_DIR/commands.log"
+    grep -q 'target-at-restart=TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"' "$ROOT_DIR/commands.log"
 }

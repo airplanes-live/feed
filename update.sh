@@ -220,6 +220,7 @@ fi
 
 if [[ -f "$FEED_ENV" ]]; then
     sed -i -e 's/beast_reduce_out,/beast_reduce_plus_out,/g' "$FEED_ENV" || true
+    sed -i -e 's/beast_reduce_plus_out,feed\.airplanes\.live,64004/beast_reduce_plus_out,feed2.airplanes.live,64004/g' "$FEED_ENV" || true
 fi
 
 if [[ -f "$BOOT_ENV" ]]; then
