@@ -69,7 +69,7 @@ fi
 LAT_OK=0
 until [ "$LAT_OK" -eq 1 ]; do
     RECEIVERLATITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Latitude ${RECEIVERLATITUDE}" --nocancel --inputbox "\nEnter the latitude of your antenna in degrees with 5 decimal places.\n(Example: 32.36291)" 12 78 3>&1 1>&2 2>&3) || abort
-    if [[ "$RECEIVERLATITUDE" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+    if [[ "$RECEIVERLATITUDE" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]]; then
         LAT_OK=`awk -v LAT="$RECEIVERLATITUDE" 'BEGIN {printf (LAT<90 && LAT>-90 ? "1" : "0")}'`
     else
         LAT_OK=0
@@ -82,7 +82,7 @@ done
 LON_OK=0
 until [ "$LON_OK" -eq 1 ]; do
     RECEIVERLONGITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Longitude ${RECEIVERLONGITUDE}" --nocancel --inputbox "\nEnter the longitude of your antenna in degrees with 5 decimal places.\n(Example: -64.71492)" 12 78 3>&1 1>&2 2>&3) || abort
-    if [[ "$RECEIVERLONGITUDE" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+    if [[ "$RECEIVERLONGITUDE" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]]; then
         LON_OK=`awk -v LON="$RECEIVERLONGITUDE" 'BEGIN {printf (LON<180 && LON>-180 ? "1" : "0")}'`
     else
         LON_OK=0
@@ -155,6 +155,6 @@ INPUT_TYPE="$INPUT_TYPE"
 
 MLATSERVER="feed.airplanes.live:31090"
 TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed.airplanes.live,64004"
-NET_OPTIONS="--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --write-json-every 1 --uuid-file $(airplanes_path /usr/local/share/airplanes/airplanes-uuid)"
+NET_OPTIONS="--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --write-json-every 1 --uuid-file /usr/local/share/airplanes/airplanes-uuid"
 JSON_OPTIONS="--max-range 450 --json-location-accuracy 2 --range-outline-hours 24"
 EOF

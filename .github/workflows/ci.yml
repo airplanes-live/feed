@@ -53,8 +53,9 @@ jobs:
         run: bats test/
 
   installer-smoke:
-    name: installer smoke (${{ matrix.image }})
+    name: installer smoke (${{ matrix.image }}, ${{ matrix.path }})
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -62,33 +63,31 @@ jobs:
         image:
           - debian:13-slim
           - ubuntu:24.04
+        path:
+          - bundled
+          - standalone
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
 
-      - name: Resolve feed ref
-        id: feed-ref
+      - name: Pin local branch ref to HEAD
         env:
-          PR_REPO: ${{ github.event.pull_request.head.repo.clone_url }}
-          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
-          PUSH_REPO: https://github.com/${{ github.repository }}.git
-          PUSH_BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
-          if [ -n "$PR_REPO" ]; then
-            echo "repo=$PR_REPO" >> "$GITHUB_OUTPUT"
-            echo "branch=$PR_BRANCH" >> "$GITHUB_OUTPUT"
-          else
-            echo "repo=$PUSH_REPO" >> "$GITHUB_OUTPUT"
-            echo "branch=$PUSH_BRANCH" >> "$GITHUB_OUTPUT"
-          fi
+          git -C "$PWD" branch -f "$BRANCH" HEAD
 
       - name: Run installer smoke
+        env:
+          FEED_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          IMAGE: ${{ matrix.image }}
+          TEST_PATH: ${{ matrix.path }}
         run: |
           docker run --rm \
-            -e AIRPLANES_FEED_REPO="${{ steps.feed-ref.outputs.repo }}" \
-            -e AIRPLANES_FEED_BRANCH="${{ steps.feed-ref.outputs.branch }}" \
+            -e AIRPLANES_FEED_REPO=file:///workspace \
+            -e AIRPLANES_FEED_BRANCH="$FEED_BRANCH" \
+            -e AIRPLANES_TEST_PATH="$TEST_PATH" \
             -v "$PWD:/workspace:ro" \
-            "${{ matrix.image }}" \
+            "$IMAGE" \
             bash /workspace/test/installer-smoke.sh

@@ -3,6 +3,11 @@ set -euo pipefail
 
 : "${AIRPLANES_FEED_REPO:?AIRPLANES_FEED_REPO is required}"
 : "${AIRPLANES_FEED_BRANCH:?AIRPLANES_FEED_BRANCH is required}"
+TEST_PATH="${AIRPLANES_TEST_PATH:-bundled}"
+case "$TEST_PATH" in
+    bundled|standalone) ;;
+    *) echo "Unknown AIRPLANES_TEST_PATH: $TEST_PATH (expected bundled|standalone)" >&2; exit 1 ;;
+esac
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -79,21 +84,49 @@ PY
 mock_pid=$!
 trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
 
+# Wait for the mock server to bind before continuing.
+ready=0
+for _ in $(seq 1 50); do
+    if python3 -c 'import urllib.request, sys
+try:
+    urllib.request.urlopen("http://127.0.0.1:18080/_probe", timeout=0.2)
+except urllib.error.HTTPError:
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+sys.exit(0)' 2>/dev/null; then
+        ready=1
+        break
+    fi
+    sleep 0.1
+done
+[[ "$ready" -eq 1 ]] || { echo "mock HTTP server did not become ready" >&2; exit 1; }
+
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export APL_FEED_SERVER_URL="http://127.0.0.1:18080"
 export APL_FEED_MAX_RETRY_TIME=5
 export AIRPLANES_PACKAGE_MANAGER=apt
 
-bash /workspace/install.sh
-bash /usr/local/share/airplanes/git/update.sh
+if [[ "$TEST_PATH" == "standalone" ]]; then
+    mkdir -p /tmp/standalone
+    cp /workspace/install.sh /tmp/standalone/install.sh
+    bash /tmp/standalone/install.sh
+else
+    bash /workspace/install.sh
+fi
 
+# Post-install assertions (catch install-only regressions before update repairs them).
 test -d /usr/local/share/airplanes/git
 test -x /usr/local/bin/apl-feed
+test -f /etc/airplanes/feed.env
+
+bash /usr/local/share/airplanes/git/update.sh
+
+# Post-update assertions.
 test -f /usr/local/share/airplanes/airplanes-uuid
 test -f /usr/local/share/airplanes/apl-feed/common.sh
 test -f /lib/systemd/system/airplanes-feed.service
 test -f /lib/systemd/system/airplanes-mlat.service
-test -f /etc/airplanes/feed.env
 test -f /etc/airplanes/claim-secret
 test "$(readlink /etc/default/airplanes)" = "/etc/airplanes/feed.env"
 grep -q 'systemctl restart airplanes-feed' /tmp/systemctl.log

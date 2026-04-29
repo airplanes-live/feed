@@ -70,7 +70,9 @@ else
             return 0
         fi
         if wget -O "$tmp" "${repo%".git"}/archive/$branch.zip" && unzip "$tmp" -d "$tmp.folder"; then
-            if mv -fT "$tmp.folder/$(ls "$tmp.folder")" "$target"; then
+            local entries
+            mapfile -t entries < <(find "$tmp.folder" -mindepth 1 -maxdepth 1 -print)
+            if [[ "${#entries[@]}" -eq 1 ]] && mv -fT "${entries[0]}" "$target"; then
                 rm -rf "$tmp" "$tmp.folder"
                 cd "$previous_dir" || return 1
                 return 0

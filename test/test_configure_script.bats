@@ -1,0 +1,106 @@
+#!/usr/bin/env bats
+
+setup() {
+    CONFIGURE="$BATS_TEST_DIRNAME/../configure.sh"
+    ROOT_DIR="$(mktemp -d)"
+    STUB_DIR="$ROOT_DIR/bin"
+    mkdir -p "$STUB_DIR"
+    WHIPTAIL_LOG="$ROOT_DIR/whiptail.log"
+    WHIPTAIL_COUNTER="$ROOT_DIR/whiptail-counter"
+    write_whiptail_stub
+}
+
+teardown() {
+    rm -rf "$ROOT_DIR"
+}
+
+write_whiptail_stub() {
+    cat > "$STUB_DIR/whiptail" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'whiptail %s\n' "$*" >> "$WHIPTAIL_LOG"
+
+if printf '%s\n' "$@" | grep -q -- '--yesno'; then
+    exit 0
+fi
+
+if printf '%s\n' "$@" | grep -q -- '--inputbox'; then
+    n=0
+    [[ -f "$WHIPTAIL_COUNTER" ]] && n="$(cat "$WHIPTAIL_COUNTER")"
+    n=$((n + 1))
+    printf '%s\n' "$n" > "$WHIPTAIL_COUNTER"
+    value="$(printf '%s' "$WHIPTAIL_INPUTS" | sed -n "${n}p")"
+    printf '%s\n' "$value" >&2
+    exit 0
+fi
+
+# --msgbox and anything else: succeed silently (already logged above).
+exit 0
+SH
+    chmod +x "$STUB_DIR/whiptail"
+}
+
+run_configure() {
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        AIRPLANES_ROOT="$ROOT_DIR" \
+        WHIPTAIL_LOG="$WHIPTAIL_LOG" \
+        WHIPTAIL_COUNTER="$WHIPTAIL_COUNTER" \
+        WHIPTAIL_INPUTS="$1" \
+        bash "$CONFIGURE"
+}
+
+@test "configure.sh accepts canonical decimal latitude and longitude" {
+    run_configure $'ci-feeder\n52.52000\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    grep -q 'LATITUDE="52.52000"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
+    # Hardcoded uuid path (F1 fix): no AIRPLANES_ROOT prefix in feed.env.
+    grep -q '\-\-uuid-file /usr/local/share/airplanes/airplanes-uuid' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -q 'Invalid latitude' "$WHIPTAIL_LOG"
+    ! grep -q 'Invalid longitude' "$WHIPTAIL_LOG"
+}
+
+@test "configure.sh rejects non-numeric latitude with Invalid msgbox" {
+    run_configure $'ci-feeder\nabc\n52.52000\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    # The "Invalid latitude" msgbox fired during the syntax-invalid attempt.
+    grep -q 'Invalid latitude' "$WHIPTAIL_LOG"
+    # Final value is the valid one, not "abc".
+    grep -q 'LATITUDE="52.52000"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh rejects non-numeric longitude with Invalid msgbox" {
+    run_configure $'ci-feeder\n52.52000\nbad\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    grep -q 'Invalid longitude' "$WHIPTAIL_LOG"
+    grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh accepts +signed latitude (regex broadened in F11 fix)" {
+    run_configure $'ci-feeder\n+52.52\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    grep -q 'LATITUDE="+52.52"' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -q 'Invalid latitude' "$WHIPTAIL_LOG"
+}
+
+@test "configure.sh re-prompts silently on out-of-range latitude (regex passes, awk rejects)" {
+    # 91.0 passes the syntax regex but fails the awk range check; the loop
+    # continues without firing the "Invalid latitude" msgbox.
+    run_configure $'ci-feeder\n91.0\n52.52000\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    ! grep -q 'Invalid latitude' "$WHIPTAIL_LOG"
+    grep -q 'LATITUDE="52.52000"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh re-prompts silently on out-of-range longitude" {
+    run_configure $'ci-feeder\n52.52000\n181.0\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    ! grep -q 'Invalid longitude' "$WHIPTAIL_LOG"
+    grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
