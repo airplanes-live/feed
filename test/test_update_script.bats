@@ -84,6 +84,31 @@ NET_OPTIONS="--net-heartbeat 60 --uuid-file /usr/local/share/airplanes/airplanes
 EOF
 }
 
+write_image_boot_config() {
+    local root="$1"
+    mkdir -p "$root/boot" "$root/etc/default" "$root/etc/systemd/system" "$root/usr/bin"
+    echo 'VERSION_ID="13"' > "$root/etc/os-release"
+    ln -s /boot/airplanes-config.txt "$root/etc/default/airplanes"
+    printf 'ExecStart=/usr/local/bin/airplanes-feed.sh\n' > "$root/etc/systemd/system/airplanes-feed.service"
+    printf 'ExecStart=/usr/local/bin/mlat.sh\n' > "$root/etc/systemd/system/airplanes-mlat.service"
+    cat > "$root/boot/airplanes-config.txt" <<'EOF'
+LATITUDE="52.52000"
+LONGITUDE="13.40500"
+ALTITUDE="35m"
+USER="image-feeder"
+MODEAC="yes"
+MLAT_MARKER="no"
+EOF
+    cat > "$root/boot/airplanes-env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+MLATSERVER="feed.airplanes.live:31090"
+RESULTS="--results beast,connect,localhost:30104"
+NET_OPTIONS="--decoder-option-that-must-not-feed"
+JSON_OPTIONS="--json-location-accuracy 2"
+EOF
+}
+
 prepare_skip_build_state() {
     local root="$1"
     local feed_repo="$2"
@@ -102,6 +127,24 @@ prepare_skip_build_state() {
 exit 0
 SH
     chmod +x "$ipath/feed-airplanes"
+}
+
+prepare_image_skip_build_state() {
+    local root="$1"
+    local feed_repo="$2"
+    local mlat_repo="$3"
+    local ipath="$root/usr/local/share/airplanes"
+    mkdir -p "$ipath/venv/bin" "$root/usr/bin"
+    cp "$feed_repo/update.sh" "$ipath/update.sh"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$ipath/venv/bin/mlat-client"
+    chmod +x "$ipath/venv/bin/mlat-client"
+    git -C "$mlat_repo" rev-parse HEAD > "$ipath/mlat_version"
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+[[ "${1:-}" == "-V" ]] && exit 0
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
 }
 
 @test "update.sh replaces a missing or stale installed updater before continuing" {
@@ -213,5 +256,109 @@ SH
     grep -q 'claim register' "$ROOT_DIR/claim.log"
     grep -q -- '--max-retry-time 15' "$ROOT_DIR/claim.log"
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
+    [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
     grep -q 'target-at-restart=TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"' "$ROOT_DIR/commands.log"
+}
+
+@test "update.sh treats lone boot config without image feeder as manual install" {
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local mlat_repo="$ROOT_DIR/mlat-source"
+    local readsb_repo="$ROOT_DIR/readsb-source"
+    local claim_bin="$ROOT_DIR/apl-feed-stub"
+    local ipath="$root/usr/local/share/airplanes"
+
+    copy_feed_fixture_repo "$feed_repo"
+    make_component_repo "$mlat_repo" master
+    make_component_repo "$readsb_repo" dev
+    write_feed_env "$root"
+    mkdir -p "$root/boot"
+    printf 'LATITUDE="52.52000"\n' > "$root/boot/airplanes-config.txt"
+    prepare_skip_build_state "$root" "$feed_repo" "$mlat_repo" "$readsb_repo"
+    install_command_stubs
+    cat > "$claim_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CLAIM_LOG"
+exit 0
+SH
+    chmod +x "$claim_bin"
+
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        COMMAND_LOG="$ROOT_DIR/commands.log" \
+        CLAIM_LOG="$ROOT_DIR/claim.log" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=apt \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        AIRPLANES_MLAT_REPO="$mlat_repo" \
+        AIRPLANES_MLAT_BRANCH=master \
+        AIRPLANES_READSB_REPO="$readsb_repo" \
+        AIRPLANES_READSB_BRANCH=dev \
+        APL_FEED_BIN="$claim_bin" \
+        bash "$UPDATE"
+
+    [ "$status" -eq 0 ]
+    [ -x "$ipath/feed-airplanes" ]
+    [ -L "$root/etc/default/airplanes" ]
+    [ -f "$root/lib/systemd/system/airplanes-feed.service" ]
+    [ ! -e "$root/etc/systemd/system/airplanes-feed.service" ]
+    [ ! -x "$root/usr/bin/airplanes-feeder" ]
+    grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
+    [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
+}
+
+@test "update.sh updates image feed stack without migrating boot config to feed.env" {
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local mlat_repo="$ROOT_DIR/mlat-source"
+    local claim_bin="$ROOT_DIR/apl-feed-stub"
+    local ipath="$root/usr/local/share/airplanes"
+
+    copy_feed_fixture_repo "$feed_repo"
+    make_component_repo "$mlat_repo" master
+    write_image_boot_config "$root"
+    prepare_image_skip_build_state "$root" "$feed_repo" "$mlat_repo"
+    install_command_stubs
+    cat > "$claim_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CLAIM_LOG"
+exit 0
+SH
+    chmod +x "$claim_bin"
+
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        COMMAND_LOG="$ROOT_DIR/commands.log" \
+        CLAIM_LOG="$ROOT_DIR/claim.log" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=apt \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        AIRPLANES_MLAT_REPO="$mlat_repo" \
+        AIRPLANES_MLAT_BRANCH=master \
+        APL_FEED_BIN="$claim_bin" \
+        bash "$UPDATE"
+
+    [ "$status" -eq 0 ]
+    [ -x "$root/usr/local/bin/apl-feed" ]
+    [ -f "$ipath/apl-feed/common.sh" ]
+    [ -f "$root/etc/systemd/system/airplanes-feed.service" ]
+    [ -f "$root/etc/systemd/system/airplanes-mlat.service" ]
+    grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh' "$root/etc/systemd/system/airplanes-feed.service"
+    grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh' "$root/etc/systemd/system/airplanes-mlat.service"
+    grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-feed.service"
+    grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
+    [ ! -e "$root/lib/systemd/system/airplanes-feed.service" ]
+    [ ! -e "$root/lib/systemd/system/airplanes-mlat.service" ]
+    [ -f "$root/boot/airplanes-uuid" ]
+    [ -x "$root/usr/bin/airplanes-feeder" ]
+    [ ! -e "$ipath/feed-airplanes" ]
+    [ ! -e "$root/etc/airplanes/feed.env" ]
+    [ -L "$root/etc/default/airplanes" ]
+    [ "$(readlink "$root/etc/default/airplanes")" = "/boot/airplanes-config.txt" ]
+    grep -q 'feed2.airplanes.live,64004' "$ipath/airplanes-feed.sh"
+    grep -q 'claim register' "$ROOT_DIR/claim.log"
+    grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
+    [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
 }

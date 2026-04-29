@@ -1,10 +1,32 @@
 #!/bin/bash
 
-if grep -qs -e 'LATITUDE' /boot/adsb-config.txt &>/dev/null && [[ -f /boot/airplanes-env ]]; then
-    source /boot/adsb-config.txt
-    source /boot/airplanes-env
+AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
+airplanes_path() {
+    local path="$1"
+    if [[ "$AIRPLANES_ROOT" == "/" ]]; then
+        printf '%s' "$path"
+    else
+        printf '%s%s' "${AIRPLANES_ROOT%/}" "$path"
+    fi
+}
+
+BOOT_CONFIG="$(airplanes_path /boot/airplanes-config.txt)"
+BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
+FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
+
+if [[ -f "$BOOT_CONFIG" && -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]; then
+    source "$BOOT_CONFIG"
+    [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
 else
-    source /etc/airplanes/feed.env
+    source "$FEED_ENV"
+fi
+
+if [[ "${MLAT_MARKER:-}" == "no" ]]; then
+    PRIVACY="--privacy"
+elif [[ -n "${MLAT_MARKER:-}" ]]; then
+    PRIVACY=""
+else
+    PRIVACY="${PRIVACY:-}"
 fi
 
 if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$USER" == 0 ]] || [[ "$USER" == "disable" ]]; then
@@ -23,7 +45,7 @@ while ! nc -z "$INPUT_IP" "$INPUT_PORT" && command -v nc &>/dev/null; do
     sleep 10
 done
 
-exec /usr/local/share/airplanes/venv/bin/mlat-client \
+exec "$(airplanes_path /usr/local/share/airplanes/venv/bin/mlat-client)" \
     --input-type "$INPUT_TYPE" --no-udp \
     --input-connect "$INPUT" \
     --server "$MLATSERVER" \
@@ -32,5 +54,5 @@ exec /usr/local/share/airplanes/venv/bin/mlat-client \
     --lon "$LONGITUDE" \
     --alt "$ALTITUDE" \
     $PRIVACY \
-    $UUID_FILE \
+    ${UUID_FILE:-} \
     $RESULTS $RESULTS1 $RESULTS2 $RESULTS3 $RESULTS4

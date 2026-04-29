@@ -91,3 +91,31 @@ jobs:
             -v "$PWD:/workspace:ro" \
             "$IMAGE" \
             bash /workspace/test/installer-smoke.sh
+
+  image-rootfs-smoke:
+    name: image rootfs smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout feed
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          path: feed
+
+      - name: Checkout image updater
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: airplanes-live/airplanes-update
+          path: airplanes-update
+
+      - name: Run image rootfs smoke
+        run: |
+          docker run --rm \
+            -e AIRPLANES_FEED_DIR=/feed \
+            -e AIRPLANES_UPDATE_DIR=/airplanes-update \
+            -v "$PWD/feed:/feed:ro" \
+            -v "$PWD/airplanes-update:/airplanes-update:ro" \
+            debian:13-slim \
+            bash /feed/test/image-rootfs-smoke.sh
