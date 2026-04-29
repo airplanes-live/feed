@@ -29,7 +29,12 @@
 
 set -e
 trap 'echo "[ERROR] Error in line $LINENO when executing: $BASH_COMMAND"' ERR
-renice 10 $$ &>/dev/null
+renice 10 $$ &>/dev/null || true
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/install-update-common.sh
+source "$SCRIPT_DIR/scripts/lib/install-update-common.sh"
+airplanes_init_paths
 
 function abort() {
     echo ------------
@@ -62,21 +67,31 @@ fi
 
 #((-90 <= RECEIVERLATITUDE <= 90))
 LAT_OK=0
-until [ $LAT_OK -eq 1 ]; do
+until [ "$LAT_OK" -eq 1 ]; do
     RECEIVERLATITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Latitude ${RECEIVERLATITUDE}" --nocancel --inputbox "\nEnter the latitude of your antenna in degrees with 5 decimal places.\n(Example: 32.36291)" 12 78 3>&1 1>&2 2>&3) || abort
-    LAT_OK=`awk -v LAT="$RECEIVERLATITUDE" 'BEGIN {printf (LAT<90 && LAT>-90 ? "1" : "0")}'`
+    if [[ "$RECEIVERLATITUDE" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+        LAT_OK=`awk -v LAT="$RECEIVERLATITUDE" 'BEGIN {printf (LAT<90 && LAT>-90 ? "1" : "0")}'`
+    else
+        LAT_OK=0
+        whiptail --backtitle "$BACKTITLETEXT" --title "Invalid latitude" --msgbox "Latitude must be a decimal number." 10 60 || abort
+    fi
 done
 
 
 #((-180<= RECEIVERLONGITUDE <= 180))
 LON_OK=0
-until [ $LON_OK -eq 1 ]; do
+until [ "$LON_OK" -eq 1 ]; do
     RECEIVERLONGITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Longitude ${RECEIVERLONGITUDE}" --nocancel --inputbox "\nEnter the longitude of your antenna in degrees with 5 decimal places.\n(Example: -64.71492)" 12 78 3>&1 1>&2 2>&3) || abort
-    LON_OK=`awk -v LON="$RECEIVERLONGITUDE" 'BEGIN {printf (LON<180 && LON>-180 ? "1" : "0")}'`
+    if [[ "$RECEIVERLONGITUDE" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+        LON_OK=`awk -v LON="$RECEIVERLONGITUDE" 'BEGIN {printf (LON<180 && LON>-180 ? "1" : "0")}'`
+    else
+        LON_OK=0
+        whiptail --backtitle "$BACKTITLETEXT" --title "Invalid longitude" --msgbox "Longitude must be a decimal number." 10 60 || abort
+    fi
 done
 
 ALT=0
-until [[ "$NOSPACENAME" == 0 ]] || [[ $ALT =~ ^(-?[0-9]*)ft$ ]] || [[ $ALT =~ ^(-?[0-9]*)m$ ]]; do
+until [[ "$NOSPACENAME" == 0 ]] || [[ $ALT =~ ^-?[0-9]+ft$ ]] || [[ $ALT =~ ^-?[0-9]+m$ ]]; do
     ALT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Altitude above sea level (at the antenna):" \
         --nocancel --inputbox \
 "\nEnter the altitude of your antenna, above sea level, including the unit with no spaces:\n\n\
@@ -85,12 +100,12 @@ or in meters like this:               78m\n" \
         12 78 3>&1 1>&2 2>&3) || abort
 done
 
-if [[ $ALT =~ ^-(.*)ft$ ]]; then
+if [[ $ALT =~ ^-([0-9]+)ft$ ]]; then
         NUM=${BASH_REMATCH[1]}
         NEW_ALT=`echo "$NUM" "3.28" | awk '{printf "-%0.2f", $1 / $2 }'`
         ALT=$NEW_ALT
 fi
-if [[ $ALT =~ ^-(.*)m$ ]]; then
+if [[ $ALT =~ ^-([0-9]+)m$ ]]; then
         NEW_ALT="-${BASH_REMATCH[1]}"
         ALT=$NEW_ALT
 fi
@@ -111,8 +126,8 @@ if [[ "$HOSTNAME_VAL" == "radarcape" ]] || { command -v pgrep &>/dev/null && pgr
     INPUT_TYPE="radarcape_gps"
 fi
 
-mkdir -p /etc/airplanes
-tee /etc/airplanes/feed.env >/dev/null <<EOF
+mkdir -p "$ETC_AIRPLANES"
+tee "$FEED_ENV" >/dev/null <<EOF
 INPUT="$INPUT"
 REDUCE_INTERVAL="0.5"
 
@@ -140,7 +155,6 @@ INPUT_TYPE="$INPUT_TYPE"
 
 MLATSERVER="feed.airplanes.live:31090"
 TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed.airplanes.live,64004"
-NET_OPTIONS="--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --write-json-every 1 --uuid-file /usr/local/share/airplanes/airplanes-uuid"
+NET_OPTIONS="--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --write-json-every 1 --uuid-file $(airplanes_path /usr/local/share/airplanes/airplanes-uuid)"
 JSON_OPTIONS="--max-range 450 --json-location-accuracy 2 --range-outline-hours 24"
 EOF
-

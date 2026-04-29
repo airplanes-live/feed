@@ -51,3 +51,44 @@ jobs:
 
       - name: Run bats suite
         run: bats test/
+
+  installer-smoke:
+    name: installer smoke (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - debian:13-slim
+          - ubuntu:24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve feed ref
+        id: feed-ref
+        env:
+          PR_REPO: ${{ github.event.pull_request.head.repo.clone_url }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PUSH_REPO: https://github.com/${{ github.repository }}.git
+          PUSH_BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ -n "$PR_REPO" ]; then
+            echo "repo=$PR_REPO" >> "$GITHUB_OUTPUT"
+            echo "branch=$PR_BRANCH" >> "$GITHUB_OUTPUT"
+          else
+            echo "repo=$PUSH_REPO" >> "$GITHUB_OUTPUT"
+            echo "branch=$PUSH_BRANCH" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run installer smoke
+        run: |
+          docker run --rm \
+            -e AIRPLANES_FEED_REPO="${{ steps.feed-ref.outputs.repo }}" \
+            -e AIRPLANES_FEED_BRANCH="${{ steps.feed-ref.outputs.branch }}" \
+            -v "$PWD:/workspace:ro" \
+            "${{ matrix.image }}" \
+            bash /workspace/test/installer-smoke.sh

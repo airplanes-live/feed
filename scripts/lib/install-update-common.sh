@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Shared helpers for the installer and updater. The scripts are still usable
+# when downloaded standalone; install.sh and update.sh keep a small fallback for
+# that bootstrap case.
+
+AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
+AIRPLANES_FEED_REPO="${AIRPLANES_FEED_REPO:-https://github.com/airplanes-live/feed.git}"
+AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-main}"
+
+airplanes_path() {
+    local path="$1"
+    if [[ "$AIRPLANES_ROOT" == "/" ]]; then
+        printf '%s' "$path"
+    else
+        printf '%s%s' "${AIRPLANES_ROOT%/}" "$path"
+    fi
+}
+
+airplanes_init_paths() {
+    IPATH="$(airplanes_path /usr/local/share/airplanes)"
+    GIT="$IPATH/git"
+    LOGFILE="$IPATH/lastlog"
+    BOOT_CONFIG="$(airplanes_path /boot/airplanes-config.txt)"
+    BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
+    ETC_AIRPLANES="$(airplanes_path /etc/airplanes)"
+    FEED_ENV="$ETC_AIRPLANES/feed.env"
+    LEGACY_FEED_ENV="$(airplanes_path /etc/default/airplanes)"
+    LOCAL_BIN="$(airplanes_path /usr/local/bin)"
+    SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
+}
+
+airplanes_require_root() {
+    if [[ "${AIRPLANES_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
+        return 0
+    fi
+    if [[ "$(id -u)" != "0" ]]; then
+        echo -e "\033[33m"
+        echo "This script must be ran using sudo or as root."
+        echo -e "\033[37m"
+        exit 1
+    fi
+}
+
+airplanes_refuse_image_install() {
+    [[ -f "$BOOT_CONFIG" ]] || return 0
+    echo --------
+    echo "You are using the airplanes.live image, the feed setup script does not need to be installed."
+    echo --------
+    exit 1
+}
+
+airplanes_apt_install() {
+    if ! apt-get install -y --no-install-recommends --no-install-suggests "$@"; then
+        apt-get update
+        if ! apt-get install -y --no-install-recommends --no-install-suggests "$@"; then
+            apt-get clean || true
+            apt-get -f install -y || true
+            apt-get install --no-install-recommends --no-install-suggests -y "$@"
+        fi
+    fi
+}
+
+airplanes_is_legacy_os() {
+    grep -E 'wheezy|jessie' "$(airplanes_path /etc/os-release)" -qs
+}
+
+airplanes_install_bootstrap_deps() {
+    if ! command -v git &>/dev/null || ! command -v wget &>/dev/null || ! command -v unzip &>/dev/null || ! command -v whiptail &>/dev/null || ! command -v awk &>/dev/null; then
+        apt-get update || true
+        apt-get install -y --no-install-recommends --no-install-suggests git wget unzip whiptail mawk || true
+    fi
+}
+
+airplanes_update_packages() {
+    local packages
+    packages="git wget unzip curl jq build-essential pkg-config python3-dev socat python3-venv ncurses-dev ncurses-bin uuid-runtime zlib1g-dev zlib1g"
+    if ! airplanes_is_legacy_os; then
+        packages+=" libzstd-dev libzstd1"
+    fi
+    printf '%s' "$packages"
+}
+
+airplanes_install_update_deps() {
+    local packages package_manager
+    packages="$(airplanes_update_packages)"
+    package_manager="${AIRPLANES_PACKAGE_MANAGER:-auto}"
+
+    if [[ "$package_manager" == "apt" ]] || { [[ "$package_manager" == "auto" ]] && command -v apt-get &>/dev/null; }; then
+        # shellcheck disable=SC2086
+        airplanes_apt_install $packages
+        if ! command -v nc &>/dev/null; then
+            airplanes_apt_install netcat-openbsd || true
+        fi
+    elif [[ "$package_manager" == "yum" ]] || { [[ "$package_manager" == "auto" ]] && command -v yum &>/dev/null; }; then
+        yum install -y git curl jq socat python3-virtualenv python3-devel gcc make pkgconfig ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
+    elif [[ "$package_manager" == "dnf" ]] || { [[ "$package_manager" == "auto" ]] && command -v dnf &>/dev/null; }; then
+        dnf install -y git curl jq socat python3-virtualenv python3-devel gcc make pkgconf-pkg-config ncurses-devel nc uuid zlib-devel zlib libzstd-devel libzstd
+    elif [[ "$package_manager" != "none" ]]; then
+        echo "No supported package manager found; continuing with existing system packages." >&2
+    fi
+}
+
+revision() {
+    git rev-parse HEAD 2>/dev/null || echo "$RANDOM-$RANDOM"
+}
+
+getGIT() {
+    # getGIT REPO BRANCH TARGET-DIR
+    local repo branch target tmp previous_dir
+    if [[ -z "$1" ]] || [[ -z "$2" ]] || [[ -z "$3" ]]; then
+        echo "getGIT wrong usage, check your script or tell the author!" 1>&2
+        return 1
+    fi
+    repo="$1"
+    branch="$2"
+    target="$3"
+    previous_dir="$(pwd)"
+    tmp="/tmp/getGIT-tmp.$RANDOM.$RANDOM"
+
+    if cd "$target" &>/dev/null && [[ "$(git remote get-url origin)" == "$repo" ]] && git fetch --depth 1 origin "$branch" && git reset --hard FETCH_HEAD; then
+        cd "$previous_dir" || return 1
+        return 0
+    fi
+
+    cd "$previous_dir" || return 1
+    if ! cd /tmp || ! rm -rf "$target"; then
+        return 1
+    fi
+    if git clone --depth 1 --single-branch --branch "$branch" "$repo" "$target"; then
+        cd "$previous_dir" || return 1
+        return 0
+    fi
+    if wget -O "$tmp" "${repo%".git"}/archive/$branch.zip" && unzip "$tmp" -d "$tmp.folder"; then
+        if mv -fT "$tmp.folder/$(ls "$tmp.folder")" "$target"; then
+            rm -rf "$tmp" "$tmp.folder"
+            cd "$previous_dir" || return 1
+            return 0
+        fi
+    fi
+    rm -rf "$tmp" "$tmp.folder"
+    cd "$previous_dir" || return 1
+    return 1
+}
