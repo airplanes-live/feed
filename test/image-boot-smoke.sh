@@ -555,7 +555,7 @@ UNIT
 }
 
 qemu_command() {
-    local kernel dtb cmdline qemu_bin machine cpu initrd
+    local kernel dtb cmdline qemu_bin machine cpu smp initrd
     local -a args
     kernel="$(cat "$BOOT_FILES/kernel-name")"
     dtb="$(cat "$BOOT_FILES/dtb-name")"
@@ -565,10 +565,12 @@ qemu_command() {
         qemu_bin="qemu-system-aarch64"
         machine="raspi3b"
         cpu="cortex-a53"
+        smp="4"
     else
         qemu_bin="qemu-system-arm"
         machine="raspi2b"
         cpu=""
+        smp="1"
     fi
 
     require_command "$qemu_bin"
@@ -577,7 +579,7 @@ qemu_command() {
         args+=(-cpu "$cpu")
     fi
     args+=(
-        -smp 1
+        -smp "$smp"
         -m 1G
         -kernel "$BOOT_FILES/$kernel"
         -dtb "$BOOT_FILES/$dtb"
