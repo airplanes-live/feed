@@ -150,6 +150,20 @@ extract_image() {
     ls -lh "$IMAGE_FILE"
 }
 
+resize_image_for_qemu_sd() {
+    local size target
+    size="$(stat -c '%s' "$IMAGE_FILE")"
+    target=1
+    while ((target < size)); do
+        target=$((target * 2))
+    done
+    if ((target != size)); then
+        echo "Padding image to QEMU SD power-of-two size: $target bytes"
+        truncate -s "$target" "$IMAGE_FILE"
+        ls -lh "$IMAGE_FILE"
+    fi
+}
+
 partition_values() {
     local part="$1"
     parted -ms "$IMAGE_FILE" unit B print \
@@ -486,6 +500,7 @@ main() {
     echo "Work dir: $WORK_DIR"
     df -h .
     extract_image "$image_archive"
+    resize_image_for_qemu_sd
     make_feed_repo
     make_mlat_repo
 
