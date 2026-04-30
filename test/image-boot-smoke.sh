@@ -246,7 +246,7 @@ prepare_boot_files() {
     cmdline="${cmdline//console=serial0/console=ttyAMA0,115200}"
     cmdline="$(printf '%s\n' "$cmdline" \
         | sed -E 's/(^| )init=[^ ]+//g; s/(^| )quiet( |$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
-    printf '%s systemd.unit=multi-user.target systemd.show_status=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
+    printf '%s systemd.unit=multi-user.target systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
     printf '%s\n' "$kernel" > "$BOOT_FILES/kernel-name"
     printf '%s\n' "$dtb" > "$BOOT_FILES/dtb-name"
 }
@@ -416,6 +416,7 @@ qemu_command() {
     printf '%q ' \
         "$qemu_bin" \
         -M "$machine" \
+        -smp 1 \
         -m 1G \
         -kernel "$BOOT_FILES/$kernel" \
         -dtb "$BOOT_FILES/$dtb" \
