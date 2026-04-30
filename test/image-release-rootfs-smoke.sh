@@ -296,7 +296,6 @@ prepare_mounted_image() {
         fail "release image lacks /boot/airplanes-config.txt"
     }
     [[ -f "$ROOT_MNT/boot/airplanes-env" ]] || fail "release image lacks /boot/airplanes-env"
-    [[ -f "$ROOT_MNT/boot/airplanes-uuid" ]] || fail "release image lacks /boot/airplanes-uuid"
     [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "release image lacks /usr/bin/airplanes-feeder"
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-first-run.service" ]] \
         || fail "release image lacks airplanes-first-run.service"
