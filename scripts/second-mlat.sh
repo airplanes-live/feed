@@ -39,7 +39,9 @@ Nice=-1
 WantedBy=default.target
 EOF
 
-if [[ -f /boot/adsb-config.txt ]]; then
+if [[ -f /boot/airplanes-config.txt ]]; then
+    sed -i -e 's#EnvironmentFile.*#EnvironmentFile=/boot/airplanes-env\nEnvironmentFile=/boot/airplanes-config.txt#' "$SERVICE"
+elif [[ -f /boot/adsb-config.txt ]]; then
     sed -i -e 's#EnvironmentFile.*#EnvironmentFile=/boot/airplanes-env\nEnvironmentFile=/boot/adsb-config.txt#' "$SERVICE"
 fi
 

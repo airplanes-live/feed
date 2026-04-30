@@ -203,6 +203,32 @@ PY
     [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret.version")" = "3" ]
 }
 
+@test "top-level status reads image boot config and env" {
+    rm -f "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    mkdir -p "$ROOT_DIR/boot" "$ROOT_DIR/usr/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/boot/airplanes-uuid"
+    cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
+USER="image-feeder"
+LATITUDE="52.52000"
+LONGITUDE="13.40500"
+EOF
+    cat > "$ROOT_DIR/boot/airplanes-env" <<'EOF'
+INPUT="127.0.0.1:30006"
+EOF
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    start_fixed_server 200 "$(contract_body status authenticated_recent)"
+
+    run "$SCRIPT" status --root "$ROOT_DIR" --server-url "$(mock_url)"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Receiver input" ]]
+    [[ "$output" =~ "connected at 127.0.0.1:30006" ]]
+    [[ "$output" =~ "Result: feeding looks healthy" ]]
+}
+
 @test "top-level status json omits raw claim secret" {
     echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
     chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"

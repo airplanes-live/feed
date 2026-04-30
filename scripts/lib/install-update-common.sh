@@ -29,6 +29,14 @@ airplanes_init_paths() {
     SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
 }
 
+airplanes_is_image_install() {
+    [[ -f "$BOOT_CONFIG" && -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]
+}
+
+airplanes_image_target_default() {
+    printf '%s' '--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004'
+}
+
 airplanes_require_root() {
     if [[ "${AIRPLANES_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
         return 0

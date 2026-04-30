@@ -78,7 +78,23 @@ secret_version_path() {
 }
 
 feed_env_path() {
+    if [[ -f "$(root_path '/boot/airplanes-config.txt')" && -x "$(root_path '/usr/bin/airplanes-feeder')" ]]; then
+        root_path '/boot/airplanes-config.txt'
+        return
+    fi
     root_path '/etc/airplanes/feed.env'
+}
+
+feed_env_paths() {
+    if [[ -f "$(root_path '/boot/airplanes-config.txt')" && -x "$(root_path '/usr/bin/airplanes-feeder')" ]]; then
+        root_path '/boot/airplanes-config.txt'
+        printf '\n'
+        root_path '/boot/airplanes-env'
+        printf '\n'
+        return
+    fi
+    feed_env_path
+    printf '\n'
 }
 
 require_jq() {
@@ -149,14 +165,19 @@ read_version_file() {
 
 feed_env_get() {
     local key="$1"
-    local path
-    path="$(feed_env_path)"
-    [[ -f "$path" ]] || return 1
-    sed -n \
-        -e "s/^${key}=\"\\(.*\\)\"[[:space:]]*$/\\1/p" \
-        -e "s/^${key}='\\(.*\\)'[[:space:]]*$/\\1/p" \
-        -e "s/^${key}=\\([^#[:space:]]*\\).*$/\\1/p" \
-        "$path" | tail -n 1
+    local path output
+    output="$(
+        while IFS= read -r path; do
+            [[ -f "$path" ]] || continue
+            sed -n \
+                -e "s/^${key}=\"\\(.*\\)\"[[:space:]]*$/\\1/p" \
+                -e "s/^${key}='\\(.*\\)'[[:space:]]*$/\\1/p" \
+                -e "s/^${key}=\\([^#[:space:]]*\\).*$/\\1/p" \
+                "$path"
+        done < <(feed_env_paths)
+    )"
+    [[ -n "$output" ]] || return 1
+    printf '%s\n' "$output" | tail -n 1
 }
 
 read_uuid() {

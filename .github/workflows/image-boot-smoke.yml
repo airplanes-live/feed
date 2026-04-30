@@ -1,0 +1,59 @@
+name: Image boot smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_release_repo:
+        description: GitHub repository that publishes the image release
+        required: false
+        default: airplanes-live/image-releases
+      image_asset_regex:
+        description: Regex used to select the release asset
+        required: false
+        default: '(?i)\.(img|img\.xz|img\.gz|zip|7z)$'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image-boot-smoke:
+    name: latest image boot + update + reboot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout feed
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
+
+      - name: Install QEMU smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            jq \
+            parted \
+            p7zip-full \
+            qemu-system-arm \
+            qemu-user-static \
+            rsync \
+            file \
+            unzip \
+            xz-utils
+
+      - name: Run booted image smoke
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AIRPLANES_IMAGE_RELEASE_REPO: ${{ github.event.inputs.image_release_repo || 'airplanes-live/image-releases' }}
+          AIRPLANES_IMAGE_ASSET_REGEX: ${{ github.event.inputs.image_asset_regex || '(?i)\.(img|img\.xz|img\.gz|zip|7z)$' }}
+          AIRPLANES_BOOT_SMOKE_WORK_DIR: ${{ runner.temp }}/airplanes-image-boot-smoke
+        run: |
+          sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_ASSET_REGEX,AIRPLANES_BOOT_SMOKE_WORK_DIR \
+            bash test/image-boot-smoke.sh

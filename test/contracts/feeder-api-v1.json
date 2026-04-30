@@ -79,7 +79,7 @@
         "status": 423,
         "body": {
           "error": "reset_locked",
-          "reset_until": "2026-04-29T18:42:00+00:00"
+          "reset_until": "2099-01-01T00:00:00+00:00"
         }
       }
     },

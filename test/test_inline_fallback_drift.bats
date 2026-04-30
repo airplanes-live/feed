@@ -94,6 +94,8 @@ function_body() {
     for fn in \
         airplanes_path \
         airplanes_init_paths \
+        airplanes_is_image_install \
+        airplanes_image_target_default \
         airplanes_require_root \
         airplanes_apt_install \
         airplanes_is_legacy_os \

@@ -63,6 +63,14 @@ else
         SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
     }
 
+    airplanes_is_image_install() {
+        [[ -f "$BOOT_CONFIG" && -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]
+    }
+
+    airplanes_image_target_default() {
+        printf '%s' '--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004'
+    }
+
     airplanes_require_root() {
         if [[ "${AIRPLANES_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
             return 0
@@ -170,11 +178,9 @@ fi
 airplanes_init_paths
 airplanes_require_root
 
-if [[ -f "$BOOT_CONFIG" ]]; then
-    echo --------
-    echo "You are using the airplanes.live image, the feed setup script does not need to be installed."
-    echo --------
-    exit 1
+IMAGE_INSTALL=0
+if airplanes_is_image_install; then
+    IMAGE_INSTALL=1
 fi
 
 mkdir -p "$IPATH"
@@ -205,45 +211,70 @@ if [[ "$1" != "test" ]] && { [[ ! -f "$IPATH/update.sh" ]] || ! diff "$GIT/updat
     bash "$IPATH/update.sh" "$@"
     exit $?
 fi
+if [[ "$IMAGE_INSTALL" == "1" ]]; then
+    # Image builds ship these units in /etc/systemd/system, which overrides /lib.
+    SYSTEMD_DIR="$(airplanes_path /etc/systemd/system)"
+fi
 
 # shellcheck source=scripts/lib/systemd-helpers.sh
 source "$GIT/scripts/lib/systemd-helpers.sh"
 # shellcheck source=scripts/lib/claim-registration.sh
 source "$GIT/scripts/lib/claim-registration.sh"
 
-# Migrate the env file from /etc/default/airplanes to /etc/airplanes/feed.env.
-# Idempotent: only fires when a regular file still exists at the legacy path.
-mkdir -p "$ETC_AIRPLANES"
-if [[ -f "$LEGACY_FEED_ENV" && ! -L "$LEGACY_FEED_ENV" ]]; then
-    cp -fp "$LEGACY_FEED_ENV" "$FEED_ENV"
-fi
+if [[ "$IMAGE_INSTALL" == "1" ]]; then
+    source "$BOOT_CONFIG"
+    [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
 
-if [[ -f "$FEED_ENV" ]]; then
-    sed -i -e 's/beast_reduce_out,/beast_reduce_plus_out,/g' "$FEED_ENV" || true
-    sed -i -e 's/beast_reduce_plus_out,feed\.airplanes\.live,64004/beast_reduce_plus_out,feed2.airplanes.live,64004/g' "$FEED_ENV" || true
-fi
+    USER="${USER:-airplanes_initial}"
+    LATITUDE="${LATITUDE:-0}"
+    LONGITUDE="${LONGITUDE:-0}"
+    ALTITUDE="${ALTITUDE:-0}"
+    INPUT="${INPUT:-127.0.0.1:30005}"
+    INPUT_TYPE="${INPUT_TYPE:-dump1090}"
+    REDUCE_INTERVAL="${REDUCE_INTERVAL:-0.5}"
+    MLATSERVER="${MLATSERVER:-feed.airplanes.live:31090}"
+    TARGET="${TARGET:-$(airplanes_image_target_default)}"
+    JSON_OPTIONS="${JSON_OPTIONS:-"--json-location-accuracy 2"}"
+else
+    # Migrate the env file from /etc/default/airplanes to /etc/airplanes/feed.env.
+    # Idempotent: only fires when a regular file still exists at the legacy path.
+    mkdir -p "$ETC_AIRPLANES"
+    if [[ -f "$LEGACY_FEED_ENV" && ! -L "$LEGACY_FEED_ENV" ]]; then
+        cp -fp "$LEGACY_FEED_ENV" "$FEED_ENV"
+    fi
 
-if [[ -f "$BOOT_ENV" ]]; then
-    source "$BOOT_ENV"
-elif [[ -f "$FEED_ENV" ]]; then
-    source "$FEED_ENV"
-    if ! grep -qs -e UAT_INPUT "$FEED_ENV"; then
-        cat >> "$FEED_ENV" <<"EOF"
+    if [[ -f "$FEED_ENV" ]]; then
+        sed -i -e 's/beast_reduce_out,/beast_reduce_plus_out,/g' "$FEED_ENV" || true
+        sed -i -e 's/beast_reduce_plus_out,feed\.airplanes\.live,64004/beast_reduce_plus_out,feed2.airplanes.live,64004/g' "$FEED_ENV" || true
+    fi
+
+    if [[ -f "$BOOT_ENV" ]]; then
+        source "$BOOT_ENV"
+    elif [[ -f "$FEED_ENV" ]]; then
+        source "$FEED_ENV"
+        if ! grep -qs -e UAT_INPUT "$FEED_ENV"; then
+            cat >> "$FEED_ENV" <<"EOF"
 
 # this is the source for 978 data, use port 30978 from dump978 --raw-port
 # if you're not receiving 978, don't worry about it, not doing any harm!
 UAT_INPUT="127.0.0.1:30978"
 EOF
+        fi
     fi
 fi
 if [[ -z $INPUT ]] || [[ -z $INPUT_TYPE ]] || [[ -z $USER ]] \
     || [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]] \
-    || [[ -z $MLATSERVER ]] || [[ -z $TARGET ]] || [[ -z $NET_OPTIONS ]]; then
+    || [[ -z $MLATSERVER ]] || [[ -z $TARGET ]] \
+    || { [[ "$IMAGE_INSTALL" != "1" ]] && [[ -z $NET_OPTIONS ]]; }; then
+    if [[ "$IMAGE_INSTALL" == "1" ]]; then
+        echo "Image configuration is incomplete; refusing to run interactive setup on an image." >&2
+        exit 1
+    fi
     bash "$GIT/setup.sh"
     exit 0
 fi
 
-if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$USER" == 0 ]]; then
+if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$USER" == 0 ]] || [[ "$USER" == "disable" ]]; then
     MLAT_DISABLED=1
 else
     MLAT_DISABLED=0
@@ -336,9 +367,15 @@ fi
 
 echo 50
 
-# copy airplanes-mlat service file
+# copy airplanes-feed and airplanes-mlat service files
 mkdir -p "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-mlat.service "$SYSTEMD_DIR"
+cp "$GIT"/scripts/airplanes-feed.service "$SYSTEMD_DIR"
+if [[ "$IMAGE_INSTALL" == "1" ]]; then
+    sed -i '/^\[Service\]$/i After=airplanes-first-run.service' "$SYSTEMD_DIR/airplanes-mlat.service"
+    sed -i '/^\[Service\]$/i After=airplanes-first-run.service' "$SYSTEMD_DIR/airplanes-feed.service"
+fi
+systemctl daemon-reload >> "$LOGFILE" || true
 
 echo 60
 
@@ -364,53 +401,62 @@ echo 70
 
 # SETUP FEEDER TO SEND DUMP1090 DATA TO airplanes.live
 
-READSB_REPO="${AIRPLANES_READSB_REPO:-https://github.com/airplanes-live/readsb.git}"
-READSB_BRANCH="${AIRPLANES_READSB_BRANCH:-dev}"
-if airplanes_is_legacy_os; then
-    READSB_BRANCH="jessie"
-fi
-READSB_VERSION="$(git ls-remote "$READSB_REPO" "$READSB_BRANCH" | cut -f1 || echo "$RANDOM-$RANDOM" )"
-READSB_GIT="$IPATH/readsb-git"
-READSB_BIN="$IPATH/feed-airplanes"
-if [[ $REINSTALL != yes ]] && grep -e "$READSB_VERSION" -qs "$IPATH/readsb_version" \
-    && "$READSB_BIN" -V && systemctl is-active airplanes-feed &>/dev/null
-then
+if [[ "$IMAGE_INSTALL" == "1" ]]; then
+    READSB_BIN="$(airplanes_path /usr/bin/airplanes-feeder)"
+    if [[ ! -x "$READSB_BIN" ]]; then
+        echo "Image feed binary missing at $READSB_BIN; run the image updater first." >&2
+        exit 1
+    fi
     echo
-    echo "Feed client already installed, git hash:"
-    cat "$IPATH/readsb_version"
+    echo "Using image-provided feed client: $READSB_BIN"
     echo
 else
-    echo
-    echo "Compiling / installing the readsb based feed client"
-    echo
+    READSB_REPO="${AIRPLANES_READSB_REPO:-https://github.com/airplanes-live/readsb.git}"
+    READSB_BRANCH="${AIRPLANES_READSB_BRANCH:-dev}"
+    if airplanes_is_legacy_os; then
+        READSB_BRANCH="jessie"
+    fi
+    READSB_VERSION="$(git ls-remote "$READSB_REPO" "$READSB_BRANCH" | cut -f1 || echo "$RANDOM-$RANDOM" )"
+    READSB_GIT="$IPATH/readsb-git"
+    READSB_BIN="$IPATH/feed-airplanes"
+    if [[ $REINSTALL != yes ]] && grep -e "$READSB_VERSION" -qs "$IPATH/readsb_version" \
+        && "$READSB_BIN" -V && systemctl is-active airplanes-feed &>/dev/null
+    then
+        echo
+        echo "Feed client already installed, git hash:"
+        cat "$IPATH/readsb_version"
+        echo
+    else
+        echo
+        echo "Compiling / installing the readsb based feed client"
+        echo
 
-    #compile readsb
-    echo 72
+        #compile readsb
+        echo 72
 
-    # getGIT REPO BRANCH TARGET-DIR
-    getGIT "$READSB_REPO" "$READSB_BRANCH" "$READSB_GIT" &> "$LOGFILE"
+        # getGIT REPO BRANCH TARGET-DIR
+        getGIT "$READSB_REPO" "$READSB_BRANCH" "$READSB_GIT" &> "$LOGFILE"
 
-    cd "$READSB_GIT"
+        cd "$READSB_GIT"
 
-    echo "-----------------------------------------------"
-    echo "Now compiling code can take a few minutes"
-    echo "-----------------------------------------------"
+        echo "-----------------------------------------------"
+        echo "Now compiling code can take a few minutes"
+        echo "-----------------------------------------------"
 
-    echo 74
+        echo 74
 
-    make clean
-    make -j2 AIRCRAFT_HASH_BITS=12 >> "$LOGFILE"
-    echo 80
-    rm -f "$READSB_BIN"
-    cp readsb "$READSB_BIN"
-    revision > "$IPATH/readsb_version" || rm -f "$IPATH/readsb_version"
+        make clean
+        make -j2 AIRCRAFT_HASH_BITS=12 >> "$LOGFILE"
+        echo 80
+        rm -f "$READSB_BIN"
+        cp readsb "$READSB_BIN"
+        revision > "$IPATH/readsb_version" || rm -f "$IPATH/readsb_version"
 
-    echo
+        echo
+    fi
 fi
 
 #end compile readsb
-
-cp "$GIT"/scripts/airplanes-feed.service "$SYSTEMD_DIR"
 
 echo 82
 
@@ -474,14 +520,16 @@ if grep -qs 'SERVER_HOSTPORT.*feed.airplanes.live' "$MLAT_CLIENT_DEFAULT" &>/dev
     systemctl disable --now mlat-client >> "$LOGFILE" 2>&1 || true
 fi
 
-# Replace the legacy regular file with a compat symlink, only after the
-# services have been restarted using the new path (above). Idempotent:
-# ln -sfn updates an existing symlink in place.
-mkdir -p "$(dirname "$LEGACY_FEED_ENV")"
-if [[ -f "$LEGACY_FEED_ENV" && ! -L "$LEGACY_FEED_ENV" ]]; then
-    rm -f "$LEGACY_FEED_ENV"
+if [[ "$IMAGE_INSTALL" != "1" ]]; then
+    # Replace the legacy regular file with a compat symlink, only after the
+    # services have been restarted using the new path (above). Idempotent:
+    # ln -sfn updates an existing symlink in place.
+    mkdir -p "$(dirname "$LEGACY_FEED_ENV")"
+    if [[ -f "$LEGACY_FEED_ENV" && ! -L "$LEGACY_FEED_ENV" ]]; then
+        rm -f "$LEGACY_FEED_ENV"
+    fi
+    ln -sfn "$FEED_ENV" "$LEGACY_FEED_ENV"
 fi
-ln -sfn "$FEED_ENV" "$LEGACY_FEED_ENV"
 
 echo 100
 echo "---------------------"
