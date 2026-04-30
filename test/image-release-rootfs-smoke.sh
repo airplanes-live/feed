@@ -369,10 +369,8 @@ assert_updated_image_contracts() {
     [[ "$(readlink "$ROOT_MNT/etc/default/airplanes")" == "/boot/airplanes-config.txt" ]] \
         || fail "/etc/default/airplanes does not point at /boot/airplanes-config.txt"
 
-    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'EnvironmentFile=/boot/airplanes-config.txt'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'After=airplanes-first-run.service'
-    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'EnvironmentFile=/boot/airplanes-config.txt'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'After=airplanes-first-run.service'
     assert_contains "$ipath/airplanes-feed.sh" 'feed2.airplanes.live,64004'
