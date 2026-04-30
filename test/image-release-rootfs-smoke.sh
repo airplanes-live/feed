@@ -160,15 +160,24 @@ partition_values() {
 }
 
 mount_partitions() {
-    local boot_start boot_size root_start root_size
+    local boot_start boot_size root_start root_size configured_boot
     mkdir -p "$ROOT_MNT"
     read -r boot_start boot_size < <(partition_values 1)
     read -r root_start root_size < <(partition_values 2)
     [[ -n "${boot_start:-}" && -n "${root_start:-}" ]] || fail "could not read image partition table"
 
     mount -o "loop,offset=$root_start,sizelimit=$root_size,rw" "$IMAGE_FILE" "$ROOT_MNT"
-    mkdir -p "$BOOT_MNT"
-    mount -o "loop,offset=$boot_start,sizelimit=$boot_size,rw" "$IMAGE_FILE" "$BOOT_MNT"
+
+    configured_boot="$(awk '$2 == "/boot" || $2 == "/boot/firmware" { print $2; exit }' "$ROOT_MNT/etc/fstab" 2>/dev/null || true)"
+    if [[ -n "$configured_boot" ]]; then
+        BOOT_MNT="$ROOT_MNT$configured_boot"
+        mkdir -p "$BOOT_MNT"
+        mount -o "loop,offset=$boot_start,sizelimit=$boot_size,rw" "$IMAGE_FILE" "$BOOT_MNT"
+        echo "Mounted image boot partition at $configured_boot"
+    else
+        BOOT_MNT="$ROOT_MNT/boot"
+        echo "Image fstab does not mount a boot partition; using rootfs /boot"
+    fi
 }
 
 make_repo() {
@@ -281,7 +290,11 @@ prepare_mounted_image() {
     local ipath mlat_version
     ipath="$ROOT_MNT/usr/local/share/airplanes"
 
-    [[ -f "$ROOT_MNT/boot/airplanes-config.txt" ]] || fail "release image lacks /boot/airplanes-config.txt"
+    [[ -f "$ROOT_MNT/boot/airplanes-config.txt" ]] || {
+        echo "Observed /boot contents:" >&2
+        find "$ROOT_MNT/boot" -maxdepth 2 -mindepth 1 -printf '%P\n' | sort | head -n 80 >&2 || true
+        fail "release image lacks /boot/airplanes-config.txt"
+    }
     [[ -f "$ROOT_MNT/boot/airplanes-env" ]] || fail "release image lacks /boot/airplanes-env"
     [[ -f "$ROOT_MNT/boot/airplanes-uuid" ]] || fail "release image lacks /boot/airplanes-uuid"
     [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "release image lacks /usr/bin/airplanes-feeder"
