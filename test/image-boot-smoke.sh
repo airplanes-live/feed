@@ -66,6 +66,42 @@ require_commands() {
     done
 }
 
+cmdline_set_arg() {
+    local cmdline="$1"
+    local key="$2"
+    local value="$3"
+    local arg found
+    local -a args output
+    read -r -a args <<< "$cmdline"
+    found=0
+    output=()
+    for arg in "${args[@]}"; do
+        if [[ "$arg" == "$key="* ]]; then
+            output+=("$key=$value")
+            found=1
+        else
+            output+=("$arg")
+        fi
+    done
+    if [[ "$found" == "0" ]]; then
+        output+=("$key=$value")
+    fi
+    printf '%s\n' "${output[*]}"
+}
+
+cmdline_add_flag() {
+    local cmdline="$1"
+    local flag="$2"
+    local arg
+    for arg in $cmdline; do
+        if [[ "$arg" == "$flag" ]]; then
+            printf '%s\n' "$cmdline"
+            return 0
+        fi
+    done
+    printf '%s %s\n' "$cmdline" "$flag"
+}
+
 github_api() {
     local url="$1"
     local -a headers
@@ -170,6 +206,21 @@ partition_values() {
         | awk -F: -v part="$part" '$1 == part { gsub(/B/, "", $2); gsub(/B/, "", $4); print $2, $4 }'
 }
 
+partition_uuid() {
+    local part="$1"
+    local disk_id uuid
+    if uuid="$(sfdisk --part-uuid "$IMAGE_FILE" "$part" 2>/dev/null)" && [[ -n "$uuid" ]]; then
+        printf '%s\n' "$uuid"
+        return 0
+    fi
+    if disk_id="$(sfdisk --disk-id "$IMAGE_FILE" 2>/dev/null)" && [[ "$disk_id" == 0x* ]]; then
+        disk_id="${disk_id#0x}"
+        printf '%s-%02x\n' "${disk_id,,}" "$part"
+        return 0
+    fi
+    return 1
+}
+
 mount_partitions() {
     local boot_start boot_size root_start root_size
     mkdir -p "$ROOT_MNT" "$BOOT_MNT"
@@ -221,34 +272,139 @@ copy_boot_file() {
     cp "$BOOT_MNT/$name" "$BOOT_FILES/$name"
 }
 
+copy_optional_boot_file() {
+    local name="$1"
+    if [[ -f "$BOOT_MNT/$name" ]]; then
+        cp "$BOOT_MNT/$name" "$BOOT_FILES/$name"
+        return 0
+    fi
+    return 1
+}
+
+select_initrd() {
+    local kernel="$1"
+    local config="$BOOT_MNT/config.txt"
+    local explicit candidate
+    if [[ -f "$config" ]]; then
+        explicit="$(awk '
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*initramfs[[:space:]]+/ { print $2; exit }
+        ' "$config")"
+        if [[ -n "$explicit" && -f "$BOOT_MNT/$explicit" ]]; then
+            printf '%s\n' "$explicit"
+            return 0
+        fi
+    fi
+
+    case "$kernel" in
+        kernel8.img)
+            for candidate in initramfs8 initramfs_2710 initrd.img; do
+                [[ -f "$BOOT_MNT/$candidate" ]] && printf '%s\n' "$candidate" && return 0
+            done
+            ;;
+        kernel7l.img)
+            for candidate in initramfs7l initramfs_2711 initrd.img; do
+                [[ -f "$BOOT_MNT/$candidate" ]] && printf '%s\n' "$candidate" && return 0
+            done
+            ;;
+        kernel7.img)
+            for candidate in initramfs7 initramfs_2709 initrd.img; do
+                [[ -f "$BOOT_MNT/$candidate" ]] && printf '%s\n' "$candidate" && return 0
+            done
+            ;;
+        kernel.img)
+            for candidate in initramfs initrd.img; do
+                [[ -f "$BOOT_MNT/$candidate" ]] && printf '%s\n' "$candidate" && return 0
+            done
+            ;;
+    esac
+    return 1
+}
+
+try_dtmerge() {
+    local source_dtb="$1"
+    local output_dtb="$2"
+    local dtmerge="$ROOT_MNT/usr/bin/dtmerge"
+    local emulator
+    [[ -x "$dtmerge" ]] || return 1
+
+    case "$(file -b "$dtmerge")" in
+        *aarch64*)
+            emulator="qemu-aarch64-static"
+            ;;
+        *ARM*)
+            emulator="qemu-arm-static"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    command -v "$emulator" >/dev/null 2>&1 || return 1
+
+    "$emulator" -L "$ROOT_MNT" "$dtmerge" "$source_dtb" "$output_dtb" - uart0=on >/dev/null 2>&1 \
+        || return 1
+    if [[ -f "$BOOT_MNT/overlays/disable-bt.dtbo" ]]; then
+        "$emulator" -L "$ROOT_MNT" "$dtmerge" "$output_dtb" "$output_dtb.tmp" \
+            "$BOOT_MNT/overlays/disable-bt.dtbo" >/dev/null 2>&1 \
+            || return 1
+        mv "$output_dtb.tmp" "$output_dtb"
+    fi
+}
+
+prepare_qemu_dtb() {
+    local dtb="$1"
+    local merged="qemu-$dtb"
+    if try_dtmerge "$BOOT_FILES/$dtb" "$BOOT_FILES/$merged"; then
+        echo "Prepared QEMU DTB with uart0=on and disable-bt overlay when available: $merged" >&2
+        printf '%s\n' "$merged"
+        return 0
+    fi
+    echo "Using unmodified DTB: $dtb" >&2
+    printf '%s\n' "$dtb"
+}
+
 prepare_boot_files() {
-    local kernel dtb cmdline
+    local kernel dtb qemu_dtb cmdline initrd root_partuuid
     mkdir -p "$BOOT_FILES"
 
-    if [[ -f "$BOOT_MNT/kernel7.img" ]]; then
+    if [[ -f "$BOOT_MNT/kernel8.img" ]]; then
+        kernel="kernel8.img"
+        dtb="bcm2710-rpi-3-b.dtb"
+    elif [[ -f "$BOOT_MNT/kernel7.img" ]]; then
         kernel="kernel7.img"
         dtb="bcm2709-rpi-2-b.dtb"
     elif [[ -f "$BOOT_MNT/kernel7l.img" ]]; then
         kernel="kernel7l.img"
         dtb="bcm2711-rpi-4-b.dtb"
-    elif [[ -f "$BOOT_MNT/kernel8.img" ]]; then
-        kernel="kernel8.img"
-        dtb="bcm2710-rpi-3-b.dtb"
     else
         fail "no supported Raspberry Pi kernel found in boot partition"
     fi
 
     copy_boot_file "$kernel"
     copy_boot_file "$dtb"
+    qemu_dtb="$(prepare_qemu_dtb "$dtb")"
+    if initrd="$(select_initrd "$kernel")"; then
+        copy_optional_boot_file "$initrd"
+        printf '%s\n' "$initrd" > "$BOOT_FILES/initrd-name"
+        echo "Using initramfs for direct QEMU boot: $initrd"
+    else
+        rm -f "$BOOT_FILES/initrd-name"
+        echo "No initramfs selected for direct QEMU boot"
+    fi
 
     cmdline="$(tr -d '\n' < "$BOOT_MNT/cmdline.txt")"
     cmdline="${cmdline//console=serial0,115200/console=ttyAMA0,115200}"
     cmdline="${cmdline//console=serial0/console=ttyAMA0,115200}"
     cmdline="$(printf '%s\n' "$cmdline" \
         | sed -E 's/(^| )init=[^ ]+//g; s/(^| )quiet( |$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    if root_partuuid="$(partition_uuid 2)"; then
+        cmdline="$(cmdline_set_arg "$cmdline" root "PARTUUID=$root_partuuid")"
+    fi
+    cmdline="$(cmdline_add_flag "$cmdline" rootwait)"
+    cmdline="$(cmdline_set_arg "$cmdline" rootfstype ext4)"
     printf '%s systemd.unit=multi-user.target systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
     printf '%s\n' "$kernel" > "$BOOT_FILES/kernel-name"
-    printf '%s\n' "$dtb" > "$BOOT_FILES/dtb-name"
+    printf '%s\n' "$qemu_dtb" > "$BOOT_FILES/dtb-name"
 }
 
 write_guest_probe() {
@@ -399,7 +555,8 @@ UNIT
 }
 
 qemu_command() {
-    local kernel dtb cmdline qemu_bin machine
+    local kernel dtb cmdline qemu_bin machine cpu initrd
+    local -a args
     kernel="$(cat "$BOOT_FILES/kernel-name")"
     dtb="$(cat "$BOOT_FILES/dtb-name")"
     cmdline="$(cat "$BOOT_FILES/cmdline.txt")"
@@ -407,26 +564,38 @@ qemu_command() {
     if [[ "$kernel" == "kernel8.img" ]]; then
         qemu_bin="qemu-system-aarch64"
         machine="raspi3b"
+        cpu="cortex-a53"
     else
         qemu_bin="qemu-system-arm"
         machine="raspi2b"
+        cpu=""
     fi
 
     require_command "$qemu_bin"
-    printf '%q ' \
-        "$qemu_bin" \
-        -M "$machine" \
-        -smp 1 \
-        -m 1G \
-        -kernel "$BOOT_FILES/$kernel" \
-        -dtb "$BOOT_FILES/$dtb" \
-        -append "$cmdline" \
-        -drive "file=$IMAGE_FILE,format=raw,if=sd" \
-        -netdev user,id=net0 \
-        -device usb-net,netdev=net0 \
-        -serial mon:stdio \
-        -display none \
+    args=("$qemu_bin" -M "$machine")
+    if [[ -n "$cpu" ]]; then
+        args+=(-cpu "$cpu")
+    fi
+    args+=(
+        -smp 1
+        -m 1G
+        -kernel "$BOOT_FILES/$kernel"
+        -dtb "$BOOT_FILES/$dtb"
+    )
+    if [[ -f "$BOOT_FILES/initrd-name" ]]; then
+        initrd="$(cat "$BOOT_FILES/initrd-name")"
+        args+=(-initrd "$BOOT_FILES/$initrd")
+    fi
+    args+=(
+        -append "$cmdline"
+        -drive "file=$IMAGE_FILE,format=raw,if=sd"
+        -netdev "user,id=net0"
+        -device "usb-net,netdev=net0"
+        -serial mon:stdio
+        -display none
         -no-reboot
+    )
+    printf '%q ' "${args[@]}"
 }
 
 run_one_boot() {
@@ -491,7 +660,7 @@ run_boot_smoke() {
 
 main() {
     local image_archive
-    require_commands curl jq git rsync parted awk mount umount find cp tee timeout
+    require_commands curl jq git rsync parted sfdisk awk mount umount find cp tee timeout file
     require_commands unzip xz gzip
     if [[ -n "${AIRPLANES_IMAGE_PATH:-}" ]]; then
         image_archive="$AIRPLANES_IMAGE_PATH"

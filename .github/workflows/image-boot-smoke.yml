@@ -42,7 +42,9 @@ jobs:
             parted \
             p7zip-full \
             qemu-system-arm \
+            qemu-user-static \
             rsync \
+            file \
             unzip \
             xz-utils
 
