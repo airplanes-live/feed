@@ -244,7 +244,9 @@ prepare_boot_files() {
     cmdline="$(tr -d '\n' < "$BOOT_MNT/cmdline.txt")"
     cmdline="${cmdline//console=serial0,115200/console=ttyAMA0,115200}"
     cmdline="${cmdline//console=serial0/console=ttyAMA0,115200}"
-    printf '%s systemd.unit=multi-user.target\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
+    cmdline="$(printf '%s\n' "$cmdline" \
+        | sed -E 's/(^| )init=[^ ]+//g; s/(^| )quiet( |$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    printf '%s systemd.unit=multi-user.target systemd.show_status=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
     printf '%s\n' "$kernel" > "$BOOT_FILES/kernel-name"
     printf '%s\n' "$dtb" > "$BOOT_FILES/dtb-name"
 }
