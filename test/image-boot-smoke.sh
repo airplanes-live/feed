@@ -6,7 +6,7 @@ if [[ "$(id -u)" != "0" ]]; then
 fi
 
 FEED_DIR="${AIRPLANES_FEED_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
-IMAGE_RELEASE_REPO="${AIRPLANES_IMAGE_RELEASE_REPO:-airplanes-live/airplanes-ImageBuilder}"
+IMAGE_RELEASE_REPO="${AIRPLANES_IMAGE_RELEASE_REPO:-airplanes-live/image-releases}"
 IMAGE_ASSET_REGEX="${AIRPLANES_IMAGE_ASSET_REGEX:-(?i)\\.(img|img\\.xz|img\\.gz|zip|7z)$}"
 FEED_BRANCH="${AIRPLANES_BOOT_SMOKE_FEED_BRANCH:-boot-smoke}"
 QEMU_TIMEOUT="${AIRPLANES_BOOT_SMOKE_QEMU_TIMEOUT:-45m}"
