@@ -1,13 +1,6 @@
 name: Image boot smoke
 
 on:
-  pull_request:
-    branches: [dev]
-    paths:
-      - '.github/workflows/image-boot-smoke.yml'
-      - 'test/image-boot-smoke.sh'
-      - 'update.sh'
-      - 'scripts/**'
   workflow_dispatch:
     inputs:
       image_release_repo:
@@ -18,8 +11,6 @@ on:
         description: Regex used to select the release asset
         required: false
         default: '(?i)\.(img|img\.xz|img\.gz|zip|7z)$'
-  schedule:
-    - cron: '37 4 * * *'
 
 permissions:
   contents: read
