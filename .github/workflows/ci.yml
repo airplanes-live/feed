@@ -119,3 +119,37 @@ jobs:
             -v "$PWD/airplanes-update:/airplanes-update:ro" \
             debian:13-slim \
             bash /feed/test/image-rootfs-smoke.sh
+
+  image-release-rootfs-smoke:
+    name: image release rootfs smoke
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 45
+    steps:
+      - name: Checkout feed
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install image smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            jq \
+            parted \
+            p7zip-full \
+            rsync \
+            unzip \
+            xz-utils
+
+      - name: Run mounted release image smoke
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AIRPLANES_IMAGE_RELEASE_REPO: airplanes-live/image-releases
+          AIRPLANES_RELEASE_ROOTFS_WORK_DIR: ${{ runner.temp }}/airplanes-image-release-rootfs-smoke
+        run: |
+          sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
+            bash test/image-release-rootfs-smoke.sh
