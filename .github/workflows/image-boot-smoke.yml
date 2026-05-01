@@ -6,11 +6,23 @@ on:
       image_release_repo:
         description: GitHub repository that publishes the image release
         required: false
-        default: airplanes-live/image-releases
-      image_asset_regex:
-        description: Regex used to select the release asset
+        default: airplanes-live/image
+      image_contract:
+        description: Expected image contract: new or legacy
         required: false
-        default: '(?i)\.(img|img\.xz|img\.gz|zip|7z)$'
+        default: new
+      image_channel:
+        description: Image release channel to select when no explicit regex is provided
+        required: false
+        default: stable
+      image_arch:
+        description: Image architecture to select when no explicit regex is provided
+        required: false
+        default: arm64
+      image_asset_regex:
+        description: Optional regex used to select the release asset
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -51,9 +63,12 @@ jobs:
       - name: Run booted image smoke
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          AIRPLANES_IMAGE_RELEASE_REPO: ${{ github.event.inputs.image_release_repo || 'airplanes-live/image-releases' }}
-          AIRPLANES_IMAGE_ASSET_REGEX: ${{ github.event.inputs.image_asset_regex || '(?i)\.(img|img\.xz|img\.gz|zip|7z)$' }}
+          AIRPLANES_IMAGE_RELEASE_REPO: ${{ github.event.inputs.image_release_repo || 'airplanes-live/image' }}
+          AIRPLANES_IMAGE_CONTRACT: ${{ github.event.inputs.image_contract || 'new' }}
+          AIRPLANES_IMAGE_CHANNEL: ${{ github.event.inputs.image_channel || 'stable' }}
+          AIRPLANES_IMAGE_ARCH: ${{ github.event.inputs.image_arch || 'arm64' }}
+          AIRPLANES_IMAGE_ASSET_REGEX: ${{ github.event.inputs.image_asset_regex || '' }}
           AIRPLANES_BOOT_SMOKE_WORK_DIR: ${{ runner.temp }}/airplanes-image-boot-smoke
         run: |
-          sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_ASSET_REGEX,AIRPLANES_BOOT_SMOKE_WORK_DIR \
+          sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_IMAGE_CHANNEL,AIRPLANES_IMAGE_ARCH,AIRPLANES_IMAGE_ASSET_REGEX,AIRPLANES_BOOT_SMOKE_WORK_DIR \
             bash test/image-boot-smoke.sh

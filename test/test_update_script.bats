@@ -27,7 +27,7 @@ install_command_stubs() {
     write_stub id 'if [[ "$1" == "-u" && "${2:-}" == "airplanes" ]]; then exit 0; fi; if [[ "$1" == "-u" ]]; then echo 0; exit 0; fi; /usr/bin/id "$@"'
     write_stub systemctl 'printf "systemctl %s\n" "$*" >> "$COMMAND_LOG"; if [[ "$1" == "restart" && "${2:-}" == "airplanes-feed" && -n "${SYSTEMCTL_FEED_ENV:-}" ]]; then printf "target-at-restart=%s\n" "$(grep "^TARGET=" "$SYSTEMCTL_FEED_ENV")" >> "$COMMAND_LOG"; fi; if [[ "$1" == "is-enabled" ]]; then echo disabled; exit 0; fi; exit 0'
     write_stub journalctl 'exit 0'
-    write_stub pgrep 'exit 1'
+    write_stub pgrep 'printf "pgrep %s\n" "$*" >> "$COMMAND_LOG"; exit 1'
     write_stub nc 'exit 1'
     write_stub sleep 'exit 0'
     write_stub renice 'exit 0'
@@ -262,6 +262,56 @@ SH
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
     [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
     grep -q 'target-at-restart=TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"' "$ROOT_DIR/commands.log"
+}
+
+@test "update.sh build mode enables units without live systemd or per-device state" {
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local mlat_repo="$ROOT_DIR/mlat-source"
+    local readsb_repo="$ROOT_DIR/readsb-source"
+    local claim_bin="$ROOT_DIR/apl-feed-stub"
+
+    copy_feed_fixture_repo "$feed_repo"
+    make_component_repo "$mlat_repo" master
+    make_component_repo "$readsb_repo" dev
+    write_feed_env "$root"
+    prepare_skip_build_state "$root" "$feed_repo" "$mlat_repo" "$readsb_repo"
+    install_command_stubs
+    cat > "$claim_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CLAIM_LOG"
+exit 0
+SH
+    chmod +x "$claim_bin"
+
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        COMMAND_LOG="$ROOT_DIR/commands.log" \
+        CLAIM_LOG="$ROOT_DIR/claim.log" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_BUILD_MODE=1 \
+        AIRPLANES_PACKAGE_MANAGER=apt \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        AIRPLANES_MLAT_REPO="$mlat_repo" \
+        AIRPLANES_MLAT_BRANCH=master \
+        AIRPLANES_READSB_REPO="$readsb_repo" \
+        AIRPLANES_READSB_BRANCH=dev \
+        APL_FEED_BIN="$claim_bin" \
+        bash "$UPDATE"
+
+    [ "$status" -eq 0 ]
+    grep -q 'systemctl enable airplanes-feed' "$ROOT_DIR/commands.log"
+    grep -q 'systemctl enable airplanes-mlat' "$ROOT_DIR/commands.log"
+    ! grep -q 'systemctl restart' "$ROOT_DIR/commands.log"
+    ! grep -q 'systemctl stop' "$ROOT_DIR/commands.log"
+    ! grep -q 'systemctl is-active' "$ROOT_DIR/commands.log"
+    ! grep -q 'systemctl daemon-reload' "$ROOT_DIR/commands.log"
+    ! grep -q '^pgrep ' "$ROOT_DIR/commands.log"
+    [ ! -e "$root/etc/airplanes/feeder-id" ]
+    [ ! -e "$root/usr/local/share/airplanes/airplanes-uuid" ]
+    [ ! -e "$ROOT_DIR/claim.log" ]
+    [[ "$output" =~ "Build mode setup complete" ]]
 }
 
 @test "update.sh treats lone boot config without image feeder as manual install" {

@@ -74,6 +74,20 @@ else
         printf '%s' '--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004'
     }
 
+    airplanes_is_build_mode() {
+        [[ "${AIRPLANES_BUILD_MODE:-0}" == "1" || "${AIRPLANES_BUILD_MODE:-}" == "true" || "${AIRPLANES_BUILD_MODE:-}" == "yes" ]]
+    }
+
+    airplanes_enable_build_mode_from_args() {
+        local arg
+        for arg in "$@"; do
+            if [[ "$arg" == "--build-mode" ]]; then
+                AIRPLANES_BUILD_MODE=1
+                export AIRPLANES_BUILD_MODE
+            fi
+        done
+    }
+
     airplanes_require_root() {
         if [[ "${AIRPLANES_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
             return 0
@@ -173,6 +187,8 @@ else
         return 1
     }
 fi
+
+airplanes_enable_build_mode_from_args "$@"
 
 if [[ $1 == reinstall ]]; then
     REINSTALL=yes
@@ -324,7 +340,7 @@ MLAT_REPO="${AIRPLANES_MLAT_REPO:-https://github.com/airplanes-live/mlat-client}
 MLAT_BRANCH="${AIRPLANES_MLAT_BRANCH:-master}"
 MLAT_VERSION="$(git ls-remote "$MLAT_REPO" "$MLAT_BRANCH" | cut -f1 || echo "$RANDOM-$RANDOM" )"
 if [[ $REINSTALL != yes ]] && grep -e "$MLAT_VERSION" -qs "$IPATH/mlat_version" \
-    && grep -qs -e '#!' "$VENV/bin/mlat-client" && { systemctl is-active airplanes-mlat &>/dev/null || [[ "${MLAT_DISABLED}" == "1" ]]; }
+    && grep -qs -e '#!' "$VENV/bin/mlat-client" && { airplanes_is_build_mode || systemctl is-active airplanes-mlat &>/dev/null || [[ "${MLAT_DISABLED}" == "1" ]]; }
 then
     echo
     echo "mlat-client already installed, git hash:"
@@ -383,11 +399,15 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
     sed -i '/^\[Service\]$/i After=airplanes-first-run.service' "$SYSTEMD_DIR/airplanes-mlat.service"
     sed -i '/^\[Service\]$/i After=airplanes-first-run.service' "$SYSTEMD_DIR/airplanes-feed.service"
 fi
-systemctl daemon-reload >> "$LOGFILE" || true
+if ! airplanes_is_build_mode; then
+    systemctl daemon-reload >> "$LOGFILE" || true
+fi
 
 echo 60
 
-if is_unit_masked airplanes-mlat.service; then
+if airplanes_is_build_mode; then
+    systemctl enable airplanes-mlat >> "$LOGFILE" || true
+elif is_unit_masked airplanes-mlat.service; then
     echo "--------------------"
     echo "CAUTION, airplanes-mlat is masked and won't run!"
     echo "If this is unexpected for you, please report this issue."
@@ -428,7 +448,7 @@ else
     READSB_GIT="$IPATH/readsb-git"
     READSB_BIN="$IPATH/feed-airplanes"
     if [[ $REINSTALL != yes ]] && grep -e "$READSB_VERSION" -qs "$IPATH/readsb_version" \
-        && "$READSB_BIN" -V && systemctl is-active airplanes-feed &>/dev/null
+        && "$READSB_BIN" -V && { airplanes_is_build_mode || systemctl is-active airplanes-feed &>/dev/null; }
     then
         echo
         echo "Feed client already installed, git hash:"
@@ -468,7 +488,10 @@ fi
 
 echo 82
 
-if ! is_unit_masked airplanes-feed.service; then
+if airplanes_is_build_mode; then
+    systemctl enable airplanes-feed >> "$LOGFILE" || true
+    echo 92
+elif ! is_unit_masked airplanes-feed.service; then
     # Enable airplanes-feed service
     systemctl enable airplanes-feed >> "$LOGFILE" || true
     echo 92
@@ -484,47 +507,54 @@ fi
 
 echo 94
 
-systemctl is-active airplanes-feed &>/dev/null || {
-    rm -f "$IPATH/readsb_version"
-    echo "---------------------------------"
-    journalctl -u airplanes-feed | tail -n10
-    echo "---------------------------------"
-    echo "airplanes-feed service couldn't be started, please report this error on Discord."
-    echo "Try an copy as much of the output above and include it in your report, thank you!"
-    echo "---------------------------------"
-    exit 1
-}
+if ! airplanes_is_build_mode; then
+    systemctl is-active airplanes-feed &>/dev/null || {
+        rm -f "$IPATH/readsb_version"
+        echo "---------------------------------"
+        journalctl -u airplanes-feed | tail -n10
+        echo "---------------------------------"
+        echo "airplanes-feed service couldn't be started, please report this error on Discord."
+        echo "Try an copy as much of the output above and include it in your report, thank you!"
+        echo "---------------------------------"
+        exit 1
+    }
+fi
 
 echo 96
-[[ "${MLAT_DISABLED}" == "1" ]] || systemctl is-active airplanes-mlat &>/dev/null || {
-    rm -f "$IPATH/mlat_version"
-    echo "---------------------------------"
-    journalctl -u airplanes-mlat | tail -n10
-    echo "---------------------------------"
-    echo "airplanes-mlat service couldn't be started, please report this error on Discord."
-    echo "Try an copy as much of the output above and include it in your report, thank you!"
-    echo "---------------------------------"
-    exit 1
-}
 
-register_claim_secret
+if ! airplanes_is_build_mode; then
+    [[ "${MLAT_DISABLED}" == "1" ]] || systemctl is-active airplanes-mlat &>/dev/null || {
+        rm -f "$IPATH/mlat_version"
+        echo "---------------------------------"
+        journalctl -u airplanes-mlat | tail -n10
+        echo "---------------------------------"
+        echo "airplanes-mlat service couldn't be started, please report this error on Discord."
+        echo "Try an copy as much of the output above and include it in your report, thank you!"
+        echo "---------------------------------"
+        exit 1
+    }
+
+    register_claim_secret
+fi
 
 # Remove old method of starting the feed scripts if present from rc.local
 # Kill the old airplanes.live scripts in case they are still running from a previous install including spawned programs
 RC_LOCAL="$(airplanes_path /etc/rc.local)"
-for name in airplanes-netcat_maint.sh airplanes-socat_maint.sh airplanes-mlat_maint.sh; do
-    if [[ -f "$RC_LOCAL" ]] && grep -qs -e "$name" "$RC_LOCAL"; then
-        sed -i -e "/$name/d" "$RC_LOCAL" || true
-    fi
-    if PID="$(pgrep -f "$name" 2>/dev/null)" && PIDS="$PID $(pgrep -P "$PID" 2>/dev/null)"; then
-        echo killing: "$PIDS" >> "$LOGFILE" 2>&1 || true
-        kill -9 $PIDS >> "$LOGFILE" 2>&1 || true
-    fi
-done
+if ! airplanes_is_build_mode; then
+    for name in airplanes-netcat_maint.sh airplanes-socat_maint.sh airplanes-mlat_maint.sh; do
+        if [[ -f "$RC_LOCAL" ]] && grep -qs -e "$name" "$RC_LOCAL"; then
+            sed -i -e "/$name/d" "$RC_LOCAL" || true
+        fi
+        if PID="$(pgrep -f "$name" 2>/dev/null)" && PIDS="$PID $(pgrep -P "$PID" 2>/dev/null)"; then
+            echo killing: "$PIDS" >> "$LOGFILE" 2>&1 || true
+            kill -9 $PIDS >> "$LOGFILE" 2>&1 || true
+        fi
+    done
+fi
 
 # in case the mlat-client service using /etc/default/mlat-client as config is using airplanes.live as a host, disable the service
 MLAT_CLIENT_DEFAULT="$(airplanes_path /etc/default/mlat-client)"
-if grep -qs 'SERVER_HOSTPORT.*feed.airplanes.live' "$MLAT_CLIENT_DEFAULT" &>/dev/null; then
+if ! airplanes_is_build_mode && grep -qs 'SERVER_HOSTPORT.*feed.airplanes.live' "$MLAT_CLIENT_DEFAULT" &>/dev/null; then
     systemctl disable --now mlat-client >> "$LOGFILE" 2>&1 || true
 fi
 
@@ -588,7 +618,9 @@ https://github.com/wiedehopf/adsb-scripts/wiki/Automatic-installation-for-readsb
 "
 fi
 
-if ! timeout 5 nc -z "$INPUT_IP" "$INPUT_PORT" && command -v nc &>/dev/null; then
+if airplanes_is_build_mode; then
+    echo "Build mode setup complete; skipping receiver connectivity probe."
+elif ! timeout 5 nc -z "$INPUT_IP" "$INPUT_PORT" && command -v nc &>/dev/null; then
     #whiptail --title "airplanes.live Setup Script" --msgbox "$ENDTEXT2" 24 73
     echo -e "$ENDTEXT2"
 else

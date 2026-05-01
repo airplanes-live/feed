@@ -53,7 +53,7 @@ last_line_containing() {
 @test "update.sh sources and calls claim registration helper" {
     local source_line call_line
     source_line="$(line_of_exact 'source "$GIT/scripts/lib/claim-registration.sh"')"
-    call_line="$(line_of_exact 'register_claim_secret')"
+    call_line="$(last_line_containing 'register_claim_secret')"
 
     [ -n "$source_line" ]
     [ -n "$call_line" ]
@@ -64,7 +64,7 @@ last_line_containing() {
     local feed_check_line mlat_check_line call_line
     feed_check_line="$(last_line_containing 'systemctl is-active airplanes-feed')"
     mlat_check_line="$(last_line_containing 'systemctl is-active airplanes-mlat')"
-    call_line="$(line_of_exact 'register_claim_secret')"
+    call_line="$(last_line_containing 'register_claim_secret')"
 
     [ -n "$feed_check_line" ]
     [ -n "$mlat_check_line" ]

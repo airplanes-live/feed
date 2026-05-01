@@ -34,6 +34,7 @@ renice 10 $$ &>/dev/null || true
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/install-update-common.sh
 source "$SCRIPT_DIR/scripts/lib/install-update-common.sh"
+airplanes_enable_build_mode_from_args "$@"
 airplanes_init_paths
 
 function abort() {
@@ -48,90 +49,54 @@ function abort() {
 
 BACKTITLETEXT="airplanes.live Setup Script"
 
-whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "Thanks for choosing to share your data with airplanes.live!\n\nairplanes.live is a co-op of ADS-B/Mode S/MLAT feeders from around the world. This script will configure your current ADS-B receiver to feed data to airplanes.live.\n\nWould you like to continue setup?" 13 78 || abort
+sanitize_mlat_user() {
+    printf '%s' "$1" | tr -c '[a-zA-Z0-9]_\- ' '_'
+}
 
-ADSBFIUSERNAME=$(whiptail --backtitle "$BACKTITLETEXT" --title "Feeder MLAT Name" --nocancel --inputbox "\nPlease enter a unique name to be shown on the MLAT map (the pin will be offset for privacy)\n\nExample: \"william34-london\", \"william34-jersey\", etc.\nDisable MLAT: enter a zero: 0" 12 78 3>&1 1>&2 2>&3) || abort
+valid_latitude() {
+    [[ "$1" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] \
+        && awk -v LAT="$1" 'BEGIN { exit !(LAT < 90 && LAT > -90) }'
+}
 
-NOSPACENAME="$(echo -n -e "${ADSBFIUSERNAME}" | tr -c '[a-zA-Z0-9]_\- ' '_')"
+valid_longitude() {
+    [[ "$1" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] \
+        && awk -v LON="$1" 'BEGIN { exit !(LON < 180 && LON > -180) }'
+}
 
-if [[ "$NOSPACENAME" != 0 ]]; then
-    whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" \
-        --msgbox "For MLAT the precise location of your antenna is required.\
-        \n\nA small error of 15m/45ft will cause issues with MLAT!\
-        \n\nTo get your location, use any online map service or this website: https://www.mapcoordinates.net/en" 12 78 || abort
-else
-    whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" \
-        --msgbox "MLAT DISABLED!.\
-        \n\n For some local functions the approximate location is still useful, it won't be sent to the server." 12 78 || abort
-fi
+valid_altitude() {
+    [[ "$1" =~ ^-?[0-9]+(ft|m)?$ ]]
+}
 
-#((-90 <= RECEIVERLATITUDE <= 90))
-LAT_OK=0
-until [ "$LAT_OK" -eq 1 ]; do
-    RECEIVERLATITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Latitude ${RECEIVERLATITUDE}" --nocancel --inputbox "\nEnter the latitude of your antenna in degrees with 5 decimal places.\n(Example: 32.36291)" 12 78 3>&1 1>&2 2>&3) || abort
-    if [[ "$RECEIVERLATITUDE" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]]; then
-        LAT_OK=`awk -v LAT="$RECEIVERLATITUDE" 'BEGIN {printf (LAT<90 && LAT>-90 ? "1" : "0")}'`
+normalize_altitude() {
+    local alt="$1"
+    if [[ $alt =~ ^-([0-9]+)ft$ ]]; then
+        awk -v NUM="${BASH_REMATCH[1]}" 'BEGIN { printf "-%0.2f", NUM / 3.28 }'
+    elif [[ $alt =~ ^-([0-9]+)m$ ]]; then
+        printf -- '-%s' "${BASH_REMATCH[1]}"
     else
-        LAT_OK=0
-        whiptail --backtitle "$BACKTITLETEXT" --title "Invalid latitude" --msgbox "Latitude must be a decimal number." 10 60 || abort
+        printf '%s' "$alt"
     fi
-done
+}
 
+detect_receiver_input() {
+    INPUT="127.0.0.1:30005"
+    INPUT_TYPE="dump1090"
 
-#((-180<= RECEIVERLONGITUDE <= 180))
-LON_OK=0
-until [ "$LON_OK" -eq 1 ]; do
-    RECEIVERLONGITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Longitude ${RECEIVERLONGITUDE}" --nocancel --inputbox "\nEnter the longitude of your antenna in degrees with 5 decimal places.\n(Example: -64.71492)" 12 78 3>&1 1>&2 2>&3) || abort
-    if [[ "$RECEIVERLONGITUDE" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]]; then
-        LON_OK=`awk -v LON="$RECEIVERLONGITUDE" 'BEGIN {printf (LON<180 && LON>-180 ? "1" : "0")}'`
-    else
-        LON_OK=0
-        whiptail --backtitle "$BACKTITLETEXT" --title "Invalid longitude" --msgbox "Longitude must be a decimal number." 10 60 || abort
+    # `hostname` and `pgrep` (procps) are absent on some minimal images — guard both.
+    HOSTNAME_VAL="$(hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null || true)"
+    if [[ "$HOSTNAME_VAL" == "radarcape" ]] || { command -v pgrep &>/dev/null && pgrep rcd &>/dev/null; }; then
+        INPUT="127.0.0.1:10003"
+        INPUT_TYPE="radarcape_gps"
     fi
-done
+}
 
-ALT=0
-until [[ "$NOSPACENAME" == 0 ]] || [[ $ALT =~ ^-?[0-9]+ft$ ]] || [[ $ALT =~ ^-?[0-9]+m$ ]]; do
-    ALT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Altitude above sea level (at the antenna):" \
-        --nocancel --inputbox \
-"\nEnter the altitude of your antenna, above sea level, including the unit with no spaces:\n\n\
-in feet like this:                   255ft\n\
-or in meters like this:               78m\n" \
-        12 78 3>&1 1>&2 2>&3) || abort
-done
-
-if [[ $ALT =~ ^-([0-9]+)ft$ ]]; then
-        NUM=${BASH_REMATCH[1]}
-        NEW_ALT=`echo "$NUM" "3.28" | awk '{printf "-%0.2f", $1 / $2 }'`
-        ALT=$NEW_ALT
-fi
-if [[ $ALT =~ ^-([0-9]+)m$ ]]; then
-        NEW_ALT="-${BASH_REMATCH[1]}"
-        ALT=$NEW_ALT
-fi
-
-RECEIVERALTITUDE="$ALT"
-
-#RECEIVERPORT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Receiver Feed Port" --nocancel --inputbox "\nChange only if you were assigned a custom feed port.\nFor most all users it is required this port remain set to port 30005." 10 78 "30005" 3>&1 1>&2 2>&3)
-
-
-
-INPUT="127.0.0.1:30005"
-INPUT_TYPE="dump1090"
-
-# `hostname` and `pgrep` (procps) are absent on some minimal images — guard both.
-HOSTNAME_VAL="$(hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null || true)"
-if [[ "$HOSTNAME_VAL" == "radarcape" ]] || { command -v pgrep &>/dev/null && pgrep rcd &>/dev/null; }; then
-    INPUT="127.0.0.1:10003"
-    INPUT_TYPE="radarcape_gps"
-fi
-
-mkdir -p "$ETC_AIRPLANES"
-tee "$FEED_ENV" >/dev/null <<EOF
+write_feed_env() {
+    mkdir -p "$ETC_AIRPLANES"
+    tee "$FEED_ENV" >/dev/null <<EOF
 INPUT="$INPUT"
 REDUCE_INTERVAL="0.5"
 
-# feed name for checking MLAT sync 
+# feed name for checking MLAT sync
 # also displayed on the MLAT map
 USER="$NOSPACENAME"
 
@@ -158,3 +123,104 @@ TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.ai
 NET_OPTIONS="--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --write-json-every 1"
 JSON_OPTIONS="--max-range 450 --json-location-accuracy 2 --range-outline-hours 24"
 EOF
+}
+
+has_noninteractive_config_env() {
+    [[ -v AIRPLANES_MLAT_USER || -v AIRPLANES_LATITUDE || -v AIRPLANES_LONGITUDE || -v AIRPLANES_ALTITUDE ]]
+}
+
+configure_noninteractive() {
+    local missing=0 name
+    for name in AIRPLANES_MLAT_USER AIRPLANES_LATITUDE AIRPLANES_LONGITUDE AIRPLANES_ALTITUDE; do
+        if [[ ! -v "$name" ]]; then
+            echo "Missing required non-interactive configure value: $name" >&2
+            missing=1
+        fi
+    done
+    [[ "$missing" == "0" ]] || exit 1
+
+    ADSBFIUSERNAME="$AIRPLANES_MLAT_USER"
+    NOSPACENAME="$(sanitize_mlat_user "$ADSBFIUSERNAME")"
+    RECEIVERLATITUDE="$AIRPLANES_LATITUDE"
+    RECEIVERLONGITUDE="$AIRPLANES_LONGITUDE"
+    ALT="$AIRPLANES_ALTITUDE"
+
+    valid_latitude "$RECEIVERLATITUDE" || { echo "Latitude must be a decimal number between -90 and 90." >&2; exit 1; }
+    valid_longitude "$RECEIVERLONGITUDE" || { echo "Longitude must be a decimal number between -180 and 180." >&2; exit 1; }
+    valid_altitude "$ALT" || { echo "Altitude must be an integer with optional ft or m suffix." >&2; exit 1; }
+
+    RECEIVERALTITUDE="$(normalize_altitude "$ALT")"
+    detect_receiver_input
+    write_feed_env
+}
+
+if has_noninteractive_config_env || airplanes_is_build_mode; then
+    configure_noninteractive
+    exit 0
+fi
+
+whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "Thanks for choosing to share your data with airplanes.live!\n\nairplanes.live is a co-op of ADS-B/Mode S/MLAT feeders from around the world. This script will configure your current ADS-B receiver to feed data to airplanes.live.\n\nWould you like to continue setup?" 13 78 || abort
+
+ADSBFIUSERNAME=$(whiptail --backtitle "$BACKTITLETEXT" --title "Feeder MLAT Name" --nocancel --inputbox "\nPlease enter a unique name to be shown on the MLAT map (the pin will be offset for privacy)\n\nExample: \"william34-london\", \"william34-jersey\", etc.\nDisable MLAT: enter a zero: 0" 12 78 3>&1 1>&2 2>&3) || abort
+
+NOSPACENAME="$(sanitize_mlat_user "$ADSBFIUSERNAME")"
+
+if [[ "$NOSPACENAME" != 0 ]]; then
+    whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" \
+        --msgbox "For MLAT the precise location of your antenna is required.\
+        \n\nA small error of 15m/45ft will cause issues with MLAT!\
+        \n\nTo get your location, use any online map service or this website: https://www.mapcoordinates.net/en" 12 78 || abort
+else
+    whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" \
+        --msgbox "MLAT DISABLED!.\
+        \n\n For some local functions the approximate location is still useful, it won't be sent to the server." 12 78 || abort
+fi
+
+#((-90 <= RECEIVERLATITUDE <= 90))
+LAT_OK=0
+until [ "$LAT_OK" -eq 1 ]; do
+    RECEIVERLATITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Latitude ${RECEIVERLATITUDE}" --nocancel --inputbox "\nEnter the latitude of your antenna in degrees with 5 decimal places.\n(Example: 32.36291)" 12 78 3>&1 1>&2 2>&3) || abort
+    if valid_latitude "$RECEIVERLATITUDE"; then
+        LAT_OK=1
+    else
+        LAT_OK=0
+        if [[ ! "$RECEIVERLATITUDE" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]]; then
+            whiptail --backtitle "$BACKTITLETEXT" --title "Invalid latitude" --msgbox "Latitude must be a decimal number." 10 60 || abort
+        fi
+    fi
+done
+
+
+#((-180<= RECEIVERLONGITUDE <= 180))
+LON_OK=0
+until [ "$LON_OK" -eq 1 ]; do
+    RECEIVERLONGITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Longitude ${RECEIVERLONGITUDE}" --nocancel --inputbox "\nEnter the longitude of your antenna in degrees with 5 decimal places.\n(Example: -64.71492)" 12 78 3>&1 1>&2 2>&3) || abort
+    if valid_longitude "$RECEIVERLONGITUDE"; then
+        LON_OK=1
+    else
+        LON_OK=0
+        if [[ ! "$RECEIVERLONGITUDE" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]]; then
+            whiptail --backtitle "$BACKTITLETEXT" --title "Invalid longitude" --msgbox "Longitude must be a decimal number." 10 60 || abort
+        fi
+    fi
+done
+
+ALT=0
+until [[ "$NOSPACENAME" == 0 ]] || [[ $ALT =~ ^-?[0-9]+ft$ ]] || [[ $ALT =~ ^-?[0-9]+m$ ]]; do
+    ALT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Altitude above sea level (at the antenna):" \
+        --nocancel --inputbox \
+"\nEnter the altitude of your antenna, above sea level, including the unit with no spaces:\n\n\
+in feet like this:                   255ft\n\
+or in meters like this:               78m\n" \
+        12 78 3>&1 1>&2 2>&3) || abort
+done
+
+ALT="$(normalize_altitude "$ALT")"
+
+RECEIVERALTITUDE="$ALT"
+
+#RECEIVERPORT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Receiver Feed Port" --nocancel --inputbox "\nChange only if you were assigned a custom feed port.\nFor most all users it is required this port remain set to port 30005." 10 78 "30005" 3>&1 1>&2 2>&3)
+
+
+detect_receiver_input
+write_feed_env
