@@ -48,6 +48,8 @@ FEED_SOURCE="$WORK_DIR/feed-source"
 FEED_BARE="$WORK_DIR/feed.git"
 MLAT_SOURCE="$WORK_DIR/mlat-source"
 MLAT_BARE="$WORK_DIR/mlat.git"
+READSB_SOURCE="$WORK_DIR/readsb-source"
+READSB_BARE="$WORK_DIR/readsb.git"
 STUB_DIR="$WORK_DIR/bin"
 COMMAND_LOG="$WORK_DIR/commands.log"
 CLAIM_LOG="$WORK_DIR/claim.log"
@@ -236,6 +238,13 @@ make_mlat_repo() {
     make_repo "$MLAT_SOURCE" master "$MLAT_BARE"
 }
 
+make_readsb_repo() {
+    rm -rf "$READSB_SOURCE" "$READSB_BARE"
+    mkdir -p "$READSB_SOURCE"
+    printf '%s\n' "readsb fixture" > "$READSB_SOURCE/README"
+    make_repo "$READSB_SOURCE" dev "$READSB_BARE"
+}
+
 write_stubs() {
     mkdir -p "$STUB_DIR"
     cat > "$STUB_DIR/apt-get" <<'SH'
@@ -276,6 +285,18 @@ exit 1
 SH
     cat > "$STUB_DIR/sleep" <<'SH'
 #!/usr/bin/env bash
+exit 0
+SH
+    cat > "$STUB_DIR/make" <<'SH'
+#!/usr/bin/env bash
+printf 'make %s\n' "$*" >> "${COMMAND_LOG:?}"
+if [[ "${1:-}" == "clean" ]]; then
+    rm -f readsb viewadsb
+    exit 0
+fi
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > readsb
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > viewadsb
+chmod +x readsb viewadsb
 exit 0
 SH
     cat > "$STUB_DIR/renice" <<'SH'
@@ -343,11 +364,11 @@ prepare_mounted_image() {
     local ipath mlat_version
     ipath="$ROOT_MNT/usr/local/share/airplanes"
 
-    [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "release image lacks /usr/bin/airplanes-feeder"
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-first-run.service" ]] \
         || fail "release image lacks airplanes-first-run.service"
 
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "release image lacks /usr/bin/airplanes-feeder"
         require_feed_boot_file airplanes-config.txt
         require_feed_boot_file airplanes-env
         set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" USER "image-release-rootfs-smoke"
@@ -356,6 +377,7 @@ prepare_mounted_image() {
         set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" ALTITUDE "35m"
     else
         [[ -f "$ROOT_MNT/etc/airplanes/feed.env" ]] || fail "new image lacks /etc/airplanes/feed.env"
+        rm -f "$ROOT_MNT/usr/bin/airplanes-feeder"
         set_env_value "$ROOT_MNT/etc/airplanes/feed.env" USER "image-release-rootfs-smoke"
         set_env_value "$ROOT_MNT/etc/airplanes/feed.env" LATITUDE "52.52000"
         set_env_value "$ROOT_MNT/etc/airplanes/feed.env" LONGITUDE "13.40500"
@@ -390,6 +412,8 @@ run_update_against_image() {
         AIRPLANES_FEED_BRANCH="$FEED_BRANCH" \
         AIRPLANES_MLAT_REPO="file://$MLAT_BARE" \
         AIRPLANES_MLAT_BRANCH=master \
+        AIRPLANES_READSB_REPO="file://$READSB_BARE" \
+        AIRPLANES_READSB_BRANCH=dev \
         APL_FEED_BIN="$STUB_DIR/apl-feed-stub" \
         "${build_mode_env[@]}" \
         bash "$FEED_SOURCE/update.sh"
@@ -444,7 +468,13 @@ assert_updated_image_contracts() {
         assert_not_exists "$ROOT_MNT/etc/airplanes/feeder-id"
         assert_not_exists "$ipath/airplanes-uuid"
     fi
-    [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "missing image feed binary"
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "missing image feed binary"
+        [[ ! -e "$ipath/feed-airplanes" ]] || fail "legacy image should use image feed binary"
+    else
+        [[ ! -e "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "new image should not require /usr/bin/airplanes-feeder"
+        [[ -x "$ipath/feed-airplanes" ]] || fail "missing build-mode feed binary"
+    fi
     [[ -x "$ROOT_MNT/usr/local/bin/apl-feed" ]] || fail "missing apl-feed command"
     [[ -f "$ipath/update.sh" ]] || fail "missing installed update.sh"
     [[ -f "$ipath/airplanes-feed.sh" ]] || fail "missing airplanes-feed.sh"
@@ -506,6 +536,7 @@ main() {
     extract_image "$image_archive"
     make_feed_repo
     make_mlat_repo
+    make_readsb_repo
     write_stubs
 
     mount_partitions

@@ -107,6 +107,34 @@ curl -L -o /tmp/update.sh https://raw.githubusercontent.com/airplanes-live/feed/
 sudo bash /tmp/update.sh
 ```
 
+## Image Builder Integration
+
+Image builds should use build mode so the rootfs is prepared without touching
+live host services or baking per-device state into the image.
+
+To run the full installer in a chroot, provide placeholder feeder config:
+
+```
+sudo AIRPLANES_BUILD_MODE=1 \
+  AIRPLANES_MLAT_USER=airplanes_initial \
+  AIRPLANES_LATITUDE=0 \
+  AIRPLANES_LONGITUDE=0 \
+  AIRPLANES_ALTITUDE=0 \
+  bash install.sh --build-mode
+```
+
+Build mode still installs packages, writes files, enables systemd units, and
+builds the feed components. It skips service starts/restarts, health checks,
+claim registration, feeder ID generation, legacy process killing, and receiver
+connectivity probing.
+
+Image builders that create `/etc/airplanes/feed.env` themselves can call
+`update.sh --build-mode` directly instead. New images should treat
+`/etc/airplanes/feed.env` as canonical and generate `/etc/airplanes/feeder-id`
+on first boot. Legacy images continue to be supported by the updater through
+the `/boot/airplanes-config.txt`, `/boot/airplanes-env`, and
+`/boot/airplanes-uuid` fallbacks.
+
 ## Local Map
 
 Optional: install a local map interface for your data:

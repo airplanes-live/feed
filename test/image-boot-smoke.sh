@@ -50,6 +50,8 @@ FEED_SOURCE="$WORK_DIR/feed-source"
 FEED_BARE="$WORK_DIR/feed.git"
 MLAT_SOURCE="$WORK_DIR/mlat-source"
 MLAT_BARE="$WORK_DIR/mlat.git"
+READSB_SOURCE="$WORK_DIR/readsb-source"
+READSB_BARE="$WORK_DIR/readsb.git"
 
 cleanup() {
     set +e
@@ -295,6 +297,18 @@ make_mlat_repo() {
     git clone --quiet --bare "$MLAT_SOURCE" "$MLAT_BARE"
 }
 
+make_readsb_repo() {
+    rm -rf "$READSB_SOURCE" "$READSB_BARE"
+    mkdir -p "$READSB_SOURCE"
+    git -C "$READSB_SOURCE" init -q -b dev
+    git -C "$READSB_SOURCE" config user.email "boot-smoke@example.invalid"
+    git -C "$READSB_SOURCE" config user.name "Image Boot Smoke"
+    printf '%s\n' "readsb fixture" > "$READSB_SOURCE/README"
+    git -C "$READSB_SOURCE" add README
+    git -C "$READSB_SOURCE" commit -q -m "readsb fixture"
+    git clone --quiet --bare "$READSB_SOURCE" "$READSB_BARE"
+}
+
 copy_boot_file() {
     local name="$1"
     [[ -f "$BOOT_MNT/$name" ]] || fail "boot file missing: $name"
@@ -442,6 +456,7 @@ write_guest_probe() {
     rsync -a --delete "$FEED_SOURCE/" "$ROOT_MNT/opt/airplanes-boot-smoke/feed-worktree/"
     rsync -a --delete "$FEED_BARE/" "$ROOT_MNT/opt/airplanes-boot-smoke/feed.git/"
     rsync -a --delete "$MLAT_BARE/" "$ROOT_MNT/opt/airplanes-boot-smoke/mlat.git/"
+    rsync -a --delete "$READSB_BARE/" "$ROOT_MNT/opt/airplanes-boot-smoke/readsb.git/"
     printf '%s\n' "$IMAGE_CONTRACT" > "$ROOT_MNT/opt/airplanes-boot-smoke/image-contract"
 
     cat > "$ROOT_MNT/opt/airplanes-boot-smoke/apl-feed-stub" <<'GUEST'
@@ -512,7 +527,11 @@ assert_image_contracts() {
     fi
     assert_valid_uuid_file /etc/airplanes/feeder-id
     assert_symlink_target /usr/local/share/airplanes/airplanes-uuid '../../../../etc/airplanes/feeder-id'
-    assert_exec /usr/bin/airplanes-feeder
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        assert_exec /usr/bin/airplanes-feeder
+    else
+        assert_exec /usr/local/share/airplanes/feed-airplanes
+    fi
     assert_exec /usr/local/bin/apl-feed
     assert_file /usr/local/share/airplanes/update.sh
     assert_file /usr/local/share/airplanes/airplanes-feed.sh
@@ -548,8 +567,23 @@ SH
     printf '%s\n' "$mlat_version" > /usr/local/share/airplanes/mlat_version
 }
 
+prepare_readsb_fixture() {
+    local readsb_version
+    install -d -m 0755 /usr/local/share/airplanes
+    if [[ ! -x /usr/bin/airplanes-feeder && ! -x /usr/local/share/airplanes/feed-airplanes ]]; then
+        cat > /usr/local/share/airplanes/feed-airplanes <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+        chmod 0755 /usr/local/share/airplanes/feed-airplanes
+    fi
+    readsb_version="$(git --git-dir=/opt/airplanes-boot-smoke/readsb.git rev-parse refs/heads/dev)"
+    printf '%s\n' "$readsb_version" > /usr/local/share/airplanes/readsb_version
+}
+
 run_feed_update() {
     prepare_mlat_fixture
+    prepare_readsb_fixture
     APL_FEED_BIN=/opt/airplanes-boot-smoke/apl-feed-stub \
     APL_FEED_MAX_RETRY_TIME=1 \
     AIRPLANES_PACKAGE_MANAGER=none \
@@ -557,6 +591,8 @@ run_feed_update() {
     AIRPLANES_FEED_BRANCH=boot-smoke \
     AIRPLANES_MLAT_REPO=file:///opt/airplanes-boot-smoke/mlat.git \
     AIRPLANES_MLAT_BRANCH=master \
+    AIRPLANES_READSB_REPO=file:///opt/airplanes-boot-smoke/readsb.git \
+    AIRPLANES_READSB_BRANCH=dev \
         bash /opt/airplanes-boot-smoke/feed-worktree/update.sh
 }
 
@@ -730,6 +766,7 @@ main() {
     resize_image_for_qemu_sd
     make_feed_repo
     make_mlat_repo
+    make_readsb_repo
 
     mount_partitions
     prepare_boot_files
