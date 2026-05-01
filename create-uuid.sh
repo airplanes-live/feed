@@ -5,7 +5,13 @@ set -e
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/install-update-common.sh
 source "$SCRIPT_DIR/scripts/lib/install-update-common.sh"
+airplanes_enable_build_mode_from_args "$@"
 airplanes_init_paths
+
+if airplanes_is_build_mode; then
+    echo "Build mode: skipping per-device feeder ID generation."
+    exit 0
+fi
 
 valid_uuid() {
     [[ "$1" =~ ^\{?[A-F0-9a-f]{8}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{12}\}?$ ]]

@@ -7,7 +7,27 @@ fi
 
 FEED_DIR="${AIRPLANES_FEED_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 IMAGE_RELEASE_REPO="${AIRPLANES_IMAGE_RELEASE_REPO:-airplanes-live/image-releases}"
-IMAGE_ASSET_REGEX="${AIRPLANES_IMAGE_ASSET_REGEX:-(?i)\\.(img|img\\.xz|img\\.gz|zip|7z)$}"
+IMAGE_CHANNEL="${AIRPLANES_IMAGE_CHANNEL:-stable}"
+IMAGE_ARCH="${AIRPLANES_IMAGE_ARCH:-arm64}"
+IMAGE_CONTRACT="${AIRPLANES_IMAGE_CONTRACT:-}"
+if [[ -z "$IMAGE_CONTRACT" ]]; then
+    if [[ "$IMAGE_RELEASE_REPO" == "airplanes-live/image" ]]; then
+        IMAGE_CONTRACT="new"
+    else
+        IMAGE_CONTRACT="legacy"
+    fi
+fi
+if [[ -n "${AIRPLANES_IMAGE_ASSET_REGEX:-}" ]]; then
+    IMAGE_ASSET_REGEX="$AIRPLANES_IMAGE_ASSET_REGEX"
+elif [[ "$IMAGE_CONTRACT" == "new" ]]; then
+    IMAGE_ASSET_REGEX="(?i)^airplanes-feeder-${IMAGE_CHANNEL}-${IMAGE_ARCH}\\.img\\.xz$"
+else
+    IMAGE_ASSET_REGEX="(?i)\\.(img|img\\.xz|img\\.gz|zip|7z)$"
+fi
+IMAGE_ASSET_STRICT="${AIRPLANES_IMAGE_ASSET_STRICT:-}"
+if [[ -z "$IMAGE_ASSET_STRICT" ]]; then
+    [[ "$IMAGE_CONTRACT" == "new" ]] && IMAGE_ASSET_STRICT=1 || IMAGE_ASSET_STRICT=0
+fi
 FEED_BRANCH="${AIRPLANES_RELEASE_ROOTFS_FEED_BRANCH:-release-rootfs-smoke}"
 WORK_DIR="${AIRPLANES_RELEASE_ROOTFS_WORK_DIR:-}"
 KEEP_WORK_DIR="${AIRPLANES_RELEASE_ROOTFS_KEEP_WORK_DIR:-0}"
@@ -83,12 +103,24 @@ github_api() {
 }
 
 download_latest_release_image() {
-    local release_json asset_name asset_url output
+    local release_json asset_name asset_url output match_count
     mkdir -p "$DOWNLOAD_DIR"
     release_json="$DOWNLOAD_DIR/latest-release.json"
 
     echo "Fetching latest image release from $IMAGE_RELEASE_REPO" >&2
     github_api "https://api.github.com/repos/$IMAGE_RELEASE_REPO/releases/latest" > "$release_json"
+
+    match_count="$(jq -r --arg re "$IMAGE_ASSET_REGEX" '
+        [.assets[] | select(.name | test($re))] | length
+    ' "$release_json")"
+    if [[ "$match_count" == "0" ]]; then
+        jq -r '.assets[].name' "$release_json" >&2
+        fail "no release asset in $IMAGE_RELEASE_REPO matched $IMAGE_ASSET_REGEX"
+    fi
+    if [[ "$IMAGE_ASSET_STRICT" == "1" && "$match_count" != "1" ]]; then
+        jq -r --arg re "$IMAGE_ASSET_REGEX" '.assets[] | select(.name | test($re)) | .name' "$release_json" >&2
+        fail "expected exactly one release asset in $IMAGE_RELEASE_REPO to match $IMAGE_ASSET_REGEX, got $match_count"
+    fi
 
     asset_name="$(jq -r --arg re "$IMAGE_ASSET_REGEX" '
         [.assets[] | select(.name | test($re))] as $matches
@@ -99,10 +131,7 @@ download_latest_release_image() {
         .assets[] | select(.name == $name) | .browser_download_url
     ' "$release_json")"
 
-    [[ -n "$asset_name" && -n "$asset_url" ]] || {
-        jq -r '.assets[].name' "$release_json" >&2
-        fail "no release asset in $IMAGE_RELEASE_REPO matched $IMAGE_ASSET_REGEX"
-    }
+    [[ -n "$asset_name" && -n "$asset_url" ]] || fail "failed to resolve selected release asset URL: $asset_name"
 
     output="$DOWNLOAD_DIR/$asset_name"
     echo "Downloading image asset: $asset_name" >&2
@@ -314,16 +343,24 @@ prepare_mounted_image() {
     local ipath mlat_version
     ipath="$ROOT_MNT/usr/local/share/airplanes"
 
-    require_feed_boot_file airplanes-config.txt
-    require_feed_boot_file airplanes-env
     [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "release image lacks /usr/bin/airplanes-feeder"
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-first-run.service" ]] \
         || fail "release image lacks airplanes-first-run.service"
 
-    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" USER "image-release-rootfs-smoke"
-    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LATITUDE "52.52000"
-    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LONGITUDE "13.40500"
-    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" ALTITUDE "35m"
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        require_feed_boot_file airplanes-config.txt
+        require_feed_boot_file airplanes-env
+        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" USER "image-release-rootfs-smoke"
+        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LATITUDE "52.52000"
+        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LONGITUDE "13.40500"
+        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" ALTITUDE "35m"
+    else
+        [[ -f "$ROOT_MNT/etc/airplanes/feed.env" ]] || fail "new image lacks /etc/airplanes/feed.env"
+        set_env_value "$ROOT_MNT/etc/airplanes/feed.env" USER "image-release-rootfs-smoke"
+        set_env_value "$ROOT_MNT/etc/airplanes/feed.env" LATITUDE "52.52000"
+        set_env_value "$ROOT_MNT/etc/airplanes/feed.env" LONGITUDE "13.40500"
+        set_env_value "$ROOT_MNT/etc/airplanes/feed.env" ALTITUDE "35m"
+    fi
 
     mkdir -p "$ipath/venv/bin"
     cat > "$ipath/venv/bin/mlat-client" <<'SH'
@@ -336,17 +373,25 @@ SH
 }
 
 run_update_against_image() {
-    PATH="$STUB_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-    COMMAND_LOG="$COMMAND_LOG" \
-    CLAIM_LOG="$CLAIM_LOG" \
-    AIRPLANES_ROOT="$ROOT_MNT" \
-    AIRPLANES_SKIP_ROOT_CHECK=1 \
-    AIRPLANES_PACKAGE_MANAGER=apt \
-    AIRPLANES_FEED_REPO="file://$FEED_BARE" \
-    AIRPLANES_FEED_BRANCH="$FEED_BRANCH" \
-    AIRPLANES_MLAT_REPO="file://$MLAT_BARE" \
-    AIRPLANES_MLAT_BRANCH=master \
-    APL_FEED_BIN="$STUB_DIR/apl-feed-stub" \
+    local -a build_mode_env
+    build_mode_env=()
+    if [[ "$IMAGE_CONTRACT" == "new" ]]; then
+        build_mode_env=(AIRPLANES_BUILD_MODE=1)
+    fi
+
+    env \
+        PATH="$STUB_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        COMMAND_LOG="$COMMAND_LOG" \
+        CLAIM_LOG="$CLAIM_LOG" \
+        AIRPLANES_ROOT="$ROOT_MNT" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=apt \
+        AIRPLANES_FEED_REPO="file://$FEED_BARE" \
+        AIRPLANES_FEED_BRANCH="$FEED_BRANCH" \
+        AIRPLANES_MLAT_REPO="file://$MLAT_BARE" \
+        AIRPLANES_MLAT_BRANCH=master \
+        APL_FEED_BIN="$STUB_DIR/apl-feed-stub" \
+        "${build_mode_env[@]}" \
         bash "$FEED_SOURCE/update.sh"
 }
 
@@ -389,10 +434,16 @@ assert_symlink_target() {
 assert_updated_image_contracts() {
     local ipath="$ROOT_MNT/usr/local/share/airplanes"
 
-    [[ -f "$FEED_BOOT_DIR/airplanes-config.txt" ]] || fail "missing boot config"
-    [[ -f "$FEED_BOOT_DIR/airplanes-env" ]] || fail "missing boot env"
-    assert_valid_uuid_file "$ROOT_MNT/etc/airplanes/feeder-id"
-    assert_symlink_target "$ipath/airplanes-uuid" '../../../../etc/airplanes/feeder-id'
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        [[ -f "$FEED_BOOT_DIR/airplanes-config.txt" ]] || fail "missing boot config"
+        [[ -f "$FEED_BOOT_DIR/airplanes-env" ]] || fail "missing boot env"
+        assert_valid_uuid_file "$ROOT_MNT/etc/airplanes/feeder-id"
+        assert_symlink_target "$ipath/airplanes-uuid" '../../../../etc/airplanes/feeder-id'
+    else
+        [[ -f "$ROOT_MNT/etc/airplanes/feed.env" ]] || fail "missing canonical feed.env"
+        assert_not_exists "$ROOT_MNT/etc/airplanes/feeder-id"
+        assert_not_exists "$ipath/airplanes-uuid"
+    fi
     [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "missing image feed binary"
     [[ -x "$ROOT_MNT/usr/local/bin/apl-feed" ]] || fail "missing apl-feed command"
     [[ -f "$ipath/update.sh" ]] || fail "missing installed update.sh"
@@ -402,21 +453,32 @@ assert_updated_image_contracts() {
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" ]] || fail "missing feed service"
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" ]] || fail "missing mlat service"
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-first-run.service" ]] || fail "missing first-run service"
-    assert_not_exists "$ROOT_MNT/etc/airplanes/feed.env"
-    [[ -L "$ROOT_MNT/etc/default/airplanes" ]] || fail "/etc/default/airplanes is not a symlink"
-    [[ "$(readlink "$ROOT_MNT/etc/default/airplanes")" == "/boot/airplanes-config.txt" ]] \
-        || fail "/etc/default/airplanes does not point at /boot/airplanes-config.txt"
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        assert_not_exists "$ROOT_MNT/etc/airplanes/feed.env"
+        [[ -L "$ROOT_MNT/etc/default/airplanes" ]] || fail "/etc/default/airplanes is not a symlink"
+        [[ "$(readlink "$ROOT_MNT/etc/default/airplanes")" == "/boot/airplanes-config.txt" ]] \
+            || fail "/etc/default/airplanes does not point at /boot/airplanes-config.txt"
+    fi
 
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'After=airplanes-first-run.service'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'After=airplanes-first-run.service'
     assert_contains "$ipath/airplanes-feed.sh" 'feed2.airplanes.live,64004'
-    assert_contains "$CLAIM_LOG" 'claim register'
-    assert_contains "$COMMAND_LOG" 'systemctl restart airplanes-feed'
-    assert_contains "$COMMAND_LOG" 'systemctl restart airplanes-mlat'
-    [[ "$(grep -c 'systemctl daemon-reload' "$COMMAND_LOG")" == "1" ]] \
-        || fail "expected one systemctl daemon-reload call"
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        assert_contains "$CLAIM_LOG" 'claim register'
+        assert_contains "$COMMAND_LOG" 'systemctl restart airplanes-feed'
+        assert_contains "$COMMAND_LOG" 'systemctl restart airplanes-mlat'
+        [[ "$(grep -c 'systemctl daemon-reload' "$COMMAND_LOG")" == "1" ]] \
+            || fail "expected one systemctl daemon-reload call"
+    else
+        assert_not_exists "$CLAIM_LOG"
+        assert_contains "$COMMAND_LOG" 'systemctl enable airplanes-feed'
+        assert_contains "$COMMAND_LOG" 'systemctl enable airplanes-mlat'
+        ! grep -q 'systemctl restart' "$COMMAND_LOG" || fail "build mode restarted a service"
+        ! grep -q 'systemctl is-active' "$COMMAND_LOG" || fail "build mode checked live systemd state"
+        ! grep -q 'systemctl daemon-reload' "$COMMAND_LOG" || fail "build mode reloaded live systemd"
+    fi
 }
 
 assert_runtime_args() {

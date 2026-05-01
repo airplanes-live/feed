@@ -73,6 +73,35 @@ SH
     [ "$(git -C "$ROOT_DIR/root/usr/local/share/airplanes/git" remote get-url origin)" = "$repo" ]
 }
 
+@test "install.sh propagates build mode to setup.sh" {
+    local repo="$ROOT_DIR/source"
+    make_git_repo "$repo"
+    cat > "$repo/setup.sh" <<'SH'
+#!/usr/bin/env bash
+set -e
+mkdir -p "$AIRPLANES_ROOT"
+printf '%s\n' "${AIRPLANES_BUILD_MODE:-}" > "$AIRPLANES_ROOT/build-mode"
+printf '%s\n' "$*" > "$AIRPLANES_ROOT/setup-args"
+SH
+    chmod +x "$repo/setup.sh"
+    commit_all "$repo"
+
+    write_stub whiptail 'exit 0'
+    write_stub apt-get 'printf "%s\n" "$@" >> "$APT_GET_LOG"; exit 0'
+
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        AIRPLANES_ROOT="$ROOT_DIR/root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_FEED_REPO="$repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        APT_GET_LOG="$ROOT_DIR/apt-get.log" \
+        bash "$INSTALL" --build-mode
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/root/build-mode")" = "1" ]
+    [ "$(cat "$ROOT_DIR/root/setup-args")" = "--build-mode" ]
+}
+
 @test "standalone install.sh works without scripts/lib checkout" {
     local repo="$ROOT_DIR/source"
     local standalone="$ROOT_DIR/standalone"

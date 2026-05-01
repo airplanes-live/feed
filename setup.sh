@@ -32,6 +32,7 @@ set -e
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/install-update-common.sh
 source "$SCRIPT_DIR/scripts/lib/install-update-common.sh"
+airplanes_enable_build_mode_from_args "$@"
 airplanes_init_paths
 
 ## we need to install stuff that require root, check for that
@@ -39,7 +40,7 @@ airplanes_require_root
 
 ## REFUSE INSTALLATION ON AIRPLANES.LIVE IMAGE
 
-if airplanes_is_image_install; then
+if ! airplanes_is_build_mode && airplanes_is_image_install; then
     echo --------
     echo "You are using the airplanes.live image, the feed setup script does not need to be installed."
     echo "You should already be feeding."
@@ -53,11 +54,13 @@ if airplanes_is_image_install; then
     exit 1
 fi
 
-bash "$IPATH/git/configure.sh"
+bash "$IPATH/git/configure.sh" "$@"
 
 BACKTITLETEXT="${BACKTITLETEXT:-airplanes.live Setup Script}"
-whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "We are now ready to begin setting up your receiver to feed airplanes.live.\n\nDo you wish to proceed?" 9 78 || exit 1
+if ! airplanes_is_build_mode; then
+    whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "We are now ready to begin setting up your receiver to feed airplanes.live.\n\nDo you wish to proceed?" 9 78 || exit 1
+fi
 
-bash "$IPATH/git/update.sh"
+bash "$IPATH/git/update.sh" "$@"
 
 exit 0

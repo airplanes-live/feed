@@ -25,6 +25,20 @@ else
         GIT="$IPATH/git"
     }
 
+    airplanes_is_build_mode() {
+        [[ "${AIRPLANES_BUILD_MODE:-0}" == "1" || "${AIRPLANES_BUILD_MODE:-}" == "true" || "${AIRPLANES_BUILD_MODE:-}" == "yes" ]]
+    }
+
+    airplanes_enable_build_mode_from_args() {
+        local arg
+        for arg in "$@"; do
+            if [[ "$arg" == "--build-mode" ]]; then
+                AIRPLANES_BUILD_MODE=1
+                export AIRPLANES_BUILD_MODE
+            fi
+        done
+    }
+
     airplanes_require_root() {
         if [[ "${AIRPLANES_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
             return 0
@@ -84,6 +98,8 @@ else
     }
 fi
 
+airplanes_enable_build_mode_from_args "$@"
+
 airplanes_init_paths
 airplanes_require_root
 mkdir -p "$IPATH"
@@ -91,4 +107,4 @@ airplanes_install_bootstrap_deps
 getGIT "$AIRPLANES_FEED_REPO" "$AIRPLANES_FEED_BRANCH" "$GIT"
 
 cd "$GIT"
-bash "$GIT/setup.sh"
+bash "$GIT/setup.sh" "$@"

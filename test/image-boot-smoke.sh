@@ -6,8 +6,28 @@ if [[ "$(id -u)" != "0" ]]; then
 fi
 
 FEED_DIR="${AIRPLANES_FEED_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
-IMAGE_RELEASE_REPO="${AIRPLANES_IMAGE_RELEASE_REPO:-airplanes-live/image-releases}"
-IMAGE_ASSET_REGEX="${AIRPLANES_IMAGE_ASSET_REGEX:-(?i)\\.(img|img\\.xz|img\\.gz|zip|7z)$}"
+IMAGE_RELEASE_REPO="${AIRPLANES_IMAGE_RELEASE_REPO:-airplanes-live/image}"
+IMAGE_CHANNEL="${AIRPLANES_IMAGE_CHANNEL:-stable}"
+IMAGE_ARCH="${AIRPLANES_IMAGE_ARCH:-arm64}"
+IMAGE_CONTRACT="${AIRPLANES_IMAGE_CONTRACT:-}"
+if [[ -z "$IMAGE_CONTRACT" ]]; then
+    if [[ "$IMAGE_RELEASE_REPO" == "airplanes-live/image" ]]; then
+        IMAGE_CONTRACT="new"
+    else
+        IMAGE_CONTRACT="legacy"
+    fi
+fi
+if [[ -n "${AIRPLANES_IMAGE_ASSET_REGEX:-}" ]]; then
+    IMAGE_ASSET_REGEX="$AIRPLANES_IMAGE_ASSET_REGEX"
+elif [[ "$IMAGE_CONTRACT" == "new" ]]; then
+    IMAGE_ASSET_REGEX="(?i)^airplanes-feeder-${IMAGE_CHANNEL}-${IMAGE_ARCH}\\.img\\.xz$"
+else
+    IMAGE_ASSET_REGEX="(?i)\\.(img|img\\.xz|img\\.gz|zip|7z)$"
+fi
+IMAGE_ASSET_STRICT="${AIRPLANES_IMAGE_ASSET_STRICT:-}"
+if [[ -z "$IMAGE_ASSET_STRICT" ]]; then
+    [[ "$IMAGE_CONTRACT" == "new" ]] && IMAGE_ASSET_STRICT=1 || IMAGE_ASSET_STRICT=0
+fi
 FEED_BRANCH="${AIRPLANES_BOOT_SMOKE_FEED_BRANCH:-boot-smoke}"
 QEMU_TIMEOUT="${AIRPLANES_BOOT_SMOKE_QEMU_TIMEOUT:-8m}"
 MAX_BOOT_ATTEMPTS="${AIRPLANES_BOOT_SMOKE_MAX_BOOT_ATTEMPTS:-2}"
@@ -116,12 +136,24 @@ github_api() {
 }
 
 download_latest_release_image() {
-    local release_json asset_name asset_url output
+    local release_json asset_name asset_url output match_count
     mkdir -p "$DOWNLOAD_DIR"
     release_json="$DOWNLOAD_DIR/latest-release.json"
 
     echo "Fetching latest image release from $IMAGE_RELEASE_REPO" >&2
     github_api "https://api.github.com/repos/$IMAGE_RELEASE_REPO/releases/latest" > "$release_json"
+
+    match_count="$(jq -r --arg re "$IMAGE_ASSET_REGEX" '
+        [.assets[] | select(.name | test($re))] | length
+    ' "$release_json")"
+    if [[ "$match_count" == "0" ]]; then
+        jq -r '.assets[].name' "$release_json" >&2
+        fail "no release asset in $IMAGE_RELEASE_REPO matched $IMAGE_ASSET_REGEX"
+    fi
+    if [[ "$IMAGE_ASSET_STRICT" == "1" && "$match_count" != "1" ]]; then
+        jq -r --arg re "$IMAGE_ASSET_REGEX" '.assets[] | select(.name | test($re)) | .name' "$release_json" >&2
+        fail "expected exactly one release asset in $IMAGE_RELEASE_REPO to match $IMAGE_ASSET_REGEX, got $match_count"
+    fi
 
     asset_name="$(jq -r --arg re "$IMAGE_ASSET_REGEX" '
         [.assets[] | select(.name | test($re))] as $matches
@@ -132,10 +164,7 @@ download_latest_release_image() {
         .assets[] | select(.name == $name) | .browser_download_url
     ' "$release_json")"
 
-    [[ -n "$asset_name" && -n "$asset_url" ]] || {
-        jq -r '.assets[].name' "$release_json" >&2
-        fail "no release asset in $IMAGE_RELEASE_REPO matched $IMAGE_ASSET_REGEX"
-    }
+    [[ -n "$asset_name" && -n "$asset_url" ]] || fail "failed to resolve selected release asset URL: $asset_name"
 
     output="$DOWNLOAD_DIR/$asset_name"
     echo "Downloading image asset: $asset_name" >&2
@@ -413,6 +442,7 @@ write_guest_probe() {
     rsync -a --delete "$FEED_SOURCE/" "$ROOT_MNT/opt/airplanes-boot-smoke/feed-worktree/"
     rsync -a --delete "$FEED_BARE/" "$ROOT_MNT/opt/airplanes-boot-smoke/feed.git/"
     rsync -a --delete "$MLAT_BARE/" "$ROOT_MNT/opt/airplanes-boot-smoke/mlat.git/"
+    printf '%s\n' "$IMAGE_CONTRACT" > "$ROOT_MNT/opt/airplanes-boot-smoke/image-contract"
 
     cat > "$ROOT_MNT/opt/airplanes-boot-smoke/apl-feed-stub" <<'GUEST'
 #!/usr/bin/env bash
@@ -428,6 +458,7 @@ GUEST
 set -euo pipefail
 
 STATE_DIR=/var/lib/airplanes-boot-smoke
+IMAGE_CONTRACT="$(cat /opt/airplanes-boot-smoke/image-contract 2>/dev/null || echo legacy)"
 mkdir -p "$STATE_DIR"
 exec > >(tee -a "$STATE_DIR/run.log" /dev/console) 2>&1
 
@@ -473,8 +504,12 @@ assert_symlink_target() {
 }
 
 assert_image_contracts() {
-    assert_file /boot/airplanes-config.txt
-    assert_file /boot/airplanes-env
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        assert_file /boot/airplanes-config.txt
+        assert_file /boot/airplanes-env
+    else
+        assert_file /etc/airplanes/feed.env
+    fi
     assert_valid_uuid_file /etc/airplanes/feeder-id
     assert_symlink_target /usr/local/share/airplanes/airplanes-uuid '../../../../etc/airplanes/feeder-id'
     assert_exec /usr/bin/airplanes-feeder
@@ -486,17 +521,17 @@ assert_image_contracts() {
     assert_file /etc/systemd/system/airplanes-feed.service
     assert_file /etc/systemd/system/airplanes-mlat.service
     assert_file /etc/systemd/system/airplanes-first-run.service
-    assert_contains /etc/systemd/system/airplanes-feed.service 'EnvironmentFile=/boot/airplanes-config.txt'
     assert_contains /etc/systemd/system/airplanes-feed.service 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
     assert_contains /etc/systemd/system/airplanes-feed.service 'After=airplanes-first-run.service'
-    assert_contains /etc/systemd/system/airplanes-mlat.service 'EnvironmentFile=/boot/airplanes-config.txt'
     assert_contains /etc/systemd/system/airplanes-mlat.service 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh'
     assert_contains /etc/systemd/system/airplanes-mlat.service 'After=airplanes-first-run.service'
     assert_contains /usr/local/share/airplanes/airplanes-feed.sh 'feed2.airplanes.live,64004'
-    assert_not_exists /etc/airplanes/feed.env
-    [[ -L /etc/default/airplanes ]] || fail "/etc/default/airplanes is not a symlink"
-    [[ "$(readlink /etc/default/airplanes)" == "/boot/airplanes-config.txt" ]] \
-        || fail "/etc/default/airplanes does not point at /boot/airplanes-config.txt"
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        assert_not_exists /etc/airplanes/feed.env
+        [[ -L /etc/default/airplanes ]] || fail "/etc/default/airplanes is not a symlink"
+        [[ "$(readlink /etc/default/airplanes)" == "/boot/airplanes-config.txt" ]] \
+            || fail "/etc/default/airplanes does not point at /boot/airplanes-config.txt"
+    fi
 }
 
 prepare_mlat_fixture() {

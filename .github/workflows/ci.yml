@@ -149,7 +149,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           AIRPLANES_IMAGE_RELEASE_REPO: airplanes-live/image-releases
+          AIRPLANES_IMAGE_CONTRACT: legacy
           AIRPLANES_RELEASE_ROOTFS_WORK_DIR: ${{ runner.temp }}/airplanes-image-release-rootfs-smoke
         run: |
-          sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
+          sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
             bash test/image-release-rootfs-smoke.sh

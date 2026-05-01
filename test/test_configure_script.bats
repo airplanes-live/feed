@@ -49,6 +49,15 @@ run_configure() {
         bash "$CONFIGURE"
 }
 
+run_configure_env() {
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        AIRPLANES_ROOT="$ROOT_DIR" \
+        WHIPTAIL_LOG="$WHIPTAIL_LOG" \
+        WHIPTAIL_COUNTER="$WHIPTAIL_COUNTER" \
+        "$@" \
+        bash "$CONFIGURE"
+}
+
 @test "configure.sh accepts canonical decimal latitude and longitude" {
     run_configure $'ci-feeder\n52.52000\n13.40500\n35m'
 
@@ -102,4 +111,51 @@ run_configure() {
     [ "$status" -eq 0 ]
     ! grep -q 'Invalid longitude' "$WHIPTAIL_LOG"
     grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh writes feed.env from non-interactive env without whiptail" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="ci feeder" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'USER="ci feeder"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'LATITUDE="52.52000"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'ALTITUDE="35m"' "$ROOT_DIR/etc/airplanes/feed.env"
+    [ ! -e "$WHIPTAIL_LOG" ]
+}
+
+@test "configure.sh fails non-interactive mode when required env is partial" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="ci-feeder" \
+        AIRPLANES_LATITUDE="52.52000"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Missing required non-interactive configure value: AIRPLANES_LONGITUDE" ]]
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
+    [ ! -e "$WHIPTAIL_LOG" ]
+}
+
+@test "configure.sh fails build mode instead of prompting when config env is missing" {
+    run_configure_env AIRPLANES_BUILD_MODE=1
+
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Missing required non-interactive configure value" ]]
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
+    [ ! -e "$WHIPTAIL_LOG" ]
+}
+
+@test "configure.sh rejects invalid non-interactive latitude" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="ci-feeder" \
+        AIRPLANES_LATITUDE="north" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Latitude must be a decimal number" ]]
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
 }
