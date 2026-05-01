@@ -301,6 +301,13 @@ SH
         bash "$UPDATE"
 
     [ "$status" -eq 0 ]
+    [ -f "$root/etc/systemd/system/airplanes-feed.service" ]
+    [ -f "$root/etc/systemd/system/airplanes-mlat.service" ]
+    [ ! -e "$root/lib/systemd/system/airplanes-feed.service" ]
+    grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-feed.service"
+    grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
+    [ -x "$root/usr/local/share/airplanes/feed-airplanes" ]
+    [ ! -x "$root/usr/bin/airplanes-feeder" ]
     grep -q 'systemctl enable airplanes-feed' "$ROOT_DIR/commands.log"
     grep -q 'systemctl enable airplanes-mlat' "$ROOT_DIR/commands.log"
     ! grep -q 'systemctl restart' "$ROOT_DIR/commands.log"

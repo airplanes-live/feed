@@ -201,6 +201,10 @@ IMAGE_INSTALL=0
 if airplanes_is_image_install; then
     IMAGE_INSTALL=1
 fi
+IMAGE_SERVICE_LAYOUT=0
+if [[ "$IMAGE_INSTALL" == "1" ]] || airplanes_is_build_mode; then
+    IMAGE_SERVICE_LAYOUT=1
+fi
 
 mkdir -p "$IPATH"
 rm -f "$LOGFILE"
@@ -230,8 +234,8 @@ if [[ "$1" != "test" ]] && { [[ ! -f "$IPATH/update.sh" ]] || ! diff "$GIT/updat
     bash "$IPATH/update.sh" "$@"
     exit $?
 fi
-if [[ "$IMAGE_INSTALL" == "1" ]]; then
-    # Image builds ship these units in /etc/systemd/system, which overrides /lib.
+if [[ "$IMAGE_SERVICE_LAYOUT" == "1" ]]; then
+    # Images ship these units in /etc/systemd/system, which overrides /lib.
     SYSTEMD_DIR="$(airplanes_path /etc/systemd/system)"
 fi
 
@@ -395,7 +399,7 @@ echo 50
 mkdir -p "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-mlat.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-feed.service "$SYSTEMD_DIR"
-if [[ "$IMAGE_INSTALL" == "1" ]]; then
+if [[ "$IMAGE_SERVICE_LAYOUT" == "1" ]]; then
     sed -i '/^\[Service\]$/i After=airplanes-first-run.service' "$SYSTEMD_DIR/airplanes-mlat.service"
     sed -i '/^\[Service\]$/i After=airplanes-first-run.service' "$SYSTEMD_DIR/airplanes-feed.service"
 fi
