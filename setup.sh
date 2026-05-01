@@ -39,13 +39,13 @@ airplanes_require_root
 
 ## REFUSE INSTALLATION ON AIRPLANES.LIVE IMAGE
 
-if [ -f "$BOOT_CONFIG" ]; then
+if airplanes_is_image_install; then
     echo --------
     echo "You are using the airplanes.live image, the feed setup script does not need to be installed."
     echo "You should already be feeding."
     echo "If the feed isn't working, check/correct the configuration using nano:"
     echo --------
-    echo "sudo nano /boot/airplanes-config.txt"
+    echo "sudo nano /etc/airplanes/feed.env"
     echo --------
     echo "Hint for using nano: Ctrl-X to exit, Y(yes) and Enter to save."
     echo --------

@@ -7,40 +7,60 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/scripts/lib/install-update-common.sh"
 airplanes_init_paths
 
-if [ -f "$BOOT_CONFIG" ]; then
-    UUID_FILE="$(airplanes_path /boot/airplanes-uuid)"
-else
-    mkdir -p "$IPATH"
-    UUID_FILE="$IPATH/airplanes-uuid"
-    # move old file position
-    BOOT_UUID="$(airplanes_path /boot/airplanes-uuid)"
-    if [ -f "$BOOT_UUID" ]; then
-        mv -f "$BOOT_UUID" "$UUID_FILE"
-    fi
-fi
-
-function generateUUID() {
-    rm -f "$UUID_FILE"
-    sleep 0.$RANDOM; sleep 0.$RANDOM
-    UUID=$(cat /proc/sys/kernel/random/uuid)
-    echo New UUID: $UUID
-    echo "$UUID" > "$UUID_FILE"
+valid_uuid() {
+    [[ "$1" =~ ^\{?[A-F0-9a-f]{8}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{12}\}?$ ]]
 }
 
-# Check for a (valid) UUID...
-if [ -f "$UUID_FILE" ]; then
-    UUID=$(cat "$UUID_FILE")
-    if ! [[ $UUID =~ ^\{?[A-F0-9a-f]{8}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{12}\}?$ ]]; then
-        # Data in UUID file is invalid.  Regenerate it!
-        echo "WARNING: Data in UUID file was invalid.  Regenerating UUID."
-        generateUUID
-    else
-        echo "Using existing valid UUID ($UUID) from $UUID_FILE"
-    fi
+normalize_uuid() {
+    tr -d '\n\r{}' < "$1" | tr 'A-F' 'a-f'
+}
+
+read_existing_uuid() {
+    local candidate raw
+    for candidate in "$FEEDER_ID_FILE" "$LEGACY_UUID_FILE" "$BOOT_UUID_FILE"; do
+        [[ -f "$candidate" ]] || continue
+        raw="$(normalize_uuid "$candidate")"
+        if valid_uuid "$raw"; then
+            UUID="$raw"
+            UUID_SOURCE="$candidate"
+            return 0
+        fi
+        echo "WARNING: Data in UUID file $candidate was invalid. Ignoring it."
+    done
+    return 1
+}
+
+generate_uuid() {
+    sleep 0.$RANDOM
+    sleep 0.$RANDOM
+    UUID="$(cat /proc/sys/kernel/random/uuid)"
+    UUID_SOURCE=''
+    echo "New Feeder ID: $UUID"
+}
+
+write_feeder_id() {
+    local tmp
+    mkdir -p "$ETC_AIRPLANES"
+    tmp="$FEEDER_ID_FILE.$$"
+    printf '%s\n' "$UUID" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$FEEDER_ID_FILE"
+}
+
+install_legacy_uuid_symlink() {
+    mkdir -p "$(dirname "$LEGACY_UUID_FILE")"
+    rm -f "$LEGACY_UUID_FILE"
+    ln -sfn '../../../../etc/airplanes/feeder-id' "$LEGACY_UUID_FILE"
+}
+
+if read_existing_uuid; then
+    echo "Using existing valid Feeder ID ($UUID) from $UUID_SOURCE"
 else
-    # not found generate uuid and save it
-    echo "WARNING: No UUID file found, generating new UUID..."
-    generateUUID
+    echo "WARNING: No valid Feeder ID found, generating a new one..."
+    generate_uuid
 fi
+
+write_feeder_id
+install_legacy_uuid_symlink
 
 exit 0

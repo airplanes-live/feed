@@ -5,7 +5,7 @@ setup() {
     CONTRACT="$BATS_TEST_DIRNAME/contracts/feeder-api-v1.json"
     ROOT_DIR="$(mktemp -d)"
     mkdir -p "$ROOT_DIR/usr/local/share/airplanes" "$ROOT_DIR/etc/airplanes"
-    echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/etc/airplanes/feeder-id"
     MOCK_PORT_FILE="$(mktemp)"
     MOCK_PID_FILE="$(mktemp)"
 
@@ -167,8 +167,8 @@ PY
 }
 
 @test "claim show prints grouped local secret" {
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
     run "$SCRIPT" claim show --root "$ROOT_DIR"
 
@@ -178,8 +178,8 @@ PY
 }
 
 @test "claim show uses overridden server URL for claim page" {
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
     run "$SCRIPT" claim show --root "$ROOT_DIR" --server-url "https://staging.airplanes.test/"
 
@@ -188,8 +188,8 @@ PY
 }
 
 @test "top-level status authenticates local secret and stores version" {
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     start_fixed_server 200 "$(contract_body status authenticated_recent)"
 
     run "$SCRIPT" status --root "$ROOT_DIR" --server-url "$(mock_url)"
@@ -200,11 +200,11 @@ PY
     [[ "$output" =~ "Website feed" ]]
     [[ "$output" =~ "last data seen 1m ago" ]]
     [[ "$output" =~ "Result: feeding looks healthy" ]]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret.version")" = "3" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "3" ]
 }
 
 @test "top-level status reads image boot config and env" {
-    rm -f "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    rm -f "$ROOT_DIR/etc/airplanes/feeder-id"
     mkdir -p "$ROOT_DIR/boot" "$ROOT_DIR/usr/bin"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
     chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
@@ -217,8 +217,8 @@ EOF
     cat > "$ROOT_DIR/boot/airplanes-env" <<'EOF'
 INPUT="127.0.0.1:30006"
 EOF
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     start_fixed_server 200 "$(contract_body status authenticated_recent)"
 
     run "$SCRIPT" status --root "$ROOT_DIR" --server-url "$(mock_url)"
@@ -230,8 +230,8 @@ EOF
 }
 
 @test "top-level status json omits raw claim secret" {
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     start_fixed_server 200 "$(contract_body status authenticated_recent)"
 
     run "$SCRIPT" status --json --root "$ROOT_DIR" --server-url "$(mock_url)"
@@ -246,23 +246,23 @@ EOF
 }
 
 @test "claim rotate promotes pending on 200" {
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     start_fixed_server 200 '{"version": 2}'
 
     run "$SCRIPT" claim rotate --root "$ROOT_DIR" --server-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Rotation complete (v2)" ]]
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret.version")" = "2" ]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" != "ABCDEFGHIJKLMNOP" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "2" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" != "ABCDEFGHIJKLMNOP" ]
 }
 
 @test "claim rotate finalizes pending after lost response" {
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    echo "QRSTUVWXYZ012345" > "$ROOT_DIR/etc/airplanes/claim-secret.pending"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret" "$ROOT_DIR/etc/airplanes/claim-secret.pending"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    echo "QRSTUVWXYZ012345" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret" "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
     start_claim_server 409 '{"error": "rotation_rejected"}' \
         "ABCDEFGHIJKLMNOP" 1 "QRSTUVWXYZ012345" 3
 
@@ -270,14 +270,14 @@ EOF
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Rotation finalized (v3)" ]]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "QRSTUVWXYZ012345" ]
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "QRSTUVWXYZ012345" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
 }
 
 @test "claim rotate --abort deletes pending only when active authenticates" {
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    echo "QRSTUVWXYZ012345" > "$ROOT_DIR/etc/airplanes/claim-secret.pending"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret" "$ROOT_DIR/etc/airplanes/claim-secret.pending"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    echo "QRSTUVWXYZ012345" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret" "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
     start_claim_server 200 '{"version": 1}' \
         "ABCDEFGHIJKLMNOP" 1 "NO_MATCH_PENDING1" 2
 
@@ -285,14 +285,14 @@ EOF
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Pending rotation aborted" ]]
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
 }
 
 @test "backup writes mode 0600 JSON and restore reads it" {
     local backup_file="$ROOT_DIR/backup.json"
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    echo "4" > "$ROOT_DIR/etc/airplanes/claim-secret.version"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret" "$ROOT_DIR/etc/airplanes/claim-secret.version"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    echo "4" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret" "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
 
     run "$SCRIPT" backup "$backup_file" --root "$ROOT_DIR"
 
@@ -302,21 +302,21 @@ EOF
     [ "$(jq -r '.created_at | type' "$backup_file")" = "string" ]
     [ "$(jq -r '.claim.secret' "$backup_file")" = "ABCDEFGHIJKLMNOP" ]
     [ "$(jq -r '.claim.version' "$backup_file")" = "4" ]
-    rm "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
-    rm "$ROOT_DIR/etc/airplanes/claim-secret" "$ROOT_DIR/etc/airplanes/claim-secret.version"
+    rm "$ROOT_DIR/etc/airplanes/feeder-id"
+    rm "$ROOT_DIR/etc/airplanes/feeder-claim-secret" "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
 
     run "$SCRIPT" restore "$backup_file" --root "$ROOT_DIR"
 
     [ "$status" -eq 0 ]
-    [ "$(cat "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid")" = "11111111-2222-3333-4444-555555555555" ]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "ABCDEFGHIJKLMNOP" ]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret.version")" = "4" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "11111111-2222-3333-4444-555555555555" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "4" ]
 }
 
 @test "backup rejects --force instead of overwriting" {
     local backup_file="$ROOT_DIR/backup.json"
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
     run "$SCRIPT" backup --force "$backup_file" --root "$ROOT_DIR"
 
@@ -327,28 +327,28 @@ EOF
 
 @test "restore rejects --dry-run without writing" {
     local backup_file="$ROOT_DIR/backup.json"
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     run "$SCRIPT" backup "$backup_file" --root "$ROOT_DIR"
     [ "$status" -eq 0 ]
-    rm "$ROOT_DIR/etc/airplanes/claim-secret"
+    rm "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
     run "$SCRIPT" restore --dry-run "$backup_file" --root "$ROOT_DIR"
 
     [ "$status" -ne 0 ]
     [[ "$output" =~ "unknown flag for restore: --dry-run" ]]
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
 }
 
 @test "claim rotate rejects --dry-run without writing pending secret" {
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
     run "$SCRIPT" claim rotate --dry-run --root "$ROOT_DIR" --server-url "http://127.0.0.1:1"
 
     [ "$status" -ne 0 ]
     [[ "$output" =~ "unknown flag for claim rotate: --dry-run" ]]
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
 }
 
 @test "status rejects --dry-run" {
@@ -367,16 +367,16 @@ EOF
 
 @test "restore --check validates backup without writing" {
     local backup_file="$ROOT_DIR/backup.json"
-    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     run "$SCRIPT" backup "$backup_file" --root "$ROOT_DIR"
-    rm "$ROOT_DIR/etc/airplanes/claim-secret"
+    rm "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
     run "$SCRIPT" restore --check "$backup_file" --root "$ROOT_DIR"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Backup is valid" ]]
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
 }
 
 @test "register sends raw secret through stdin, not curl argv" {
@@ -407,7 +407,7 @@ SH
 
     [ "$status" -eq 0 ]
     local secret
-    secret="$(cat "$ROOT_DIR/etc/airplanes/claim-secret")"
+    secret="$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")"
     ! grep -q "$secret" "$args_file"
     grep -q "$secret" "$stdin_file"
 }

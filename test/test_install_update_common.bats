@@ -54,6 +54,17 @@ write_archive_fallback_stubs() {
     [ "$(airplanes_path /etc/airplanes/feed.env)" = "$ROOT_DIR/etc/airplanes/feed.env" ]
 }
 
+@test "image install detection supports canonical feed.env without boot config" {
+    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/etc/airplanes"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    printf 'USER="image"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+
+    run airplanes_is_image_install
+
+    [ "$status" -eq 0 ]
+}
+
 @test "getGIT clones the configured branch from a local repository" {
     local repo="$ROOT_DIR/source"
     local target="$ROOT_DIR/target"

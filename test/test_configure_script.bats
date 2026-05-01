@@ -55,8 +55,7 @@ run_configure() {
     [ "$status" -eq 0 ]
     grep -q 'LATITUDE="52.52000"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
-    # Hardcoded uuid path (F1 fix): no AIRPLANES_ROOT prefix in feed.env.
-    grep -q '\-\-uuid-file /usr/local/share/airplanes/airplanes-uuid' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -q '\-\-uuid-file' "$ROOT_DIR/etc/airplanes/feed.env"
     ! grep -q 'Invalid latitude' "$WHIPTAIL_LOG"
     ! grep -q 'Invalid longitude' "$WHIPTAIL_LOG"
 }

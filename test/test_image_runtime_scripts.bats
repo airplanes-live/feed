@@ -52,7 +52,7 @@ SH
     grep -q -- '--db-file=none' "$arg_log"
     grep -q -- '--max-range 450' "$arg_log"
     grep -q -- '--modeac' "$arg_log"
-    grep -q -- "--uuid-file=$root/boot/airplanes-uuid" "$arg_log"
+    grep -q -- "--uuid-file=$root/etc/airplanes/feeder-id" "$arg_log"
     grep -q -- "--write-json $root/run/airplanes-feed" "$arg_log"
     if grep -q -- '--decoder-option-that-must-not-feed' "$arg_log"; then
         return 1
@@ -91,6 +91,7 @@ SH
     grep -q -- '--user image-feeder' "$arg_log"
     grep -q -- '--privacy' "$arg_log"
     grep -q -- '--results beast,connect,localhost:30104' "$arg_log"
+    grep -q -- "--uuid-file $root/etc/airplanes/feeder-id" "$arg_log"
 }
 
 @test "airplanes-mlat.sh lets MLAT_MARKER enable the marker" {
@@ -120,6 +121,37 @@ SH
 
     [ "$status" -eq 0 ]
     if grep -q -- '--privacy' "$arg_log"; then
+        return 1
+    fi
+}
+
+@test "runtime scripts prefer canonical feed.env over boot config when both exist" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/args.log"
+    write_image_config "$root"
+    mkdir -p "$root/etc/airplanes"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30007"
+INPUT_TYPE="dump1090"
+LATITUDE="1"
+LONGITUDE="2"
+ALTITUDE="3m"
+USER="canonical-feed-env"
+MLATSERVER="feed.airplanes.live:31090"
+TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"
+EOF
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--lat 1 --lon 2' "$arg_log"
+    if grep -q -- '52.52000' "$arg_log"; then
         return 1
     fi
 }

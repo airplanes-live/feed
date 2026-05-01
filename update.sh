@@ -58,13 +58,16 @@ else
         BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
         ETC_AIRPLANES="$(airplanes_path /etc/airplanes)"
         FEED_ENV="$ETC_AIRPLANES/feed.env"
+        FEEDER_ID_FILE="$ETC_AIRPLANES/feeder-id"
+        LEGACY_UUID_FILE="$IPATH/airplanes-uuid"
+        BOOT_UUID_FILE="$(airplanes_path /boot/airplanes-uuid)"
         LEGACY_FEED_ENV="$(airplanes_path /etc/default/airplanes)"
         LOCAL_BIN="$(airplanes_path /usr/local/bin)"
         SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
     }
 
     airplanes_is_image_install() {
-        [[ -f "$BOOT_CONFIG" && -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]
+        [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
     }
 
     airplanes_image_target_default() {
@@ -222,8 +225,12 @@ source "$GIT/scripts/lib/systemd-helpers.sh"
 source "$GIT/scripts/lib/claim-registration.sh"
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
-    source "$BOOT_CONFIG"
-    [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
+    if [[ -f "$FEED_ENV" ]]; then
+        source "$FEED_ENV"
+    else
+        source "$BOOT_CONFIG"
+        [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
+    fi
 
     USER="${USER:-airplanes_initial}"
     LATITUDE="${LATITUDE:-0}"
@@ -246,11 +253,10 @@ else
     if [[ -f "$FEED_ENV" ]]; then
         sed -i -e 's/beast_reduce_out,/beast_reduce_plus_out,/g' "$FEED_ENV" || true
         sed -i -e 's/beast_reduce_plus_out,feed\.airplanes\.live,64004/beast_reduce_plus_out,feed2.airplanes.live,64004/g' "$FEED_ENV" || true
+        sed -i -E 's/[[:space:]]*--uuid-file(=|[[:space:]]+)(\/usr\/local\/share\/airplanes\/airplanes-uuid|\/boot\/airplanes-uuid)//g' "$FEED_ENV" || true
     fi
 
-    if [[ -f "$BOOT_ENV" ]]; then
-        source "$BOOT_ENV"
-    elif [[ -f "$FEED_ENV" ]]; then
+    if [[ -f "$FEED_ENV" ]]; then
         source "$FEED_ENV"
         if ! grep -qs -e UAT_INPUT "$FEED_ENV"; then
             cat >> "$FEED_ENV" <<"EOF"
@@ -260,6 +266,8 @@ else
 UAT_INPUT="127.0.0.1:30978"
 EOF
         fi
+    elif [[ -f "$BOOT_ENV" ]]; then
+        source "$BOOT_ENV"
     fi
 fi
 if [[ -z $INPUT ]] || [[ -z $INPUT_TYPE ]] || [[ -z $USER ]] \

@@ -459,6 +459,7 @@ assert_image_contracts() {
     assert_file /boot/airplanes-config.txt
     assert_file /boot/airplanes-env
     assert_file /boot/airplanes-uuid
+    assert_file /etc/airplanes/feeder-id
     assert_exec /usr/bin/airplanes-feeder
     assert_exec /usr/local/bin/apl-feed
     assert_file /usr/local/share/airplanes/update.sh

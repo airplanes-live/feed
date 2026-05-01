@@ -13,8 +13,11 @@ airplanes_path() {
 BOOT_CONFIG="$(airplanes_path /boot/airplanes-config.txt)"
 BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
 FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
+FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
 
-if [[ -f "$BOOT_CONFIG" && -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]; then
+if [[ -f "$FEED_ENV" ]]; then
+    source "$FEED_ENV"
+elif [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && -f "$BOOT_CONFIG" ]]; then
     source "$BOOT_CONFIG"
     [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
 else
@@ -28,6 +31,8 @@ elif [[ -n "${MLAT_MARKER:-}" ]]; then
 else
     PRIVACY="${PRIVACY:-}"
 fi
+
+UUID_FILE="--uuid-file $FEEDER_ID_FILE"
 
 if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$USER" == 0 ]] || [[ "$USER" == "disable" ]]; then
     echo MLAT DISABLED

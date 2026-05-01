@@ -24,7 +24,7 @@ ExecStart=/usr/local/share/airplanes/venv/bin/mlat-client \
     --lat $LATITUDE \
     --lon $LONGITUDE \
     --alt $ALTITUDE \
-    $UUID_FILE \
+    --uuid-file /etc/airplanes/feeder-id \
     $PRIVACY \
     $RESULTS
 Type=simple
@@ -38,12 +38,6 @@ Nice=-1
 [Install]
 WantedBy=default.target
 EOF
-
-if [[ -f /boot/airplanes-config.txt ]]; then
-    sed -i -e 's#EnvironmentFile.*#EnvironmentFile=/boot/airplanes-env\nEnvironmentFile=/boot/airplanes-config.txt#' "$SERVICE"
-elif [[ -f /boot/adsb-config.txt ]]; then
-    sed -i -e 's#EnvironmentFile.*#EnvironmentFile=/boot/airplanes-env\nEnvironmentFile=/boot/adsb-config.txt#' "$SERVICE"
-fi
 
 sed -i -e "s/SERVERPORT/${1}/" "$SERVICE"
 if [[ -n ${2} ]]; then

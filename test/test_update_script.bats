@@ -107,6 +107,7 @@ RESULTS="--results beast,connect,localhost:30104"
 NET_OPTIONS="--decoder-option-that-must-not-feed"
 JSON_OPTIONS="--json-location-accuracy 2"
 EOF
+    printf '%s\n' "22222222-3333-4444-5555-666666666666" > "$root/boot/airplanes-uuid"
 }
 
 prepare_skip_build_state() {
@@ -248,9 +249,12 @@ SH
     [ -f "$ipath/apl-feed/common.sh" ]
     [ -f "$root/lib/systemd/system/airplanes-feed.service" ]
     [ -f "$root/lib/systemd/system/airplanes-mlat.service" ]
-    [ -f "$ipath/airplanes-uuid" ]
+    [ -f "$root/etc/airplanes/feeder-id" ]
+    [ -L "$ipath/airplanes-uuid" ]
+    [ "$(readlink "$ipath/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
     grep -q 'UAT_INPUT="127.0.0.1:30978"' "$root/etc/airplanes/feed.env"
     grep -q 'beast_reduce_plus_out,feed2.airplanes.live,64004' "$root/etc/airplanes/feed.env"
+    ! grep -q -- '--uuid-file' "$root/etc/airplanes/feed.env"
     [ -L "$root/etc/default/airplanes" ]
     [ "$(readlink "$root/etc/default/airplanes")" = "$root/etc/airplanes/feed.env" ]
     grep -q 'claim register' "$ROOT_DIR/claim.log"
@@ -351,7 +355,8 @@ SH
     grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
     [ ! -e "$root/lib/systemd/system/airplanes-feed.service" ]
     [ ! -e "$root/lib/systemd/system/airplanes-mlat.service" ]
-    [ -f "$root/boot/airplanes-uuid" ]
+    [ "$(cat "$root/etc/airplanes/feeder-id")" = "22222222-3333-4444-5555-666666666666" ]
+    [ -L "$ipath/airplanes-uuid" ]
     [ -x "$root/usr/bin/airplanes-feeder" ]
     [ ! -e "$ipath/feed-airplanes" ]
     [ ! -e "$root/etc/airplanes/feed.env" ]
