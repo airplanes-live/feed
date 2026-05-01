@@ -2,6 +2,8 @@
 set -x
 
 IPATH=/usr/local/share/airplanes
+FEEDER_ID=/etc/airplanes/feeder-id
+LEGACY_UUID="$IPATH/airplanes-uuid"
 
 systemctl disable --now airplanes-mlat
 systemctl disable --now airplanes-mlat2 &>/dev/null
@@ -15,10 +17,18 @@ rm -f /lib/systemd/system/airplanes-mlat.service
 rm -f /lib/systemd/system/airplanes-mlat2.service
 rm -f /lib/systemd/system/airplanes-feed.service
 
-cp -f "$IPATH/airplanes-uuid" /tmp/airplanes-uuid
+if [[ -f "$FEEDER_ID" ]]; then
+    cp -f "$FEEDER_ID" /tmp/airplanes-feeder-id
+elif [[ -f "$LEGACY_UUID" ]]; then
+    cp -f "$LEGACY_UUID" /tmp/airplanes-feeder-id
+fi
 rm -rf "$IPATH"
 mkdir -p "$IPATH"
-mv -f /tmp/airplanes-uuid "$IPATH/airplanes-uuid"
+if [[ -f /tmp/airplanes-feeder-id ]]; then
+    mkdir -p "$(dirname "$FEEDER_ID")"
+    mv -f /tmp/airplanes-feeder-id "$FEEDER_ID"
+    ln -sfn '../../../../etc/airplanes/feeder-id' "$LEGACY_UUID"
+fi
 
 set +x
 

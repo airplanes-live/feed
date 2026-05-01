@@ -7,8 +7,8 @@ setup() {
     SCRIPT="$BATS_TEST_DIRNAME/../scripts/apl-feed.sh"
     CONTRACT="$BATS_TEST_DIRNAME/contracts/feeder-api-v1.json"
     ROOT_DIR="$(mktemp -d)"
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
-    echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    mkdir -p "$ROOT_DIR/etc/airplanes"
+    echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/etc/airplanes/feeder-id"
     MOCK_RESP_FILE="$(mktemp)"
     MOCK_PORT_FILE="$(mktemp)"
     MOCK_PID_FILE="$(mktemp)"
@@ -106,22 +106,32 @@ mock_url() {
     [[ "$output" =~ "11111111-2222-3333-4444-555555555555" ]]
 }
 
-@test "fails when no UUID file exists at --root" {
-    rm "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+@test "fails when no Feeder ID file exists at --root" {
+    rm "$ROOT_DIR/etc/airplanes/feeder-id"
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 1 ]
-    [[ "$output" =~ "UUID" || "$output" =~ "uuid" ]]
+    [[ "$output" =~ "Feeder ID" ]]
 }
 
-@test "rejects malformed UUID" {
-    echo "not-a-uuid" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+@test "rejects malformed Feeder ID" {
+    echo "not-a-uuid" > "$ROOT_DIR/etc/airplanes/feeder-id"
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 1 ]
-    [[ "$output" =~ "UUID" || "$output" =~ "format" ]]
+    [[ "$output" =~ "Feeder ID" || "$output" =~ "format" ]]
+}
+
+@test "reads UUID from legacy local path as fallback" {
+    rm "$ROOT_DIR/etc/airplanes/feeder-id"
+    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
+    echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
+        --server-url "http://127.0.0.1:1" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]]
 }
 
 @test "reads UUID from /boot/airplanes-uuid as fallback" {
-    rm "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    rm "$ROOT_DIR/etc/airplanes/feeder-id"
     mkdir -p "$ROOT_DIR/boot"
     echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > "$ROOT_DIR/boot/airplanes-uuid"
     run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
@@ -227,9 +237,9 @@ mock_url() {
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
-    local final="$ROOT_DIR/etc/airplanes/claim-secret"
+    local final="$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     [ -f "$final" ]
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
     local persisted; persisted="$(cat "$final")"
     [ "${#persisted}" -eq 16 ]
     [[ "$persisted" =~ ^[A-Z0-9]{16}$ ]]
@@ -246,15 +256,15 @@ mock_url() {
     # Either curl-rc network-error (exit 2) or rate-limit-cap (exit 3).
     [ "$status" -eq 2 ] || [ "$status" -eq 3 ]
     # The pending file must exist because we wrote it pre-POST.
-    [ -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
+    [ -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
     # Final must NOT exist (POST didn't succeed).
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
 }
 
-@test "existing claim-secret is reused (NOOP_REPLAY scenario)" {
+@test "existing feeder-claim-secret is reused (NOOP_REPLAY scenario)" {
     mkdir -p "$ROOT_DIR/etc/airplanes"
-    echo "PRESERVEDSECRET1" > "$ROOT_DIR/etc/airplanes/claim-secret"
-    chmod 600 "$ROOT_DIR/etc/airplanes/claim-secret"
+    echo "PRESERVEDSECRET1" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     write_contract_response secret noop_replay
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
@@ -262,19 +272,19 @@ mock_url() {
     [[ "$output" =~ "SUCCESS" ]]
     [[ ! "$output" =~ "PRESERVEDSECRET1" ]]
     # Final still has the original secret unchanged.
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "PRESERVEDSECRET1" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "PRESERVEDSECRET1" ]
 }
 
 @test "existing pending file is reused (mid-POST resume scenario)" {
     mkdir -p "$ROOT_DIR/etc/airplanes"
-    echo "RESUMEPENDING123" > "$ROOT_DIR/etc/airplanes/claim-secret.pending"
+    echo "RESUMEPENDING123" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
     write_contract_response secret create_success
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "RESU-MEPE-NDIN-G123" ]]
     # Pending was promoted to final on success.
-    [ -f "$ROOT_DIR/etc/airplanes/claim-secret" ]
-    [ ! -f "$ROOT_DIR/etc/airplanes/claim-secret.pending" ]
-    [ "$(cat "$ROOT_DIR/etc/airplanes/claim-secret")" = "RESUMEPENDING123" ]
+    [ -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "RESUMEPENDING123" ]
 }

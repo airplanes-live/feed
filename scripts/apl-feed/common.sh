@@ -57,7 +57,15 @@ root_path() {
     fi
 }
 
+feeder_id_path() {
+    root_path '/etc/airplanes/feeder-id'
+}
+
 uuid_file_primary() {
+    feeder_id_path
+}
+
+uuid_file_legacy() {
     root_path '/usr/local/share/airplanes/airplanes-uuid'
 }
 
@@ -66,19 +74,23 @@ uuid_file_boot() {
 }
 
 secret_final_path() {
-    root_path '/etc/airplanes/claim-secret'
+    root_path '/etc/airplanes/feeder-claim-secret'
 }
 
 secret_pending_path() {
-    root_path '/etc/airplanes/claim-secret.pending'
+    root_path '/etc/airplanes/feeder-claim-secret.pending'
 }
 
 secret_version_path() {
-    root_path '/etc/airplanes/claim-secret.version'
+    root_path '/etc/airplanes/feeder-claim-secret.version'
 }
 
 feed_env_path() {
-    if [[ -f "$(root_path '/boot/airplanes-config.txt')" && -x "$(root_path '/usr/bin/airplanes-feeder')" ]]; then
+    if [[ -f "$(root_path '/etc/airplanes/feed.env')" ]]; then
+        root_path '/etc/airplanes/feed.env'
+        return
+    fi
+    if [[ -x "$(root_path '/usr/bin/airplanes-feeder')" && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
         root_path '/boot/airplanes-config.txt'
         return
     fi
@@ -86,7 +98,12 @@ feed_env_path() {
 }
 
 feed_env_paths() {
-    if [[ -f "$(root_path '/boot/airplanes-config.txt')" && -x "$(root_path '/usr/bin/airplanes-feeder')" ]]; then
+    if [[ -f "$(root_path '/etc/airplanes/feed.env')" ]]; then
+        root_path '/etc/airplanes/feed.env'
+        printf '\n'
+        return
+    fi
+    if [[ -x "$(root_path '/usr/bin/airplanes-feeder')" && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
         root_path '/boot/airplanes-config.txt'
         printf '\n'
         root_path '/boot/airplanes-env'
@@ -182,29 +199,30 @@ feed_env_get() {
 
 read_uuid() {
     local path raw uuid
-    path="$(uuid_file_primary)"
-    if [[ ! -f "$path" ]]; then
-        path="$(uuid_file_boot)"
-    fi
-    [[ -f "$path" ]] || die "no UUID file at $(uuid_file_primary) or $(uuid_file_boot)"
-    raw="$(tr -d '\n\r{}' < "$path")"
-    uuid="$(printf '%s' "$raw" | tr 'A-F' 'a-f')"
-    if [[ ! "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-        die "invalid UUID format at $path: $raw"
-    fi
-    printf '%s' "$uuid"
+    for path in "$(feeder_id_path)" "$(uuid_file_legacy)" "$(uuid_file_boot)"; do
+        [[ -f "$path" ]] || continue
+        raw="$(tr -d '\n\r{}' < "$path")"
+        uuid="$(printf '%s' "$raw" | tr 'A-F' 'a-f')"
+        if [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            printf '%s' "$uuid"
+            return 0
+        fi
+        die "invalid Feeder ID format at $path: $raw"
+    done
+    die "no Feeder ID file at $(feeder_id_path), $(uuid_file_legacy), or $(uuid_file_boot)"
 }
 
 write_uuid() {
     local uuid="$1"
     local path dir tmp
     [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
-        || die "refusing to write invalid UUID"
-    path="$(uuid_file_primary)"
+        || die "refusing to write invalid Feeder ID"
+    path="$(feeder_id_path)"
     dir="$(dirname "$path")"
     mkdir -p "$dir"
     tmp="${path}.$$"
     printf '%s\n' "$uuid" > "$tmp"
+    chmod 0644 "$tmp"
     mv -f "$tmp" "$path"
 }
 

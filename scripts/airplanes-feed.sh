@@ -13,11 +13,17 @@ airplanes_path() {
 BOOT_CONFIG="$(airplanes_path /boot/airplanes-config.txt)"
 BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
 FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
+FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
 IMAGE_FEED_BIN="$(airplanes_path /usr/bin/airplanes-feeder)"
 
 IMAGE_INSTALL=0
-if [[ -f "$BOOT_CONFIG" && -x "$IMAGE_FEED_BIN" ]]; then
+if [[ -x "$IMAGE_FEED_BIN" ]]; then
     IMAGE_INSTALL=1
+fi
+
+if [[ -f "$FEED_ENV" ]]; then
+    source "$FEED_ENV"
+elif [[ "$IMAGE_INSTALL" == "1" && -f "$BOOT_CONFIG" ]]; then
     source "$BOOT_CONFIG"
     [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
 else
@@ -43,12 +49,6 @@ UAT_IP=$(echo $UAT_INPUT | cut -d: -f1)
 UAT_PORT=$(echo $UAT_INPUT | cut -d: -f2)
 UAT_SOURCE="--net-connector $UAT_IP,$UAT_PORT,uat_in,silent_fail"
 
-if [[ -f "$BOOT_CONFIG" ]]; then
-    UUID_FILE="$(airplanes_path /boot/airplanes-uuid)"
-else
-    UUID_FILE="$(airplanes_path /usr/local/share/airplanes/airplanes-uuid)"
-fi
-
 REDUCE_INTERVAL="${REDUCE_INTERVAL:-0.5}"
 JSON_OPTIONS="${JSON_OPTIONS:-"--json-location-accuracy 2"}"
 MODEAC_OPTION=""
@@ -68,7 +68,7 @@ else
 fi
 
 exec "$FEED_BIN" --net --net-only --quiet \
-    "--uuid-file=$UUID_FILE" \
+    "--uuid-file=$FEEDER_ID_FILE" \
     --write-json "$RUN_DIR" \
     $FEED_IMAGE_OPTIONS \
     --net-beast-reduce-interval $REDUCE_INTERVAL \

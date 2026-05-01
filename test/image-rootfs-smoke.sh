@@ -168,7 +168,8 @@ APL_FEED_BIN="$STUB_DIR/apl-feed-stub" \
 
 test -f "$ROOT_DIR/boot/airplanes-config.txt"
 test -f "$ROOT_DIR/boot/airplanes-env"
-test -f "$ROOT_DIR/boot/airplanes-uuid"
+test -f "$ROOT_DIR/etc/airplanes/feeder-id"
+test -L "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
 test -x "$ROOT_DIR/usr/bin/airplanes-feeder"
 test -x "$ROOT_DIR/usr/local/bin/apl-feed"
 test -f "$IPATH/apl-feed/common.sh"

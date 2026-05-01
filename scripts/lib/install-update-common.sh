@@ -24,13 +24,16 @@ airplanes_init_paths() {
     BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
     ETC_AIRPLANES="$(airplanes_path /etc/airplanes)"
     FEED_ENV="$ETC_AIRPLANES/feed.env"
+    FEEDER_ID_FILE="$ETC_AIRPLANES/feeder-id"
+    LEGACY_UUID_FILE="$IPATH/airplanes-uuid"
+    BOOT_UUID_FILE="$(airplanes_path /boot/airplanes-uuid)"
     LEGACY_FEED_ENV="$(airplanes_path /etc/default/airplanes)"
     LOCAL_BIN="$(airplanes_path /usr/local/bin)"
     SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
 }
 
 airplanes_is_image_install() {
-    [[ -f "$BOOT_CONFIG" && -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]
+    [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
 }
 
 airplanes_image_target_default() {

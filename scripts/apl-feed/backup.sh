@@ -138,7 +138,7 @@ config_restore() {
 
     if existing_uuid="$(read_uuid 2>/dev/null)"; then
         if [[ "$existing_uuid" != "$BACKUP_UUID" && "$FORCE" -ne 1 ]]; then
-            die "local UUID differs; rerun with --force to overwrite"
+            die "local Feeder ID differs; rerun with --force to overwrite"
         fi
     fi
     if [[ -f "$(secret_final_path)" ]]; then
@@ -156,5 +156,5 @@ config_restore() {
         rm -f "$(secret_version_path)"
     fi
     rm -f "$(secret_pending_path)"
-    echo "Restored feeder config for UUID $BACKUP_UUID"
+    echo "Restored feeder config for Feeder ID $BACKUP_UUID"
 }

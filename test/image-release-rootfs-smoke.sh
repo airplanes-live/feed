@@ -355,6 +355,7 @@ assert_updated_image_contracts() {
     [[ -f "$ROOT_MNT/boot/airplanes-config.txt" ]] || fail "missing boot config"
     [[ -f "$ROOT_MNT/boot/airplanes-env" ]] || fail "missing boot env"
     [[ -f "$ROOT_MNT/boot/airplanes-uuid" ]] || fail "missing boot uuid"
+    [[ -f "$ROOT_MNT/etc/airplanes/feeder-id" ]] || fail "missing feeder id"
     [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "missing image feed binary"
     [[ -x "$ROOT_MNT/usr/local/bin/apl-feed" ]] || fail "missing apl-feed command"
     [[ -f "$ipath/update.sh" ]] || fail "missing installed update.sh"

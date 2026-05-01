@@ -123,11 +123,12 @@ test -f /etc/airplanes/feed.env
 bash /usr/local/share/airplanes/git/update.sh
 
 # Post-update assertions.
-test -f /usr/local/share/airplanes/airplanes-uuid
+test -f /etc/airplanes/feeder-id
+test -L /usr/local/share/airplanes/airplanes-uuid
 test -f /usr/local/share/airplanes/apl-feed/common.sh
 test -f /lib/systemd/system/airplanes-feed.service
 test -f /lib/systemd/system/airplanes-mlat.service
-test -f /etc/airplanes/claim-secret
+test -f /etc/airplanes/feeder-claim-secret
 test "$(readlink /etc/default/airplanes)" = "/etc/airplanes/feed.env"
 grep -q 'systemctl restart airplanes-feed' /tmp/systemctl.log
 grep -q 'UAT_INPUT="127.0.0.1:30978"' /etc/airplanes/feed.env
