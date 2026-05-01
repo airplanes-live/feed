@@ -455,11 +455,28 @@ assert_not_exists() {
     [[ ! -e "$1" ]] || fail "unexpected path exists: $1"
 }
 
+assert_valid_uuid_file() {
+    local path="$1"
+    local raw uuid
+    assert_file "$path"
+    raw="$(tr -d '\n\r{}' < "$path")"
+    uuid="$(printf '%s' "$raw" | tr 'A-F' 'a-f')"
+    [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || fail "invalid UUID in $path: $raw"
+}
+
+assert_symlink_target() {
+    local path="$1"
+    local target="$2"
+    [[ -L "$path" ]] || fail "$path is not a symlink"
+    [[ "$(readlink "$path")" == "$target" ]] || fail "$path does not point at $target"
+}
+
 assert_image_contracts() {
     assert_file /boot/airplanes-config.txt
     assert_file /boot/airplanes-env
-    assert_file /boot/airplanes-uuid
-    assert_file /etc/airplanes/feeder-id
+    assert_valid_uuid_file /etc/airplanes/feeder-id
+    assert_symlink_target /usr/local/share/airplanes/airplanes-uuid '../../../../etc/airplanes/feeder-id'
     assert_exec /usr/bin/airplanes-feeder
     assert_exec /usr/local/bin/apl-feed
     assert_file /usr/local/share/airplanes/update.sh

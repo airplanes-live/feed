@@ -21,6 +21,7 @@ fi
 
 IMAGE_FILE="$WORK_DIR/airplanes-image.img"
 ROOT_MNT="$WORK_DIR/rootfs"
+FEED_BOOT_DIR="$ROOT_MNT/boot"
 BOOT_MNT="$ROOT_MNT/boot"
 DOWNLOAD_DIR="$WORK_DIR/download"
 FEED_SOURCE="$WORK_DIR/feed-source"
@@ -286,24 +287,43 @@ set_env_value() {
     fi
 }
 
+list_boot_dir() {
+    local label="$1"
+    local path="$2"
+    echo "Observed $label contents ($path):" >&2
+    if [[ -d "$path" ]]; then
+        find "$path" -maxdepth 2 -mindepth 1 -printf '%P\n' | sort | head -n 80 >&2 || true
+    else
+        echo "<missing>" >&2
+    fi
+}
+
+require_feed_boot_file() {
+    local name="$1"
+    if [[ -f "$FEED_BOOT_DIR/$name" ]]; then
+        return 0
+    fi
+    list_boot_dir "feed /boot" "$FEED_BOOT_DIR"
+    if [[ "$BOOT_MNT" != "$FEED_BOOT_DIR" ]]; then
+        list_boot_dir "mounted boot partition" "$BOOT_MNT"
+    fi
+    fail "release image lacks /boot/$name"
+}
+
 prepare_mounted_image() {
     local ipath mlat_version
     ipath="$ROOT_MNT/usr/local/share/airplanes"
 
-    [[ -f "$ROOT_MNT/boot/airplanes-config.txt" ]] || {
-        echo "Observed /boot contents:" >&2
-        find "$ROOT_MNT/boot" -maxdepth 2 -mindepth 1 -printf '%P\n' | sort | head -n 80 >&2 || true
-        fail "release image lacks /boot/airplanes-config.txt"
-    }
-    [[ -f "$ROOT_MNT/boot/airplanes-env" ]] || fail "release image lacks /boot/airplanes-env"
+    require_feed_boot_file airplanes-config.txt
+    require_feed_boot_file airplanes-env
     [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "release image lacks /usr/bin/airplanes-feeder"
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-first-run.service" ]] \
         || fail "release image lacks airplanes-first-run.service"
 
-    set_env_value "$ROOT_MNT/boot/airplanes-config.txt" USER "image-release-rootfs-smoke"
-    set_env_value "$ROOT_MNT/boot/airplanes-config.txt" LATITUDE "52.52000"
-    set_env_value "$ROOT_MNT/boot/airplanes-config.txt" LONGITUDE "13.40500"
-    set_env_value "$ROOT_MNT/boot/airplanes-config.txt" ALTITUDE "35m"
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" USER "image-release-rootfs-smoke"
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LATITUDE "52.52000"
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LONGITUDE "13.40500"
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" ALTITUDE "35m"
 
     mkdir -p "$ipath/venv/bin"
     cat > "$ipath/venv/bin/mlat-client" <<'SH'
@@ -349,13 +369,30 @@ assert_not_exists() {
     [[ ! -e "$path" ]] || fail "unexpected path exists: $path"
 }
 
+assert_valid_uuid_file() {
+    local path="$1"
+    local raw uuid
+    [[ -f "$path" ]] || fail "missing UUID file: $path"
+    raw="$(tr -d '\n\r{}' < "$path")"
+    uuid="$(printf '%s' "$raw" | tr 'A-F' 'a-f')"
+    [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || fail "invalid UUID in $path: $raw"
+}
+
+assert_symlink_target() {
+    local path="$1"
+    local target="$2"
+    [[ -L "$path" ]] || fail "$path is not a symlink"
+    [[ "$(readlink "$path")" == "$target" ]] || fail "$path does not point at $target"
+}
+
 assert_updated_image_contracts() {
     local ipath="$ROOT_MNT/usr/local/share/airplanes"
 
-    [[ -f "$ROOT_MNT/boot/airplanes-config.txt" ]] || fail "missing boot config"
-    [[ -f "$ROOT_MNT/boot/airplanes-env" ]] || fail "missing boot env"
-    [[ -f "$ROOT_MNT/boot/airplanes-uuid" ]] || fail "missing boot uuid"
-    [[ -f "$ROOT_MNT/etc/airplanes/feeder-id" ]] || fail "missing feeder id"
+    [[ -f "$FEED_BOOT_DIR/airplanes-config.txt" ]] || fail "missing boot config"
+    [[ -f "$FEED_BOOT_DIR/airplanes-env" ]] || fail "missing boot env"
+    assert_valid_uuid_file "$ROOT_MNT/etc/airplanes/feeder-id"
+    assert_symlink_target "$ipath/airplanes-uuid" '../../../../etc/airplanes/feeder-id'
     [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "missing image feed binary"
     [[ -x "$ROOT_MNT/usr/local/bin/apl-feed" ]] || fail "missing apl-feed command"
     [[ -f "$ipath/update.sh" ]] || fail "missing installed update.sh"
