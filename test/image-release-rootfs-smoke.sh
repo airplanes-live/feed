@@ -465,6 +465,7 @@ assert_updated_image_contracts() {
         assert_symlink_target "$ipath/airplanes-uuid" '../../../../etc/airplanes/feeder-id'
     else
         [[ -f "$ROOT_MNT/etc/airplanes/feed.env" ]] || fail "missing canonical feed.env"
+        [[ -f "$ROOT_MNT/etc/airplanes/image-install" ]] || fail "missing image-install marker"
         assert_not_exists "$ROOT_MNT/etc/airplanes/feeder-id"
         assert_not_exists "$ipath/airplanes-uuid"
     fi

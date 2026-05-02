@@ -95,6 +95,7 @@ function_body() {
         airplanes_path \
         airplanes_init_paths \
         airplanes_is_image_install \
+        airplanes_image_feed_bin_default \
         airplanes_image_target_default \
         airplanes_is_build_mode \
         airplanes_enable_build_mode_from_args \

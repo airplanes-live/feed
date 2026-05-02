@@ -15,9 +15,10 @@ BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
 FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
 FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
 IMAGE_FEED_BIN="$(airplanes_path /usr/bin/airplanes-feeder)"
+IMAGE_INSTALL_MARKER="$(airplanes_path /etc/airplanes/image-install)"
 
 IMAGE_INSTALL=0
-if [[ -x "$IMAGE_FEED_BIN" ]]; then
+if [[ -x "$IMAGE_FEED_BIN" || -f "$IMAGE_INSTALL_MARKER" ]]; then
     IMAGE_INSTALL=1
 fi
 
@@ -56,13 +57,18 @@ if [[ "${MODEAC:-}" == "yes" ]]; then
     MODEAC_OPTION="--modeac"
 fi
 
+if [[ -x "$IMAGE_FEED_BIN" ]]; then
+    DEFAULT_FEED_BIN="$IMAGE_FEED_BIN"
+else
+    DEFAULT_FEED_BIN="$(airplanes_path /usr/local/share/airplanes/feed-airplanes)"
+fi
+FEED_BIN="${AIRPLANES_FEED_BIN:-$DEFAULT_FEED_BIN}"
+
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
-    FEED_BIN="${AIRPLANES_FEED_BIN:-$IMAGE_FEED_BIN}"
     TARGET="${TARGET:-"--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"}"
     FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-"--net-ro-interval 0.2"}"
     FEED_IMAGE_OPTIONS="${FEED_IMAGE_OPTIONS:-"--db-file=none --max-range 450"}"
 else
-    FEED_BIN="${AIRPLANES_FEED_BIN:-$(airplanes_path /usr/local/share/airplanes/feed-airplanes)}"
     FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-$NET_OPTIONS}"
     FEED_IMAGE_OPTIONS=""
 fi

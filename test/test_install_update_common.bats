@@ -65,6 +65,52 @@ write_archive_fallback_stubs() {
     [ "$status" -eq 0 ]
 }
 
+@test "image install detection accepts marker file with feed.env (new contract)" {
+    mkdir -p "$ROOT_DIR/etc/airplanes"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
+    printf 'USER="image"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+
+    run airplanes_is_image_install
+
+    [ "$status" -eq 0 ]
+}
+
+@test "image install detection rejects marker file alone without feed.env" {
+    mkdir -p "$ROOT_DIR/etc/airplanes"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
+
+    run airplanes_is_image_install
+
+    [ "$status" -ne 0 ]
+}
+
+@test "image install detection returns false for manual install (no marker, no legacy binary)" {
+    mkdir -p "$ROOT_DIR/etc/airplanes"
+    printf 'USER="manual"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+
+    run airplanes_is_image_install
+
+    [ "$status" -ne 0 ]
+}
+
+@test "feed-bin resolver picks legacy /usr/bin/airplanes-feeder when present" {
+    mkdir -p "$ROOT_DIR/usr/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+
+    run airplanes_image_feed_bin_default
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$ROOT_DIR/usr/bin/airplanes-feeder" ]
+}
+
+@test "feed-bin resolver falls back to /usr/local/share/airplanes/feed-airplanes when legacy missing" {
+    run airplanes_image_feed_bin_default
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$ROOT_DIR/usr/local/share/airplanes/feed-airplanes" ]
+}
+
 @test "getGIT clones the configured branch from a local repository" {
     local repo="$ROOT_DIR/source"
     local target="$ROOT_DIR/target"

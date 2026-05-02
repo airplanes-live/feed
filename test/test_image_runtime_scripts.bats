@@ -125,6 +125,76 @@ SH
     fi
 }
 
+@test "airplanes-feed.sh detects new-contract image via marker without /usr/bin/airplanes-feeder" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/args.log"
+    local feed_bin="$root/usr/local/share/airplanes/feed-airplanes"
+    mkdir -p "$root/etc/airplanes" "$root/usr/local/share/airplanes"
+    : > "$root/etc/airplanes/image-install"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="1"
+LONGITUDE="2"
+ALTITUDE="3m"
+USER="image-marker"
+MLATSERVER="feed.airplanes.live:31090"
+NET_OPTIONS="--decoder-option-that-must-not-feed --net-bi-port 30004,30104"
+EOF
+    cat > "$feed_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$feed_bin"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--db-file=none' "$arg_log"
+    grep -q -- '--max-range 450' "$arg_log"
+    grep -q -- '--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004' "$arg_log"
+    grep -q -- '--net-ro-interval 0.2' "$arg_log"
+    if grep -q -- '--decoder-option-that-must-not-feed' "$arg_log"; then
+        return 1
+    fi
+    if grep -q -- '--net-bi-port 30004,30104' "$arg_log"; then
+        return 1
+    fi
+}
+
+@test "airplanes-feed.sh stays in manual-install branch when neither marker nor legacy binary present" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/args.log"
+    local feed_bin="$root/usr/local/share/airplanes/feed-airplanes"
+    mkdir -p "$root/etc/airplanes" "$root/usr/local/share/airplanes"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="1"
+LONGITUDE="2"
+ALTITUDE="3m"
+USER="manual-install"
+MLATSERVER="feed.airplanes.live:31090"
+TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"
+NET_OPTIONS="--manual-net-option"
+EOF
+    cat > "$feed_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$feed_bin"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    if grep -q -- '--db-file=none' "$arg_log"; then
+        return 1
+    fi
+    grep -q -- '--manual-net-option' "$arg_log"
+}
+
 @test "runtime scripts prefer canonical feed.env over boot config when both exist" {
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/args.log"
