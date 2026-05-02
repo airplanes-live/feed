@@ -148,6 +148,28 @@ SH
     chmod +x "$root/usr/bin/airplanes-feeder"
 }
 
+prepare_marker_image_skip_build_state() {
+    local root="$1"
+    local feed_repo="$2"
+    local mlat_repo="$3"
+    local readsb_repo="$4"
+    local ipath="$root/usr/local/share/airplanes"
+    mkdir -p "$ipath/venv/bin"
+    cp "$feed_repo/update.sh" "$ipath/update.sh"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$ipath/venv/bin/mlat-client"
+    chmod +x "$ipath/venv/bin/mlat-client"
+    git -C "$mlat_repo" rev-parse HEAD > "$ipath/mlat_version"
+    git -C "$readsb_repo" rev-parse HEAD > "$ipath/readsb_version"
+    cat > "$ipath/feed-airplanes" <<'SH'
+#!/usr/bin/env bash
+[[ "${1:-}" == "-V" ]] && exit 0
+exit 0
+SH
+    chmod +x "$ipath/feed-airplanes"
+    mkdir -p "$root/etc/airplanes"
+    : > "$root/etc/airplanes/image-install"
+}
+
 @test "update.sh replaces a missing or stale installed updater before continuing" {
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"
@@ -308,6 +330,7 @@ SH
     grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
     [ -x "$root/usr/local/share/airplanes/feed-airplanes" ]
     [ ! -x "$root/usr/bin/airplanes-feeder" ]
+    [ -f "$root/etc/airplanes/image-install" ]
     grep -q 'systemctl enable airplanes-feed' "$ROOT_DIR/commands.log"
     grep -q 'systemctl enable airplanes-mlat' "$ROOT_DIR/commands.log"
     ! grep -q 'systemctl restart' "$ROOT_DIR/commands.log"
@@ -367,6 +390,53 @@ SH
     [ ! -x "$root/usr/bin/airplanes-feeder" ]
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
     [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
+}
+
+@test "update.sh runs against marker-only image without legacy /usr/bin/airplanes-feeder" {
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local mlat_repo="$ROOT_DIR/mlat-source"
+    local readsb_repo="$ROOT_DIR/readsb-source"
+    local claim_bin="$ROOT_DIR/apl-feed-stub"
+    local ipath="$root/usr/local/share/airplanes"
+
+    copy_feed_fixture_repo "$feed_repo"
+    make_component_repo "$mlat_repo" master
+    make_component_repo "$readsb_repo" dev
+    write_feed_env "$root"
+    prepare_marker_image_skip_build_state "$root" "$feed_repo" "$mlat_repo" "$readsb_repo"
+    install_command_stubs
+    cat > "$claim_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CLAIM_LOG"
+exit 0
+SH
+    chmod +x "$claim_bin"
+
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        COMMAND_LOG="$ROOT_DIR/commands.log" \
+        CLAIM_LOG="$ROOT_DIR/claim.log" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=apt \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        AIRPLANES_MLAT_REPO="$mlat_repo" \
+        AIRPLANES_MLAT_BRANCH=master \
+        AIRPLANES_READSB_REPO="$readsb_repo" \
+        AIRPLANES_READSB_BRANCH=dev \
+        APL_FEED_BIN="$claim_bin" \
+        bash "$UPDATE"
+
+    [ "$status" -eq 0 ]
+    # Marker-only path must not exit with "Image feed binary missing".
+    ! [[ "$output" =~ "Image feed binary missing" ]]
+    grep -q "Using image-provided feed client: $ipath/feed-airplanes" <<< "$output"
+    [ -x "$ipath/feed-airplanes" ]
+    [ ! -e "$root/usr/bin/airplanes-feeder" ]
+    [ -f "$root/etc/airplanes/image-install" ]
+    [ -f "$root/etc/systemd/system/airplanes-feed.service" ]
+    grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
 }
 
 @test "update.sh updates image feed stack without migrating boot config to feed.env" {

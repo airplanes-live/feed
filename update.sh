@@ -67,7 +67,18 @@ else
     }
 
     airplanes_is_image_install() {
-        [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
+        [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]] \
+            || [[ -f "$(airplanes_path /etc/airplanes/image-install)" && -f "$FEED_ENV" ]]
+    }
+
+    airplanes_image_feed_bin_default() {
+        local legacy
+        legacy="$(airplanes_path /usr/bin/airplanes-feeder)"
+        if [[ -x "$legacy" ]]; then
+            printf '%s' "$legacy"
+        else
+            printf '%s' "$(airplanes_path /usr/local/share/airplanes/feed-airplanes)"
+        fi
     }
 
     airplanes_image_target_default() {
@@ -434,7 +445,7 @@ echo 70
 # SETUP FEEDER TO SEND DUMP1090 DATA TO airplanes.live
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
-    READSB_BIN="$(airplanes_path /usr/bin/airplanes-feeder)"
+    READSB_BIN="$(airplanes_image_feed_bin_default)"
     if [[ ! -x "$READSB_BIN" ]]; then
         echo "Image feed binary missing at $READSB_BIN; run the image updater first." >&2
         exit 1
@@ -623,6 +634,11 @@ https://github.com/wiedehopf/adsb-scripts/wiki/Automatic-installation-for-readsb
 fi
 
 if airplanes_is_build_mode; then
+    # Persistent on-disk signal that this filesystem was produced via
+    # --build-mode. Runtime scripts use this to detect image installs that
+    # don't ship the legacy /usr/bin/airplanes-feeder binary.
+    mkdir -p "$ETC_AIRPLANES"
+    : > "$ETC_AIRPLANES/image-install"
     echo "Build mode setup complete; skipping receiver connectivity probe."
 elif ! timeout 5 nc -z "$INPUT_IP" "$INPUT_PORT" && command -v nc &>/dev/null; then
     #whiptail --title "airplanes.live Setup Script" --msgbox "$ENDTEXT2" 24 73

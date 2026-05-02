@@ -33,7 +33,18 @@ airplanes_init_paths() {
 }
 
 airplanes_is_image_install() {
-    [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
+    [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]] \
+        || [[ -f "$(airplanes_path /etc/airplanes/image-install)" && -f "$FEED_ENV" ]]
+}
+
+airplanes_image_feed_bin_default() {
+    local legacy
+    legacy="$(airplanes_path /usr/bin/airplanes-feeder)"
+    if [[ -x "$legacy" ]]; then
+        printf '%s' "$legacy"
+    else
+        printf '%s' "$(airplanes_path /usr/local/share/airplanes/feed-airplanes)"
+    fi
 }
 
 airplanes_image_target_default() {
