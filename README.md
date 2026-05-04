@@ -68,6 +68,42 @@ If the website says the feeder is not registered yet, run:
 sudo apl-feed claim register
 ```
 
+If the website gave you a fresh claim secret (a same-IP claim, an account-side
+"reset claim secret", or a support-issued reset), save it to the feeder with:
+
+```
+sudo apl-feed claim set
+```
+
+The command prompts for the secret and saves it locally. The feeder will use
+the new value on its next contact with the website — no daemon restart needed,
+because neither `airplanes-feed` nor `airplanes-mlat` consumes the claim
+secret directly. Pass `--force` if a different secret is already saved on this
+feeder.
+
+If you need to set the **Feeder ID** itself (typically when restoring an
+existing feeder onto fresh hardware and the website's "Reinstall feeder" page
+shows you the previous UUID), use:
+
+```
+sudo apl-feed id set
+```
+
+This one *does* restart `airplanes-feed` and `airplanes-mlat`, because both
+daemons consume the UUID at startup. Pass `--force` to overwrite a different
+existing Feeder ID.
+
+For the website-restore flow where you have **both** a UUID and a fresh
+claim secret in hand:
+
+```
+sudo apl-feed restore --uuid <UUID-from-website>
+```
+
+Then paste the claim secret when prompted. The command writes both files
+atomically (rolls back the UUID change if the secret write fails) and
+restarts the daemons in one step. Add `--check` to validate without writing.
+
 ## Back Up And Restore
 
 Back up before replacing a Raspberry Pi, reinstalling the OS, or wiping an SD

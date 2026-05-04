@@ -21,6 +21,8 @@ source "$APL_FEED_LIB_DIR/common.sh"
 source "$APL_FEED_LIB_DIR/http.sh"
 # shellcheck source=scripts/apl-feed/claim.sh
 source "$APL_FEED_LIB_DIR/claim.sh"
+# shellcheck source=scripts/apl-feed/id.sh
+source "$APL_FEED_LIB_DIR/id.sh"
 # shellcheck source=scripts/apl-feed/status.sh
 source "$APL_FEED_LIB_DIR/status.sh"
 # shellcheck source=scripts/apl-feed/backup.sh
@@ -36,6 +38,10 @@ main() {
         claim)
             shift
             dispatch_claim "$@"
+            ;;
+        id)
+            shift
+            dispatch_id "$@"
             ;;
         backup)
             shift

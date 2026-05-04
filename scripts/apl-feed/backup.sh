@@ -83,9 +83,28 @@ config_backup() {
 }
 
 config_restore() {
-    local infile=''
-    local opt_rc check_only
-    check_only=0
+    # Two source forms, mutually exclusive:
+    #   apl-feed restore <backup-file>       - read UUID + secret from a
+    #                                          JSON file produced by `backup`
+    #   apl-feed restore --uuid <UUID>       - take UUID from the flag,
+    #                                          read secret from stdin
+    #                                          (TTY prompt or pipe). The
+    #                                          website-restore-without-backup
+    #                                          flow.
+    #
+    # Both forms support `--check` (validate without writing) and
+    # `--force` (overwrite differing local UUID / secret).
+    #
+    # Atomicity: writes the UUID first, then the secret. If the secret
+    # write fails after the UUID write succeeded, rolls the UUID back
+    # to its prior bytes (or removes it if there was none) so the
+    # feeder doesn't end up advertising a UUID without a working secret.
+    #
+    # Restart: when the UUID actually changes, restarts both
+    # airplanes-feed and airplanes-mlat (both consume the UUID).
+    # Restart failure is reported separately from write failure.
+    local infile='' uuid_arg=''
+    local opt_rc check_only=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --check)
@@ -95,6 +114,11 @@ config_restore() {
             --force)
                 FORCE=1
                 shift
+                ;;
+            --uuid)
+                [[ $# -ge 2 ]] || die "--uuid requires VALUE"
+                uuid_arg="$2"
+                shift 2
                 ;;
             --root|--server-url|--max-retry-time|-h|--help)
                 if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
@@ -116,15 +140,44 @@ config_restore() {
                 ;;
         esac
     done
-    [[ -n "$infile" ]] || die "restore requires a file"
-    [[ -f "$infile" ]] || die "$infile does not exist"
-    require_jq
 
-    local existing_uuid existing_secret
-    read_backup_file "$infile"
+    if [[ -n "$uuid_arg" && -n "$infile" ]]; then
+        die "restore: --uuid and a backup file are mutually exclusive"
+    fi
+    if [[ -z "$uuid_arg" && -z "$infile" ]]; then
+        die "restore requires --uuid <UUID> or a backup file"
+    fi
+
+    if [[ -n "$infile" ]]; then
+        [[ -f "$infile" ]] || die "$infile does not exist"
+        require_jq
+        read_backup_file "$infile"
+    else
+        BACKUP_UUID="$(canonicalize_uuid "$uuid_arg")" \
+            || die "invalid --uuid value (expected 8-4-4-4-12 hex)"
+        local raw
+        if [[ -t 0 ]]; then
+            echo "Paste the claim secret from your account dashboard." >&2
+            echo "Format: ABCD-EFGH-IJKL-MNOP (hyphens and case are ignored)" >&2
+            printf 'Secret: ' >&2
+            IFS= read -r raw </dev/tty || true
+        else
+            raw="$(cat)"
+        fi
+        [[ -n "$raw" ]] || die "no secret provided on stdin"
+        BACKUP_SECRET="$(canonicalize_secret "$raw")"
+        validate_secret "$BACKUP_SECRET" \
+            || die "invalid claim secret format (expected 16 chars A-Z 0-9 after canonicalization)"
+        BACKUP_VERSION=''
+        BACKUP_CREATED_AT=''
+    fi
 
     if (( check_only )); then
-        echo "Backup is valid."
+        if [[ -n "$infile" ]]; then
+            echo "Backup is valid."
+        else
+            echo "Inputs are valid."
+        fi
         echo "Feeder ID: $BACKUP_UUID"
         if [[ -n "$BACKUP_CREATED_AT" ]]; then
             echo "Created: $BACKUP_CREATED_AT"
@@ -136,10 +189,13 @@ config_restore() {
         return 0
     fi
 
+    local existing_uuid='' existing_secret=''
     if existing_uuid="$(read_uuid 2>/dev/null)"; then
         if [[ "$existing_uuid" != "$BACKUP_UUID" && "$FORCE" -ne 1 ]]; then
             die "local Feeder ID differs; rerun with --force to overwrite"
         fi
+    else
+        existing_uuid=''
     fi
     if [[ -f "$(secret_final_path)" ]]; then
         existing_secret="$(read_secret_file "$(secret_final_path)")"
@@ -148,8 +204,21 @@ config_restore() {
         fi
     fi
 
+    # Snapshot the previous UUID file bytes so we can roll back if the
+    # secret write fails after the UUID write succeeded. write_uuid only
+    # ever writes the canonical 8-4-4-4-12 + newline form, so capturing
+    # the canonical value via read_uuid (above) is sufficient.
     write_uuid "$BACKUP_UUID"
-    write_secret_file "$(secret_final_path)" "$BACKUP_SECRET"
+    if ! write_secret_file "$(secret_final_path)" "$BACKUP_SECRET"; then
+        echo "Secret write failed — rolling back Feeder ID change." >&2
+        if [[ -n "$existing_uuid" ]]; then
+            write_uuid "$existing_uuid"
+        else
+            rm -f "$(feeder_id_path)"
+        fi
+        die "restore aborted; local state restored to its previous values"
+    fi
+
     if [[ -n "$BACKUP_VERSION" ]]; then
         write_version_file "$BACKUP_VERSION"
     else
@@ -157,4 +226,11 @@ config_restore() {
     fi
     rm -f "$(secret_pending_path)"
     echo "Restored feeder config for Feeder ID $BACKUP_UUID"
+
+    if [[ "$existing_uuid" != "$BACKUP_UUID" ]]; then
+        if ! restart_feeder_services; then
+            echo "Saved, but service restart failed — daemons may still advertise the old Feeder ID until you restart them manually." >&2
+            return 1
+        fi
+    fi
 }

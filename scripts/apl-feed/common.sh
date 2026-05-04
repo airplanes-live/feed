@@ -33,13 +33,31 @@ Usage:
   apl-feed claim show
   apl-feed claim rotate
   apl-feed claim rotate --abort
+  apl-feed claim set [--force]
+  apl-feed id set [--force]
   apl-feed backup <file>
   apl-feed restore <file>
   apl-feed restore --check <file>
+  apl-feed restore --uuid <uuid> [--check]
 
 Options:
-  --force             For restore: overwrite differing local state.
+  --force             For restore / claim set / id set: overwrite differing
+                      local state.
+  --check             For restore: validate the source without writing.
   -h, --help          Show this message.
+
+`apl-feed claim set` reads a claim secret from stdin (or prompts when run
+on a TTY) and saves it locally. The feeder will use the new secret on its
+next contact with the website. No daemon restart — neither airplanes-feed
+nor airplanes-mlat consumes the claim secret.
+
+`apl-feed id set` reads a Feeder ID (UUID) from stdin and saves it
+locally. Both airplanes-feed and airplanes-mlat consume the UUID, so this
+command restarts both services after writing.
+
+`apl-feed restore --uuid <uuid>` is the website-restore path. It writes
+both the supplied UUID and a fresh secret read from stdin in one atomic
+two-file commit, then restarts both daemons.
 USAGE
 }
 
@@ -197,6 +215,20 @@ feed_env_get() {
     printf '%s\n' "$output" | tail -n 1
 }
 
+canonicalize_uuid() {
+    # Strip whitespace + braces + hyphens are kept; lowercase hex; require
+    # the canonical 8-4-4-4-12 shape after normalization. Returns 0 with
+    # the canonical UUID on stdout, 1 if the input doesn't match.
+    local raw uuid
+    raw="$(printf '%s' "${1:-}" | tr -d '\n\r\t {}')"
+    uuid="$(printf '%s' "$raw" | tr 'A-F' 'a-f')"
+    if [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        printf '%s' "$uuid"
+        return 0
+    fi
+    return 1
+}
+
 read_uuid() {
     local path raw uuid
     for path in "$(feeder_id_path)" "$(uuid_file_legacy)" "$(uuid_file_boot)"; do
@@ -230,6 +262,49 @@ generate_secret() (
     set +o pipefail
     LC_ALL=C tr -dc 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' </dev/urandom 2>/dev/null | head -c 16
 )
+
+restart_feeder_services() {
+    # Restart both feeder daemons after a UUID change. Order is
+    # `airplanes-feed` first, then `airplanes-mlat` — mlat-client has a
+    # 2s sleep + nc reachability check on its INPUT port at startup, so
+    # letting the feed side settle first keeps mlat from racing against
+    # a still-restarting feed.
+    #
+    # Used by `apl-feed id set` and `apl-feed restore --uuid X`. Not
+    # used by `claim set`: the claim secret is CLI-only data; no daemon
+    # consumes it.
+    #
+    # Skip when ROOT != "/" so a maintenance run with `--root /mnt/...`
+    # never bounces the host's real services. Returns 0 on success
+    # (including the skip path), 1 if any attempted restart failed.
+    if [[ "$ROOT" != "/" ]]; then
+        echo "Skipping service restart (--root=$ROOT, not the host root)" >&2
+        return 0
+    fi
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    local svc rc=0 failed_services=()
+    for svc in airplanes-feed airplanes-mlat; do
+        if ! systemctl is-active --quiet "$svc" 2>/dev/null \
+                && ! systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+            # Service isn't running and isn't enabled on this host. Not
+            # an error — just skip it silently.
+            continue
+        fi
+        if systemctl restart "$svc" 2>/dev/null; then
+            echo "Restarted $svc"
+        else
+            echo "Could not restart $svc — re-run as root, or: sudo systemctl restart $svc" >&2
+            failed_services+=("$svc")
+            rc=1
+        fi
+    done
+    if (( rc != 0 )); then
+        echo "Restart hint: sudo systemctl restart ${failed_services[*]}" >&2
+    fi
+    return $rc
+}
 
 parse_common_option() {
     case "${1:-}" in
