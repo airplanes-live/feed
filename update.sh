@@ -240,8 +240,12 @@ if [[ -f "$GIT/scripts/lib/install-update-common.sh" ]]; then
 fi
 
 if [[ "$1" != "test" ]] && { [[ ! -f "$IPATH/update.sh" ]] || ! diff "$GIT/update.sh" "$IPATH/update.sh" &>/dev/null; }; then
-    rm -f "$IPATH/update.sh"
-    cp "$GIT/update.sh" "$IPATH/update.sh"
+    # Atomic rename via same-dir tempfile so we don't overwrite the file
+    # currently being interpreted, and 0755 is set explicitly (downstream
+    # callers exec this path directly).
+    update_tmp="$(mktemp "$IPATH/update.sh.XXXXXX")"
+    install -m 0755 "$GIT/update.sh" "$update_tmp"
+    mv -fT "$update_tmp" "$IPATH/update.sh"
     bash "$IPATH/update.sh" "$@"
     exit $?
 fi

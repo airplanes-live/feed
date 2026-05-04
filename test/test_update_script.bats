@@ -197,6 +197,36 @@ SH
     [ "$status" -eq 0 ]
     [ "$(cat "$root/self-update-marker")" = "self-update-ran" ]
     cmp "$feed_repo/update.sh" "$ipath/update.sh"
+    [ "$(stat -c '%a' "$ipath/update.sh")" = "755" ]
+}
+
+@test "update.sh self-replace tolerates a 0644 destination from older feed" {
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local ipath="$root/usr/local/share/airplanes"
+    mkdir -p "$feed_repo" "$ipath" "$root/etc"
+    echo 'VERSION_ID="13"' > "$root/etc/os-release"
+    cat > "$feed_repo/update.sh" <<'SH'
+#!/usr/bin/env bash
+set -e
+printf 'self-update-ran\n' > "$AIRPLANES_ROOT/self-update-marker"
+SH
+    chmod +x "$feed_repo/update.sh"
+    make_git_repo "$feed_repo" main
+    commit_all "$feed_repo"
+    printf 'old updater\n' > "$ipath/update.sh"
+    chmod 0644 "$ipath/update.sh"
+
+    run env PATH="/usr/bin:/bin" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=none \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        bash "$UPDATE"
+
+    [ "$status" -eq 0 ]
+    [ "$(stat -c '%a' "$ipath/update.sh")" = "755" ]
 }
 
 @test "update.sh runs setup when no feed env exists" {
