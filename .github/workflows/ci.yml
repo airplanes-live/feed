@@ -154,3 +154,40 @@ jobs:
         run: |
           sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
             bash test/image-release-rootfs-smoke.sh
+
+  update-regression:
+    name: update-regression smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout feed
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          path: feed
+
+      - name: Pin local feed branch ref to HEAD
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          git -C feed branch -f "$BRANCH" HEAD
+
+      - name: Checkout image regression harness
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: airplanes-live/image
+          ref: dev
+          path: image
+
+      - name: Run update-regression smoke against feed PR head
+        env:
+          AIRPLANES_FEED_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: bash image/test/update-regression-smoke.sh feed
+
+      - name: Upload regression artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: update-regression-artifacts
+          path: ${{ runner.temp }}/update-regression
