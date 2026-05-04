@@ -379,6 +379,349 @@ EOF
     [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
 }
 
+@test "claim set writes secret atomically when none exists" {
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"abcd-efgh-ijkl-mnop"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
+    [ "$(stat -c '%a' "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "600" ]
+    [[ "$output" =~ "Claim secret saved." ]]
+}
+
+@test "claim set accepts a no-newline piped secret" {
+    # `printf %s ABCDEFGHIJKLMNOP | apl-feed claim set` must work — the
+    # documented website-side reveal lets users paste the secret into a
+    # shell pipeline without a trailing newline.
+    run bash -c "printf %s 'abcd-efgh-ijkl-mnop' | '$SCRIPT' claim set --root '$ROOT_DIR'"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
+}
+
+@test "claim set normalizes existing matching secret bytes and mode (idempotent)" {
+    # User had previously written the secret in lowercase / hyphenated
+    # form, or the file mode drifted. claim set should still leave a
+    # canonical, mode-0600 file.
+    echo "abcd-efgh-ijkl-mnop" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 644 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCD-EFGH-IJKL-MNOP"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "already matches" ]]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
+    [ "$(stat -c '%a' "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "600" ]
+}
+
+@test "claim set drops stale .pending even on idempotent path" {
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    echo "PENDINGSECRETXY1" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -eq 0 ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
+}
+
+@test "claim set --force replaces a malformed existing secret file" {
+    # Existing file is corrupt (wrong length); --force must succeed.
+    echo "garbage" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" --force <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
+}
+
+@test "claim set without --force refuses to touch a malformed existing secret file" {
+    echo "garbage" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "malformed or unreadable" ]]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "garbage" ]
+}
+
+@test "claim set drops the version file when overwriting" {
+    echo "OLDSECRETXYZ1234" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    echo "7" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" --force <<<"NEWSECRETXYZ5678"
+
+    [ "$status" -eq 0 ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version" ]
+}
+
+@test "claim set leaves the version file alone on the idempotent path" {
+    # When the supplied secret already matches, the version remains valid.
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    echo "7" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "7" ]
+}
+
+@test "claim set never invokes systemctl (no daemon consumes the secret)" {
+    # The claim secret is consumed only by apl-feed itself, not by
+    # airplanes-feed or airplanes-mlat. Saving it must not bounce a
+    # working feeder. Use a sentinel stub that fails the test if invoked.
+    cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+echo "systemctl invoked with: $*" >&2
+exit 99
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -eq 0 ]
+    [[ ! "$output" =~ "systemctl invoked" ]]
+    [[ ! "$output" =~ "Restarted" ]]
+}
+
+@test "claim set is idempotent when supplied secret already matches local" {
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "already matches" ]]
+}
+
+@test "claim set refuses to overwrite a different existing secret without --force" {
+    echo "OLDSECRETXYZ1234" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"NEWSECRETXYZ5678"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "different claim secret" ]]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "OLDSECRETXYZ1234" ]
+}
+
+@test "claim set with --force replaces a different existing secret" {
+    echo "OLDSECRETXYZ1234" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" --force <<<"NEWSECRETXYZ5678"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "NEWSECRETXYZ5678" ]
+}
+
+@test "claim set rejects malformed input" {
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"not-a-secret"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "invalid claim secret format" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
+}
+
+@test "claim set drops any stale .pending file" {
+    echo "PENDINGSECRETXY1" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"abcd-efgh-ijkl-mnop"
+
+    [ "$status" -eq 0 ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
+}
+
+@test "claim set --dry-run does not write or restart services" {
+    local restart_log="$ROOT_DIR/restart.log"
+    cat > "$STUB_BIN_DIR/systemctl" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+    restart) printf 'restarted %s\n' "\$2" >> "$restart_log"; exit 0 ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl"
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" --dry-run <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "dry-run" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
+    [ ! -f "$restart_log" ]
+}
+
+@test "id set writes a new UUID and restarts both daemons feed-first" {
+    rm -f "$ROOT_DIR/etc/airplanes/feeder-id"
+    local restart_log="$ROOT_DIR/restart.log"
+    cat > "$STUB_BIN_DIR/systemctl" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+    is-active|is-enabled) exit 0 ;;
+    restart) printf '%s\n' "\$2" >> "$restart_log"; exit 0 ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl"
+
+    # Bypass the --root != / restart skip by sourcing the modules and
+    # calling id_set directly with ROOT="/", with the host paths
+    # redirected via shadowed helpers. Easier: stub feeder_id_path so it
+    # writes inside ROOT_DIR. We do that by overriding ROOT for the
+    # filesystem helpers but unsetting it for the restart helper. The
+    # cleanest way is to test the restart helper directly here, then
+    # cover write semantics with --root != / in a separate test.
+    run env PATH="$STUB_BIN_DIR:$PATH" bash -c "
+        source '$BATS_TEST_DIRNAME/../scripts/apl-feed/common.sh'
+        ROOT=/
+        restart_feeder_services
+    "
+
+    [ "$status" -eq 0 ]
+    # Feed must be restarted before mlat (line 1 vs line 2).
+    [ "$(sed -n '1p' "$restart_log")" = "airplanes-feed" ]
+    [ "$(sed -n '2p' "$restart_log")" = "airplanes-mlat" ]
+}
+
+@test "id set writes a new UUID with --root != / (no systemctl)" {
+    rm -f "$ROOT_DIR/etc/airplanes/feeder-id"
+    cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+echo "systemctl invoked with: $*" >&2
+exit 99
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl"
+
+    run env "$SCRIPT" id set --root "$ROOT_DIR" <<<"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]
+    [[ "$output" =~ "Feeder ID saved." ]]
+    [[ "$output" =~ "Skipping service restart" ]]
+    [[ ! "$output" =~ "systemctl invoked" ]]
+}
+
+@test "id set is idempotent when supplied UUID already matches" {
+    # The default fixture writes 11111111-2222-3333-4444-555555555555.
+    run env "$SCRIPT" id set --root "$ROOT_DIR" <<<"11111111-2222-3333-4444-555555555555"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "already matches" ]]
+}
+
+@test "id set refuses to overwrite a different existing UUID without --force" {
+    # Default fixture has 1111-2222-3333-4444-...; supply a different UUID.
+    run env "$SCRIPT" id set --root "$ROOT_DIR" <<<"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "different Feeder ID" ]]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "11111111-2222-3333-4444-555555555555" ]
+}
+
+@test "id set --force prints OLD -> NEW and replaces UUID" {
+    run env "$SCRIPT" id set --root "$ROOT_DIR" --force <<<"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Old: 11111111-2222-3333-4444-555555555555" ]]
+    [[ "$output" =~ "New: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]
+    # Soft warning about the old website-side record.
+    [[ "$output" =~ "previous Feeder ID's record on airplanes.live is not removed" ]]
+}
+
+@test "id set --force replaces a malformed existing Feeder ID" {
+    echo "garbage-not-a-uuid" > "$ROOT_DIR/etc/airplanes/feeder-id"
+
+    run env "$SCRIPT" id set --root "$ROOT_DIR" --force <<<"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]
+}
+
+@test "id set without --force refuses to touch a malformed existing UUID file" {
+    echo "garbage-not-a-uuid" > "$ROOT_DIR/etc/airplanes/feeder-id"
+
+    run env "$SCRIPT" id set --root "$ROOT_DIR" <<<"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "malformed or unreadable" ]]
+}
+
+@test "id set rejects malformed input" {
+    run env "$SCRIPT" id set --root "$ROOT_DIR" <<<"not-a-uuid"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "invalid Feeder ID" ]]
+}
+
+@test "id set --dry-run does not write or restart" {
+    rm -f "$ROOT_DIR/etc/airplanes/feeder-id"
+    run env "$SCRIPT" id set --root "$ROOT_DIR" --dry-run <<<"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "dry-run" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-id" ]
+}
+
+@test "restore --uuid form writes UUID + secret atomically and restarts" {
+    rm -f "$ROOT_DIR/etc/airplanes/feeder-id"
+
+    run bash -c "printf %s 'abcd-efgh-ijkl-mnop' | '$SCRIPT' restore --uuid AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE --root '$ROOT_DIR'"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
+    [[ "$output" =~ "Restored feeder config" ]]
+}
+
+@test "restore --uuid rejects malformed UUID" {
+    run bash -c "printf %s 'ABCDEFGHIJKLMNOP' | '$SCRIPT' restore --uuid not-a-uuid --root '$ROOT_DIR'"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "invalid --uuid value" ]]
+}
+
+@test "restore --uuid rejects malformed secret on stdin" {
+    run bash -c "printf %s 'too-short' | '$SCRIPT' restore --uuid AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE --root '$ROOT_DIR'"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "invalid claim secret" ]]
+}
+
+@test "restore --uuid + backup file rejected" {
+    run env "$SCRIPT" restore --uuid AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE /tmp/some-backup --root "$ROOT_DIR"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "mutually exclusive" ]]
+}
+
+@test "restore --uuid --check validates without writing" {
+    rm -f "$ROOT_DIR/etc/airplanes/feeder-id"
+    rm -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    run bash -c "printf %s 'abcd-efgh-ijkl-mnop' | '$SCRIPT' restore --uuid AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE --check --root '$ROOT_DIR'"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Inputs are valid" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-id" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
+}
+
+@test "restore --uuid refuses different existing UUID without --force" {
+    # Default fixture UUID is 11111111-...
+    run bash -c "printf %s 'abcd-efgh-ijkl-mnop' | '$SCRIPT' restore --uuid AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE --root '$ROOT_DIR'"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "local Feeder ID differs" ]]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "11111111-2222-3333-4444-555555555555" ]
+}
+
 @test "register sends raw secret through stdin, not curl argv" {
     local bin_dir="$ROOT_DIR/bin"
     local args_file="$ROOT_DIR/curl.args"

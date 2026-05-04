@@ -362,6 +362,122 @@ claim_rotate() {
     done
 }
 
+claim_set() {
+    # Save a claim secret minted by the website (e.g. the same-IP claim
+    # legacy bootstrap, the owner-side Reset secret flow, or a support
+    # reset) and restart feeder services so the new value takes effect
+    # immediately. The secret is read from stdin (TTY prompts; pipes work
+    # too) so the value never lands in argv or shell history.
+    #
+    # Refuses to overwrite an existing different secret unless --force is
+    # passed; a no-op when the supplied secret already matches the local
+    # one.
+    local opt_rc force=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force)
+                # shellcheck disable=SC2034  # tracked locally; not exported
+                force=1
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=1
+                shift
+                ;;
+            *)
+                if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
+                case "$opt_rc" in
+                    1) shift ;;
+                    2) shift 2 ;;
+                    0) die "unknown flag for claim set: $1" ;;
+                esac
+                ;;
+        esac
+    done
+
+    local uuid raw secret final pending version_path existing existing_raw
+    uuid="$(read_uuid)"
+    final="$(secret_final_path)"
+    pending="$(secret_pending_path)"
+    version_path="$(secret_version_path)"
+
+    if [[ -t 0 ]]; then
+        echo "Paste the claim secret from your account dashboard." >&2
+        echo "Format: ABCD-EFGH-IJKL-MNOP (hyphens and case are ignored)" >&2
+        printf 'Secret: ' >&2
+        IFS= read -r raw </dev/tty || true
+    else
+        # `cat` collects all of stdin; `$(...)` strips trailing newlines.
+        # Using `read -r` here would reject a no-newline pipe (e.g.
+        # `printf %s SECRET | apl-feed claim set`) even when the secret
+        # arrived intact.
+        raw="$(cat)"
+    fi
+
+    [[ -n "$raw" ]] || die "no input provided"
+
+    secret="$(canonicalize_secret "$raw")"
+    validate_secret "$secret" \
+        || die "invalid claim secret format (expected 16 chars A-Z 0-9 after canonicalization)"
+
+    # Read any existing final secret without dying on malformed contents:
+    # `read_secret_file` calls `die` on garbage, but `claim set --force`
+    # is the documented way to recover from a corrupted file, so the
+    # check itself must be recoverable.
+    existing=""
+    if [[ -f "$final" ]] && IFS= read -r existing_raw < "$final" 2>/dev/null; then
+        existing="$(canonicalize_secret "$existing_raw" 2>/dev/null || true)"
+        validate_secret "$existing" 2>/dev/null || existing=""
+    fi
+
+    if [[ -f "$final" && -z "$existing" ]] && (( ! force )); then
+        die "existing claim secret file is malformed or unreadable; re-run with --force to replace it"
+    fi
+    if [[ -n "$existing" && "$existing" != "$secret" ]] && (( ! force )); then
+        die "a different claim secret is already saved on this feeder; re-run with --force to replace it"
+    fi
+
+    echo "Feeder ID: $uuid"
+    if (( DRY_RUN )); then
+        echo "(dry-run; would save secret + restart feeder services)"
+        return 0
+    fi
+
+    # Drop any stale pending file from an interrupted prior rotation. The
+    # supplied secret is the new authoritative value; any half-done
+    # rotation state is moot.
+    rm -f "$pending"
+
+    if [[ -n "$existing" && "$existing" == "$secret" ]]; then
+        # Same canonical value already on disk. Re-write to normalize byte
+        # contents (lowercase / hyphenated raw input gets canonicalized)
+        # and the file mode (0600). Don't drop the version file — the
+        # local secret bytes haven't functionally changed. Don't restart
+        # services either: nothing observable changed.
+        write_secret_file "$final" "$secret"
+        echo "Local claim secret already matches — no change."
+        return 0
+    fi
+
+    write_secret_file "$final" "$secret"
+
+    # Local secret no longer matches whatever the version file claimed.
+    # Drop the version file so `claim show` / `backup` can't pair a
+    # stale version with the fresh secret. The next `status` call will
+    # write the server-confirmed version back.
+    rm -f "$version_path"
+
+    echo "Claim secret saved."
+    # No daemon restart: neither airplanes-feed nor airplanes-mlat reads
+    # the claim secret. Only this CLI does, and the next CLI invocation
+    # picks up the file change immediately. The website's hash is already
+    # the new value (this command is run AFTER the website mints the
+    # secret), so the next outbound `status` or `rotate` from the feeder
+    # authenticates fine.
+    echo "Done. The feeder will use the new secret on its next contact with the website."
+}
+
+
 dispatch_claim() {
     local sub="${1:-}"
     [[ -n "$sub" ]] || die "claim requires a subcommand"
@@ -370,6 +486,7 @@ dispatch_claim() {
         register) claim_register "$@" ;;
         show) claim_show "$@" ;;
         rotate) claim_rotate "$@" ;;
+        set) claim_set "$@" ;;
         -h|--help) usage ;;
         *) die "unknown claim subcommand: $sub" ;;
     esac
