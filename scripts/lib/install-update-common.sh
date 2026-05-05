@@ -5,6 +5,20 @@
 
 AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
 AIRPLANES_FEED_REPO="${AIRPLANES_FEED_REPO:-https://github.com/airplanes-live/feed.git}"
+
+# Image-built feeders pin their runtime-update branch to the channel they were
+# built from via /etc/airplanes/release-channel. Without this, a dev-channel
+# image falls back to feed/main on the first webconfig-triggered update and
+# self-replaces update.sh with the older main version (sticky regression: the
+# pin is never re-asserted because main's update.sh has no awareness of it).
+# Manual installs without the file get the historical "main" default.
+if [[ -z "${AIRPLANES_FEED_BRANCH:-}" ]]; then
+    _release_channel_file="${AIRPLANES_ROOT%/}/etc/airplanes/release-channel"
+    if [[ -r "$_release_channel_file" ]]; then
+        AIRPLANES_FEED_BRANCH="$(head -n1 "$_release_channel_file" | tr -d '[:space:]')"
+    fi
+    unset _release_channel_file
+fi
 AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-main}"
 
 airplanes_path() {
