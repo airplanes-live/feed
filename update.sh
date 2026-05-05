@@ -45,11 +45,19 @@ else
     # dev-channel image silently falls back to feed/main and self-replaces
     # update.sh with the older main version on the first update — sticky
     # regression. Manual non-image installs (no release-channel file) keep
-    # the historical "main" default.
+    # the historical "main" default. Allowlist matches install-update-common.sh.
     if [[ -z "${AIRPLANES_FEED_BRANCH:-}" ]]; then
         _release_channel_file="${AIRPLANES_ROOT%/}/etc/airplanes/release-channel"
         if [[ -r "$_release_channel_file" ]]; then
-            AIRPLANES_FEED_BRANCH="$(head -n1 "$_release_channel_file" | tr -d '[:space:]')"
+            _release_channel="$(head -n1 "$_release_channel_file" | tr -d '[:space:]')"
+            case "$_release_channel" in
+                main|dev) AIRPLANES_FEED_BRANCH="$_release_channel" ;;
+                *)
+                    echo "ERROR: $_release_channel_file contains '$_release_channel' (expected one of: main, dev)" >&2
+                    exit 1
+                    ;;
+            esac
+            unset _release_channel
         fi
         unset _release_channel_file
     fi

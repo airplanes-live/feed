@@ -12,10 +12,25 @@ AIRPLANES_FEED_REPO="${AIRPLANES_FEED_REPO:-https://github.com/airplanes-live/fe
 # self-replaces update.sh with the older main version (sticky regression: the
 # pin is never re-asserted because main's update.sh has no awareness of it).
 # Manual installs without the file get the historical "main" default.
+#
+# Allowlist enforced: only {main, dev}. An existing file with a different
+# value is treated as operator error and aborts the update — silently
+# falling back to "main" would recreate the dev → main downgrade through
+# corruption instead of absence. Image build (image stage 06) applies the
+# same allowlist so a typoed AIRPLANES_FEED_BRANCH never reaches a flashed
+# rootfs.
 if [[ -z "${AIRPLANES_FEED_BRANCH:-}" ]]; then
     _release_channel_file="${AIRPLANES_ROOT%/}/etc/airplanes/release-channel"
     if [[ -r "$_release_channel_file" ]]; then
-        AIRPLANES_FEED_BRANCH="$(head -n1 "$_release_channel_file" | tr -d '[:space:]')"
+        _release_channel="$(head -n1 "$_release_channel_file" | tr -d '[:space:]')"
+        case "$_release_channel" in
+            main|dev) AIRPLANES_FEED_BRANCH="$_release_channel" ;;
+            *)
+                echo "ERROR: $_release_channel_file contains '$_release_channel' (expected one of: main, dev)" >&2
+                exit 1
+                ;;
+        esac
+        unset _release_channel
     fi
     unset _release_channel_file
 fi
