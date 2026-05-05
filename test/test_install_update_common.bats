@@ -203,3 +203,66 @@ write_archive_fallback_stubs() {
     grep -q -- 'pkgconf-pkg-config' "$DNF_LOG"
     grep -q -- 'libzstd-devel' "$DNF_LOG"
 }
+
+# release-channel pin: image-built feeders drop /etc/airplanes/release-channel
+# at build time, and the lib reads it as the fallback branch source so a
+# dev-channel image doesn't silently pull runtime updates from feed/main.
+
+@test "release-channel file resolves AIRPLANES_FEED_BRANCH when env is unset" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'dev\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "dev" ]
+    rm -rf "$fresh_root"
+}
+
+@test "release-channel file ignored when env override is set" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'dev\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env AIRPLANES_FEED_BRANCH=feature-x AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "feature-x" ]
+    rm -rf "$fresh_root"
+}
+
+@test "missing release-channel falls back to main" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "main" ]
+    rm -rf "$fresh_root"
+}
+
+@test "release-channel with trailing whitespace is trimmed" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'dev   \n  \n' > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "dev" ]
+    rm -rf "$fresh_root"
+}
+
+@test "release-channel only first line consulted (multi-line tolerated)" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'main\nbogus\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "main" ]
+    rm -rf "$fresh_root"
+}

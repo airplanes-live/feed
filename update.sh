@@ -39,6 +39,20 @@ if [[ -f "$SCRIPT_DIR/scripts/lib/install-update-common.sh" ]]; then
 else
     AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
     AIRPLANES_FEED_REPO="${AIRPLANES_FEED_REPO:-https://github.com/airplanes-live/feed.git}"
+
+    # Image-built feeders pin their runtime-update branch to the channel they
+    # were built from via /etc/airplanes/release-channel. Without this, a
+    # dev-channel image silently falls back to feed/main and self-replaces
+    # update.sh with the older main version on the first update — sticky
+    # regression. Manual non-image installs (no release-channel file) keep
+    # the historical "main" default.
+    if [[ -z "${AIRPLANES_FEED_BRANCH:-}" ]]; then
+        _release_channel_file="${AIRPLANES_ROOT%/}/etc/airplanes/release-channel"
+        if [[ -r "$_release_channel_file" ]]; then
+            AIRPLANES_FEED_BRANCH="$(head -n1 "$_release_channel_file" | tr -d '[:space:]')"
+        fi
+        unset _release_channel_file
+    fi
     AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-main}"
 
     airplanes_path() {
