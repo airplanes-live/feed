@@ -166,11 +166,15 @@ jobs:
           persist-credentials: false
           path: feed
 
-      - name: Pin local feed branch ref to HEAD
-        env:
-          BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      - name: Pin local "dev" branch to PR HEAD
         run: |
-          git -C feed branch -f "$BRANCH" HEAD
+          # Force-label the PR head as "dev" locally so the install path the
+          # smoke exercises matches what production code paths look for. The
+          # image's stage-06 release-channel allowlist (and feed update.sh)
+          # only accepts {main, dev}, so a real PR branch name like
+          # "feature/foo" would be refused even though it carries the code we
+          # want under test. Branch labels are local only — origin is unchanged.
+          git -C feed branch -f dev HEAD
 
       - name: Checkout image regression harness
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -182,7 +186,7 @@ jobs:
 
       - name: Run update-regression smoke against feed PR head
         env:
-          AIRPLANES_FEED_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          AIRPLANES_FEED_BRANCH: dev
         run: bash image/test/update-regression-smoke.sh feed
 
       - name: Upload regression artifacts on failure
