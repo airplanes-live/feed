@@ -266,3 +266,63 @@ write_archive_fallback_stubs() {
     [ "$output" = "main" ]
     rm -rf "$fresh_root"
 }
+
+@test "release-channel with arbitrary branch name aborts (allowlist enforced)" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'feature-x\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"feature-x"* ]]
+    [[ "$output" == *"main, dev"* ]]
+    rm -rf "$fresh_root"
+}
+
+@test "release-channel with typo (deev) aborts (allowlist enforced)" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'deev\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"deev"* ]]
+    rm -rf "$fresh_root"
+}
+
+@test "release-channel empty file aborts (does NOT silently fall back to main)" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    : > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER"
+    [ "$status" -ne 0 ]
+    rm -rf "$fresh_root"
+}
+
+@test "release-channel value is uppercase MAIN -> aborts (case-sensitive allowlist)" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'MAIN\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"MAIN"* ]]
+    rm -rf "$fresh_root"
+}
+
+@test "env override bypasses allowlist file check (operator-controlled escape)" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'feature-x\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env AIRPLANES_FEED_BRANCH=feature-x AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "feature-x" ]
+    rm -rf "$fresh_root"
+}
