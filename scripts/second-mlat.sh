@@ -14,7 +14,7 @@ Wants=network.target
 After=network.target
 
 [Service]
-User=airplanes
+User=airplanes-feed
 EnvironmentFile=/etc/airplanes/feed.env
 ExecStart=/usr/local/share/airplanes/venv/bin/mlat-client \
     --input-type $INPUT_TYPE --no-udp \

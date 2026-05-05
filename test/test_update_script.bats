@@ -24,7 +24,7 @@ SH
 
 install_command_stubs() {
     write_stub apt-get 'printf "apt-get %s\n" "$*" >> "$COMMAND_LOG"; exit 0'
-    write_stub id 'if [[ "$1" == "-u" && "${2:-}" == "airplanes" ]]; then exit 0; fi; if [[ "$1" == "-u" ]]; then echo 0; exit 0; fi; /usr/bin/id "$@"'
+    write_stub id 'if [[ "$1" == "-u" && "${2:-}" == "airplanes-feed" ]]; then exit 0; fi; if [[ "$1" == "-u" ]]; then echo 0; exit 0; fi; /usr/bin/id "$@"'
     write_stub systemctl 'printf "systemctl %s\n" "$*" >> "$COMMAND_LOG"; if [[ "$1" == "restart" && "${2:-}" == "airplanes-feed" && -n "${SYSTEMCTL_FEED_ENV:-}" ]]; then printf "target-at-restart=%s\n" "$(grep "^TARGET=" "$SYSTEMCTL_FEED_ENV")" >> "$COMMAND_LOG"; fi; if [[ "$1" == "is-enabled" ]]; then echo disabled; exit 0; fi; exit 0'
     write_stub journalctl 'exit 0'
     write_stub pgrep 'printf "pgrep %s\n" "$*" >> "$COMMAND_LOG"; exit 1'
