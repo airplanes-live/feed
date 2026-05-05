@@ -254,7 +254,7 @@ exit 0
 SH
     cat > "$STUB_DIR/id" <<'SH'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "-u" && "${2:-}" == "airplanes" ]]; then
+if [[ "${1:-}" == "-u" && "${2:-}" == "airplanes-feed" ]]; then
     exit 0
 fi
 if [[ "${1:-}" == "-u" ]]; then
@@ -493,8 +493,10 @@ assert_updated_image_contracts() {
 
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'After=airplanes-first-run.service'
+    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'User=airplanes-feed'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'After=airplanes-first-run.service'
+    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'User=airplanes-feed'
     assert_contains "$ipath/airplanes-feed.sh" 'feed2.airplanes.live,64004'
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
         assert_contains "$CLAIM_LOG" 'claim register'
