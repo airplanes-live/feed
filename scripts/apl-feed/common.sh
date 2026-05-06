@@ -162,6 +162,33 @@ read_secret_file() {
     printf '%s' "$secret"
 }
 
+# Daemon user that owns claim-state files so the airplanes-feed.service
+# user (and webconfig dropping to it via sudo) can read them without a
+# privilege bump. Override via APL_FEED_SECRET_OWNER for tests; production
+# matches the User= line in airplanes-feed.service.
+claim_state_owner() {
+    printf '%s' "${APL_FEED_SECRET_OWNER:-airplanes-feed}"
+}
+
+# Hand off ownership of a claim-state file to the daemon user so the
+# secret is readable by airplanes-feed.service (and webconfig's
+# `sudo -u airplanes-feed apl-feed claim show`) without root. No-ops
+# silently when running as a non-root user (chown would EPERM anyway)
+# or when the target user doesn't yet exist (e.g. very first install
+# pass before adduser has run). Owner-only — `chown user` (no trailing
+# colon) leaves the group untouched; we don't promise an `airplanes-feed`
+# group exists since adduser --system gives the user `nogroup` as primary
+# group on Debian.
+chown_claim_state() {
+    local path="$1"
+    [[ -e "$path" ]] || return 0
+    [[ "$(id -u)" == "0" ]] || return 0
+    local owner
+    owner="$(claim_state_owner)"
+    getent passwd "$owner" >/dev/null 2>&1 || return 0
+    chown "$owner" "$path"
+}
+
 write_secret_file() {
     local path="$1"
     local secret="$2"
@@ -173,6 +200,7 @@ write_secret_file() {
     umask 077
     printf '%s\n' "$secret" > "$tmp"
     chmod 600 "$tmp"
+    chown_claim_state "$tmp"
     mv -f "$tmp" "$path"
 }
 
@@ -186,6 +214,7 @@ write_version_file() {
     tmp="${path}.$$"
     printf '%s\n' "$version" > "$tmp"
     chmod 600 "$tmp"
+    chown_claim_state "$tmp"
     mv -f "$tmp" "$path"
 }
 

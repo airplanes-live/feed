@@ -18,3 +18,23 @@ register_claim_secret() {
         echo "---------------------------------"
     fi
 }
+
+# Hand off ownership of any pre-existing claim-state files in the given
+# /etc/airplanes/-equivalent to the daemon user, so feeders that registered
+# under an older feed (which left files root:root mode 0600) heal on the
+# next update without needing a re-register. Idempotent. Owner-only —
+# `chown user` (no trailing colon) leaves the group untouched. Non-fatal
+# on chown failure but warns to stderr so a stuck root-owned secret is
+# visible in update logs instead of silently keeping webconfig broken.
+heal_claim_state_ownership() {
+    local etc="$1"
+    local owner="${APL_FEED_SECRET_OWNER:-airplanes-feed}"
+    local file path
+    for file in feeder-claim-secret feeder-claim-secret.pending feeder-claim-secret.version; do
+        path="$etc/$file"
+        [[ -f "$path" ]] || continue
+        if ! chown "$owner" "$path" 2>/dev/null; then
+            echo "WARNING: failed to chown $path to $owner; webconfig 'claim show' may stay broken on this feeder" >&2
+        fi
+    done
+}
