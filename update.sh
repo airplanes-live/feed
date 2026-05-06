@@ -371,6 +371,11 @@ then
         || { echo "ERROR: failed to create user '$UNAME' (no working adduser/useradd)." >&2; exit 1; }
 fi
 
+# Heal claim-state files written by older feed versions that lacked the
+# airplanes-feed chown (which would be root:root mode 0600 and unreadable
+# by the daemon user webconfig drops to for `apl-feed claim show`).
+heal_claim_state_ownership "$ETC_AIRPLANES"
+
 echo 4
 sleep 0.25
 
