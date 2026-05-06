@@ -232,7 +232,7 @@ mock_url() {
 
 # --- Atomic persistence + idempotent reuse --------------------------------
 
-@test "201 success persists secret atomically (mode 0600, .pending cleaned)" {
+@test "201 success persists secret atomically (mode 0640, .pending cleaned)" {
     write_contract_response secret create_success
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
@@ -244,7 +244,9 @@ mock_url() {
     [ "${#persisted}" -eq 16 ]
     [[ "$persisted" =~ ^[A-Z0-9]{16}$ ]]
     local mode; mode="$(stat -c '%a' "$final")"
-    [ "$mode" = "600" ]
+    # Mode 0640 (was 0600 pre-pivot): owner rw, group r so service accounts
+    # in the airplanes-feed group can read directly without sudo.
+    [ "$mode" = "640" ]
 }
 
 @test "writes pending file before first POST so crash mid-POST recovers" {

@@ -33,6 +33,10 @@ install_command_stubs() {
     write_stub renice 'exit 0'
     write_stub adduser 'printf "adduser %s\n" "$*" >> "$COMMAND_LOG"; exit 0'
     write_stub useradd 'printf "useradd %s\n" "$*" >> "$COMMAND_LOG"; exit 0'
+    write_stub addgroup 'printf "addgroup %s\n" "$*" >> "$COMMAND_LOG"; exit 0'
+    write_stub groupadd 'printf "groupadd %s\n" "$*" >> "$COMMAND_LOG"; exit 0'
+    write_stub usermod 'printf "usermod %s\n" "$*" >> "$COMMAND_LOG"; exit 0'
+    write_stub gpasswd 'printf "gpasswd %s\n" "$*" >> "$COMMAND_LOG"; exit 0'
 }
 
 make_git_repo() {

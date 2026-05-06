@@ -19,22 +19,27 @@ register_claim_secret() {
     fi
 }
 
-# Hand off ownership of any pre-existing claim-state files in the given
-# /etc/airplanes/-equivalent to the daemon user, so feeders that registered
-# under an older feed (which left files root:root mode 0600) heal on the
-# next update without needing a re-register. Idempotent. Owner-only —
-# `chown user` (no trailing colon) leaves the group untouched. Non-fatal
-# on chown failure but warns to stderr so a stuck root-owned secret is
-# visible in update logs instead of silently keeping webconfig broken.
+# Heal claim-state files left over from feed versions that wrote them as
+# root:root mode 0600 (or as airplanes-feed:nogroup owner-only mode 0600 from
+# the brief pre-group pivot). Sets owner=group=airplanes-feed and mode 0640
+# so service accounts in the airplanes-feed group can read directly without
+# escalating to root. Idempotent. Non-fatal on chown/chmod failure but warns
+# to stderr so a stuck file is visible in update logs instead of silently
+# keeping webconfig broken.
 heal_claim_state_ownership() {
     local etc="$1"
     local owner="${APL_FEED_SECRET_OWNER:-airplanes-feed}"
+    local group="${APL_FEED_SECRET_GROUP:-$owner}"
     local file path
     for file in feeder-claim-secret feeder-claim-secret.pending feeder-claim-secret.version; do
         path="$etc/$file"
         [[ -f "$path" ]] || continue
-        if ! chown "$owner" "$path" 2>/dev/null; then
-            echo "WARNING: failed to chown $path to $owner; webconfig 'claim show' may stay broken on this feeder" >&2
+        if ! chown "$owner":"$group" "$path" 2>/dev/null; then
+            echo "WARNING: failed to chown $path to $owner:$group; webconfig 'claim show' may stay broken on this feeder" >&2
+            continue
+        fi
+        if ! chmod 640 "$path" 2>/dev/null; then
+            echo "WARNING: failed to chmod $path to 0640" >&2
         fi
     done
 }
