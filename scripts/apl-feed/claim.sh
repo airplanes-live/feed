@@ -97,8 +97,8 @@ claim_register() {
                 version="$(parse_field_from "$response_file" '.version')"
                 : "${version:=1}"
                 if [[ -f "$pending" ]]; then
-                    chmod 600 "$pending"
                     chown_claim_state "$pending"
+                    chmod 640 "$pending"
                     mv "$pending" "$final"
                 fi
                 write_version_file "$version"
@@ -306,8 +306,8 @@ claim_rotate() {
             200)
                 version="$(parse_field_from "$response_file" '.version')"
                 : "${version:=1}"
-                chmod 600 "$pending"
                 chown_claim_state "$pending"
+                chmod 640 "$pending"
                 mv "$pending" "$final"
                 write_version_file "$version"
                 echo "Rotation complete (v$version)."
@@ -315,8 +315,8 @@ claim_rotate() {
                 ;;
             409)
                 if accepted_version="$(status_probe_version "$uuid" "$next" 2>/dev/null)"; then
-                    chmod 600 "$pending"
                     chown_claim_state "$pending"
+                    chmod 640 "$pending"
                     mv "$pending" "$final"
                     write_version_file "$accepted_version"
                     echo "Rotation finalized (v$accepted_version) after a previous transient failure."

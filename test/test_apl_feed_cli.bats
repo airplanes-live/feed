@@ -384,7 +384,7 @@ EOF
 
     [ "$status" -eq 0 ]
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
-    [ "$(stat -c '%a' "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "600" ]
+    [ "$(stat -c '%a' "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "640" ]
     [[ "$output" =~ "Claim secret saved." ]]
 }
 
@@ -401,7 +401,8 @@ EOF
 @test "claim set normalizes existing matching secret bytes and mode (idempotent)" {
     # User had previously written the secret in lowercase / hyphenated
     # form, or the file mode drifted. claim set should still leave a
-    # canonical, mode-0600 file.
+    # canonical, mode-0640 file (group-readable so service accounts in
+    # the airplanes-feed group can consume it).
     echo "abcd-efgh-ijkl-mnop" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     chmod 644 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
@@ -410,7 +411,7 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" =~ "already matches" ]]
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
-    [ "$(stat -c '%a' "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "600" ]
+    [ "$(stat -c '%a' "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "640" ]
 }
 
 @test "claim set drops stale .pending even on idempotent path" {

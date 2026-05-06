@@ -162,31 +162,37 @@ read_secret_file() {
     printf '%s' "$secret"
 }
 
-# Daemon user that owns claim-state files so the airplanes-feed.service
-# user (and webconfig dropping to it via sudo) can read them without a
-# privilege bump. Override via APL_FEED_SECRET_OWNER for tests; production
-# matches the User= line in airplanes-feed.service.
+# Daemon user/group that own claim-state files. airplanes-feed.service runs
+# as this user; the matching group lets other service accounts (e.g. an
+# image-side webconfig dropped into the airplanes-feed group) read the
+# secret directly without a sudo bump. Override owner/group via
+# APL_FEED_SECRET_OWNER / APL_FEED_SECRET_GROUP for tests; production
+# matches the User= line in airplanes-feed.service and the private group
+# created in update.sh.
 claim_state_owner() {
     printf '%s' "${APL_FEED_SECRET_OWNER:-airplanes-feed}"
 }
 
-# Hand off ownership of a claim-state file to the daemon user so the
-# secret is readable by airplanes-feed.service (and webconfig's
-# `sudo -u airplanes-feed apl-feed claim show`) without root. No-ops
-# silently when running as a non-root user (chown would EPERM anyway)
-# or when the target user doesn't yet exist (e.g. very first install
-# pass before adduser has run). Owner-only — `chown user` (no trailing
-# colon) leaves the group untouched; we don't promise an `airplanes-feed`
-# group exists since adduser --system gives the user `nogroup` as primary
-# group on Debian.
+claim_state_group() {
+    printf '%s' "${APL_FEED_SECRET_GROUP:-$(claim_state_owner)}"
+}
+
+# Hand off ownership of a claim-state file to the daemon user/group so the
+# secret is readable by airplanes-feed.service (and any other service
+# account in the airplanes-feed group) without escalating to root. No-ops
+# silently when running as a non-root user (chown would EPERM anyway), or
+# when the target user/group doesn't yet exist (e.g. very first install
+# pass before adduser/addgroup has run).
 chown_claim_state() {
     local path="$1"
     [[ -e "$path" ]] || return 0
     [[ "$(id -u)" == "0" ]] || return 0
-    local owner
+    local owner group
     owner="$(claim_state_owner)"
+    group="$(claim_state_group)"
     getent passwd "$owner" >/dev/null 2>&1 || return 0
-    chown "$owner" "$path"
+    getent group "$group" >/dev/null 2>&1 || return 0
+    chown "$owner":"$group" "$path"
 }
 
 write_secret_file() {
@@ -199,8 +205,17 @@ write_secret_file() {
     tmp="${path}.$$"
     umask 077
     printf '%s\n' "$secret" > "$tmp"
-    chmod 600 "$tmp"
+    # Order matters: chown BEFORE chmod 0640. The reverse opens a brief
+    # window where the file is group-readable as group=root (the umask 077
+    # default). Doing chown first keeps the file 0600 root:root → 0600
+    # airplanes-feed:airplanes-feed → 0640 airplanes-feed:airplanes-feed,
+    # so no member of group root ever has read access.
     chown_claim_state "$tmp"
+    # Mode 0640: owner read/write, group read, other none. Group-read lets
+    # service accounts in the airplanes-feed group consume the secret
+    # directly. Group-write is intentionally NOT granted — only the
+    # daemon user mutates the secret.
+    chmod 640 "$tmp"
     mv -f "$tmp" "$path"
 }
 
@@ -213,8 +228,8 @@ write_version_file() {
     mkdir -p "$(dirname "$path")"
     tmp="${path}.$$"
     printf '%s\n' "$version" > "$tmp"
-    chmod 600 "$tmp"
     chown_claim_state "$tmp"
+    chmod 640 "$tmp"
     mv -f "$tmp" "$path"
 }
 
