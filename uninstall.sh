@@ -1,9 +1,22 @@
 #!/bin/bash
 set -x
 
-IPATH=/usr/local/share/airplanes
-FEEDER_ID=/etc/airplanes/feeder-id
+AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
+
+airplanes_path() {
+    local path="$1"
+    if [[ "$AIRPLANES_ROOT" == "/" ]]; then
+        printf '%s' "$path"
+    else
+        printf '%s%s' "${AIRPLANES_ROOT%/}" "$path"
+    fi
+}
+
+IPATH="$(airplanes_path /usr/local/share/airplanes)"
+FEEDER_ID="$(airplanes_path /etc/airplanes/feeder-id)"
 LEGACY_UUID="$IPATH/airplanes-uuid"
+SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
+TAR1090_DIR="$(airplanes_path /usr/local/share/tar1090)"
 
 systemctl disable --now airplanes-mlat
 systemctl disable --now airplanes-mlat2 &>/dev/null
@@ -12,24 +25,49 @@ systemctl disable --now airplanes-feed
 # Legacy cleanup: earlier releases shipped install-or-update-interface.sh, which
 # installed wiedehopf/tar1090 with the "airplanes" URL prefix. The installer is
 # gone, but existing systems may still have it set up — keep removing it here.
-if [[ -d /usr/local/share/tar1090/html-airplanes ]]; then
-    bash /usr/local/share/tar1090/uninstall.sh airplanes
+if [[ -d "$TAR1090_DIR/html-airplanes" ]]; then
+    bash "$TAR1090_DIR/uninstall.sh" airplanes
 fi
 
-rm -f /lib/systemd/system/airplanes-mlat.service
-rm -f /lib/systemd/system/airplanes-mlat2.service
-rm -f /lib/systemd/system/airplanes-feed.service
+rm -f "$SYSTEMD_DIR/airplanes-mlat.service"
+rm -f "$SYSTEMD_DIR/airplanes-mlat2.service"
+rm -f "$SYSTEMD_DIR/airplanes-feed.service"
+systemctl daemon-reload || true
 
-if [[ -f "$FEEDER_ID" ]]; then
-    cp -f "$FEEDER_ID" /tmp/airplanes-feeder-id
-elif [[ -f "$LEGACY_UUID" ]]; then
-    cp -f "$LEGACY_UUID" /tmp/airplanes-feeder-id
+# Preserve the legacy fallback in memory before wiping IPATH so the canonical
+# feeder-id can be materialized from it if no canonical copy exists. The
+# canonical feeder-id lives at /etc/airplanes/feeder-id (outside IPATH) and
+# survives the wipe untouched, so it does not need shuttling.
+#
+# Bytes are not preserved verbatim: command substitution strips trailing
+# newlines and the materialize step re-adds exactly one. This is intentional
+# and acceptable because feeder-id is always a UUID followed by a single
+# newline (see create-uuid.sh).
+#
+# xtrace is disabled around the read and write so the UUID does not appear in
+# stderr trace output (the original cp-based shuttle did not print contents).
+LEGACY_FALLBACK_VALID=0
+LEGACY_UUID_CONTENT=""
+if [[ ! -f "$FEEDER_ID" && -f "$LEGACY_UUID" ]]; then
+    { set +x; } 2>/dev/null
+    if LEGACY_UUID_CONTENT="$(cat "$LEGACY_UUID")"; then
+        LEGACY_FALLBACK_VALID=1
+    fi
+    set -x
 fi
+
 rm -rf "$IPATH"
 mkdir -p "$IPATH"
-if [[ -f /tmp/airplanes-feeder-id ]]; then
+
+if [[ ! -f "$FEEDER_ID" && "$LEGACY_FALLBACK_VALID" -eq 1 ]]; then
     mkdir -p "$(dirname "$FEEDER_ID")"
-    mv -f /tmp/airplanes-feeder-id "$FEEDER_ID"
+    { set +x; } 2>/dev/null
+    printf '%s\n' "$LEGACY_UUID_CONTENT" > "$FEEDER_ID"
+    set -x
+    chmod 644 "$FEEDER_ID"
+fi
+
+if [[ -f "$FEEDER_ID" ]]; then
     ln -sfn '../../../../etc/airplanes/feeder-id' "$LEGACY_UUID"
 fi
 
