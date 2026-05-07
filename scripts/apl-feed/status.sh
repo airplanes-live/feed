@@ -131,11 +131,15 @@ service_status_line() {
 }
 
 mlat_disabled_by_config() {
+    # Mirror the disable conditions in airplanes-mlat.sh and update.sh:
+    #   USER=0|disable, LATITUDE=0, or LONGITUDE=0
+    # so the dashboard reports "disabled by config" instead of falsely
+    # flagging the inactive unit as a fix-it item.
     local user latitude longitude
     user="$(feed_env_get USER || true)"
     latitude="$(feed_env_get LATITUDE || true)"
     longitude="$(feed_env_get LONGITUDE || true)"
-    [[ "$user" == "0" || "$latitude" == "0" || "$longitude" == "0" ]]
+    [[ "$user" == "0" || "$user" == "disable" || "$latitude" == "0" || "$longitude" == "0" ]]
 }
 
 receiver_status_line() {

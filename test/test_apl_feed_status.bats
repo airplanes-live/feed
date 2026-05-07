@@ -239,18 +239,17 @@ STUB
     [ "$status" -eq 0 ]
 }
 
-# Documents drift: airplanes-mlat.sh disables on USER=disable
-# (and historically USER=changeme), but this status helper only
-# checks USER=0 / LATITUDE=0 / LONGITUDE=0. Setting USER=disable
-# at the daemon level skips MLAT, but `apl-feed status` reports
-# "MLAT service: not running" (fail) instead of "disabled by config" (ok).
-@test "mlat_disabled_by_config: USER=disable does NOT trigger (drift with airplanes-mlat.sh)" {
+@test "mlat_disabled_by_config: USER=disable returns 0 (matches runtime daemon)" {
     printf 'USER="disable"\nLATITUDE="52"\nLONGITUDE="13"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
     run mlat_disabled_by_config
-    [ "$status" -eq 1 ]
+    [ "$status" -eq 0 ]
 }
 
-@test "mlat_disabled_by_config: USER=changeme does NOT trigger (drift)" {
+# `changeme` is the template default for an unconfigured feeder.
+# Neither airplanes-mlat.sh nor update.sh recognize it as an explicit
+# disable signal — they only honor USER=0 / USER=disable. This helper
+# matches that.
+@test "mlat_disabled_by_config: USER=changeme does NOT trigger" {
     printf 'USER="changeme"\nLATITUDE="52"\nLONGITUDE="13"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
     run mlat_disabled_by_config
     [ "$status" -eq 1 ]
