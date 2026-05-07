@@ -90,6 +90,11 @@ cp "$FEED_REPO/update.sh" "$IPATH/update.sh"
 # `test ! -e "$IPATH/second-mlat.sh"` below guards the sweep.
 printf '#!/bin/bash\nexit 0\n' > "$IPATH/second-mlat.sh"
 chmod +x "$IPATH/second-mlat.sh"
+# Bystander file outside the historical-ship manifest. The manifest-driven
+# prune in update.sh must not touch files it doesn't own. The post-update
+# `test -f "$IPATH/my-custom-hook.sh"` below guards that.
+printf '#!/bin/bash\necho custom\n' > "$IPATH/my-custom-hook.sh"
+chmod +x "$IPATH/my-custom-hook.sh"
 cat > "$IPATH/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -184,6 +189,9 @@ test -f "$IPATH/apl-feed/common.sh"
 test -f "$IPATH/airplanes-feed.sh"
 test -f "$IPATH/airplanes-mlat.sh"
 test ! -e "$IPATH/second-mlat.sh"
+test -f "$IPATH/my-custom-hook.sh"
+[ "$(cat "$IPATH/my-custom-hook.sh")" = '#!/bin/bash
+echo custom' ]
 test -f "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
 test -f "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
 test ! -e "$ROOT_DIR/lib/systemd/system/airplanes-feed.service"
