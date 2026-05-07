@@ -440,9 +440,10 @@ STUB
 
 @test "restart_feeder_services: ROOT=/, no systemctl on PATH returns 0" {
     ROOT='/'
-    PATH="$ROOT_DIR/empty-bin"
-    run restart_feeder_services
-    [ "$status" -eq 0 ]
+    # Scope the PATH change to a subshell so bats's teardown still
+    # finds rm/etc. on the host PATH.
+    output="$(PATH="$ROOT_DIR/empty-bin" restart_feeder_services)"
+    [ -z "$output" ]
 }
 
 @test "restart_feeder_services: both inactive AND disabled skips silently" {
