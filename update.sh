@@ -372,13 +372,54 @@ fi
 
 cp "$GIT/uninstall.sh" "$IPATH"
 cp "$GIT"/scripts/*.sh "$IPATH"
-# Sweep the now-removed second-mlat.sh helper from upgraded installs. The
-# wildcard cp above only adds files that exist in scripts/; it does not
-# clean up files that used to ship there. See the airplanes-mlat2 cleanup
-# in uninstall.sh for the matching service-side handling.
-rm -f "$IPATH/second-mlat.sh"
 install -d -m 0755 "$IPATH/apl-feed"
 install -m 0644 "$GIT"/scripts/apl-feed/*.sh "$IPATH/apl-feed"
+
+# Historical-ship manifests for the wildcard cp/install above. Each entry is
+# a script we have ever shipped to $IPATH (top-level) or $IPATH/apl-feed/.
+# The prune loops below remove any installed file whose source counterpart
+# is gone from the current $GIT/scripts tree — symmetric to the wildcard
+# cp/install which only ADD files, never remove them.
+#
+# Maintenance rule: NEVER remove an entry from these arrays. Add a new
+# entry whenever a new script ships from scripts/ or scripts/apl-feed/.
+# Removing an entry would leak the stale file on already-upgraded feeders.
+# CI guards both directions: presence of every currently-shipped name, and
+# retention of known-historical names.
+historical_top_level_scripts=(
+    airplanes-feed.sh
+    airplanes-mlat.sh
+    apl-feed.sh
+    second-mlat.sh
+)
+historical_apl_feed_modules=(
+    backup.sh
+    claim.sh
+    common.sh
+    http.sh
+    id.sh
+    status.sh
+)
+
+# `rm -f` on a directory exits nonzero and would trip set -e; the
+# `! -d || -L` guard limits the prune to file-like targets (regular files
+# and symlinks), skipping the unlikely case where someone replaced a
+# manifest entry with a real directory.
+for name in "${historical_top_level_scripts[@]}"; do
+    target="$IPATH/$name"
+    if [[ ! -f "$GIT/scripts/$name" && ( -L "$target" || ! -d "$target" ) ]]; then
+        rm -f "$target"
+    fi
+done
+
+if [[ -d "$IPATH/apl-feed" ]]; then
+    for name in "${historical_apl_feed_modules[@]}"; do
+        target="$IPATH/apl-feed/$name"
+        if [[ ! -f "$GIT/scripts/apl-feed/$name" && ( -L "$target" || ! -d "$target" ) ]]; then
+            rm -f "$target"
+        fi
+    done
+fi
 mkdir -p "$LOCAL_BIN"
 install -m 0755 "$GIT/scripts/apl-feed.sh" "$LOCAL_BIN/apl-feed"
 
