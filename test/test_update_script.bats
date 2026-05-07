@@ -528,3 +528,93 @@ SH
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
     [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
 }
+
+@test "update.sh sweeps orphan airplanes-mlat2 unit before falling back to setup" {
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local ipath="$root/usr/local/share/airplanes"
+    mkdir -p "$ipath" "$root/etc" \
+        "$root/lib/systemd/system" \
+        "$root/etc/systemd/system/default.target.wants" \
+        "$root/etc/systemd/system/multi-user.target.wants"
+    echo 'VERSION_ID="13"' > "$root/etc/os-release"
+
+    cat > "$root/lib/systemd/system/airplanes-mlat2.service" <<'SH'
+[Unit]
+Description=airplanes-mlat2
+[Service]
+ExecStart=/bin/true
+[Install]
+WantedBy=default.target
+SH
+    ln -s ../../airplanes-mlat2.service \
+        "$root/etc/systemd/system/default.target.wants/airplanes-mlat2.service"
+    ln -s ../../airplanes-mlat2.service \
+        "$root/etc/systemd/system/multi-user.target.wants/airplanes-mlat2.service"
+
+    copy_feed_fixture_repo "$feed_repo"
+    cat > "$feed_repo/setup.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    chmod +x "$feed_repo/setup.sh"
+    commit_all "$feed_repo"
+    cp "$feed_repo/update.sh" "$ipath/update.sh"
+
+    install_command_stubs
+    : > "$ROOT_DIR/commands.log"
+
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        COMMAND_LOG="$ROOT_DIR/commands.log" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=none \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        bash "$UPDATE"
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$root/lib/systemd/system/airplanes-mlat2.service" ]
+    [ ! -L "$root/etc/systemd/system/default.target.wants/airplanes-mlat2.service" ]
+    [ ! -L "$root/etc/systemd/system/multi-user.target.wants/airplanes-mlat2.service" ]
+    [[ "$output" == *"Removing legacy airplanes-mlat2 helper unit"* ]]
+    # AIRPLANES_ROOT is non-"/" here, so the systemctl guard skips the
+    # `disable --now` invocation. We can only verify the file removal +
+    # the operator-visible log line. The systemctl-actually-fires path is
+    # only exercised when AIRPLANES_ROOT="/" — too risky to test against a
+    # real host, and the smoke harness covers it under stubbed PATH.
+    ! grep -q 'systemctl disable --now airplanes-mlat2' "$ROOT_DIR/commands.log"
+}
+
+@test "update.sh sweep is no-op when no orphan airplanes-mlat2 unit exists" {
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local ipath="$root/usr/local/share/airplanes"
+    mkdir -p "$ipath" "$root/etc"
+    echo 'VERSION_ID="13"' > "$root/etc/os-release"
+
+    copy_feed_fixture_repo "$feed_repo"
+    cat > "$feed_repo/setup.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    chmod +x "$feed_repo/setup.sh"
+    commit_all "$feed_repo"
+    cp "$feed_repo/update.sh" "$ipath/update.sh"
+
+    install_command_stubs
+    : > "$ROOT_DIR/commands.log"
+
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        COMMAND_LOG="$ROOT_DIR/commands.log" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=none \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        bash "$UPDATE"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"airplanes-mlat2"* ]]
+    ! grep -q 'airplanes-mlat2' "$ROOT_DIR/commands.log"
+}
