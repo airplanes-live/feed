@@ -53,7 +53,13 @@ SH
     grep -q -- '--max-range 450' "$arg_log"
     grep -q -- '--modeac' "$arg_log"
     grep -q -- "--uuid-file=$root/etc/airplanes/feeder-id" "$arg_log"
-    grep -q -- "--write-json $root/run/airplanes-feed" "$arg_log"
+    # --write-json was the output sink for the bundled tar1090 installer; nothing
+    # consumes /run/airplanes-feed anymore. Match the bare flag only — guard
+    # against accidental reintroduction without flagging --write-json-every or
+    # --write-json-globe-index, which are unrelated readsb tuning flags.
+    if grep -Eq -- '(^|[[:space:]])--write-json([[:space:]]|$)' "$arg_log"; then
+        return 1
+    fi
     if grep -q -- '--decoder-option-that-must-not-feed' "$arg_log"; then
         return 1
     fi

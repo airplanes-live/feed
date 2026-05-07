@@ -9,6 +9,9 @@ systemctl disable --now airplanes-mlat
 systemctl disable --now airplanes-mlat2 &>/dev/null
 systemctl disable --now airplanes-feed
 
+# Legacy cleanup: earlier releases shipped install-or-update-interface.sh, which
+# installed wiedehopf/tar1090 with the "airplanes" URL prefix. The installer is
+# gone, but existing systems may still have it set up — keep removing it here.
 if [[ -d /usr/local/share/tar1090/html-airplanes ]]; then
     bash /usr/local/share/tar1090/uninstall.sh airplanes
 fi

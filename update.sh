@@ -675,8 +675,8 @@ netstat -t -n | grep -E '30004|31090'
 Question? Issues? Go here:
 https://discord.gg/jfVRF2XRwF
 
-Web interface to show the data transmitted? Run this command:
-sudo bash /usr/local/share/airplanes/git/install-or-update-interface.sh
+Want a local web map? Install wiedehopf/tar1090 directly:
+https://github.com/wiedehopf/tar1090
 "
 
 INPUT_IP=$(echo "$INPUT" | cut -d: -f1)

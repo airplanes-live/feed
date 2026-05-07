@@ -173,21 +173,12 @@ the `/boot/airplanes-config.txt`, `/boot/airplanes-env`, and
 
 ## Local Map
 
-Optional: install a local map interface for your data:
+A local web map is no longer bundled with this installer. If you want one, install
+[wiedehopf/tar1090](https://github.com/wiedehopf/tar1090) directly — it reads the
+JSON output of your local readsb decoder.
 
-```
-sudo bash /usr/local/share/airplanes/git/install-or-update-interface.sh
-```
-
-Open it at:
-
-```
-http://192.168.X.XX/airplanes
-```
-
-Replace `192.168.X.XX` with the address of your Raspberry Pi.
-
-Remove the local map:
+If you installed the bundled `/airplanes` map with an earlier release, uninstall
+remains supported with:
 
 ```
 sudo bash /usr/local/share/tar1090/uninstall.sh airplanes

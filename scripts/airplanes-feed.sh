@@ -31,9 +31,6 @@ else
     source "$FEED_ENV"
 fi
 
-RUN_DIR="$(airplanes_path /run/airplanes-feed)"
-mkdir -p "$RUN_DIR"
-
 if [[ -z $INPUT ]]; then
     INPUT="127.0.0.1:30005"
 fi
@@ -75,7 +72,6 @@ fi
 
 exec "$FEED_BIN" --net --net-only --quiet \
     "--uuid-file=$FEEDER_ID_FILE" \
-    --write-json "$RUN_DIR" \
     $FEED_IMAGE_OPTIONS \
     --net-beast-reduce-interval $REDUCE_INTERVAL \
     $TARGET $FEED_NET_OPTIONS \
