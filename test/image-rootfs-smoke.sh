@@ -81,6 +81,23 @@ exit 0
 SH
 chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
 
+# Simulate an upgraded install where the legacy second-mlat.sh helper
+# (deleted in PR #30) has left an enabled airplanes-mlat2.service unit
+# behind. update.sh must disable + remove it. The post-update assertions
+# below guard the active migration.
+mkdir -p "$ROOT_DIR/lib/systemd/system" \
+    "$ROOT_DIR/etc/systemd/system/default.target.wants"
+cat > "$ROOT_DIR/lib/systemd/system/airplanes-mlat2.service" <<'SH'
+[Unit]
+Description=airplanes-mlat2
+[Service]
+ExecStart=/bin/true
+[Install]
+WantedBy=default.target
+SH
+ln -s ../../airplanes-mlat2.service \
+    "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-mlat2.service"
+
 IPATH="$ROOT_DIR/usr/local/share/airplanes"
 mkdir -p "$IPATH/venv/bin"
 cp "$FEED_REPO/update.sh" "$IPATH/update.sh"
@@ -188,6 +205,8 @@ test -f "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
 test -f "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
 test ! -e "$ROOT_DIR/lib/systemd/system/airplanes-feed.service"
 test ! -e "$ROOT_DIR/lib/systemd/system/airplanes-mlat.service"
+test ! -e "$ROOT_DIR/lib/systemd/system/airplanes-mlat2.service"
+test ! -L "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-mlat2.service"
 test ! -e "$ROOT_DIR/etc/airplanes/feed.env"
 test -L "$ROOT_DIR/etc/default/airplanes"
 test "$(readlink "$ROOT_DIR/etc/default/airplanes")" = "/boot/airplanes-config.txt"
@@ -200,6 +219,9 @@ grep -qE '^User=airplanes-feed$' "$ROOT_DIR/etc/systemd/system/airplanes-feed.se
 grep -qE '^User=airplanes-feed$' "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
 grep -q 'feed2.airplanes.live,64004' "$IPATH/airplanes-feed.sh"
 grep -q 'claim register' "$CLAIM_LOG"
+# AIRPLANES_ROOT is the rootfs dir (not "/"), so update.sh's mlat2 cleanup
+# guard skips the actual `systemctl disable --now` invocation. Rely on the
+# file/symlink removal assertions above to verify the sweep happened.
 grep -q 'systemctl restart airplanes-feed' "$COMMAND_LOG"
 grep -q 'systemctl restart airplanes-mlat' "$COMMAND_LOG"
 test "$(grep -c 'systemctl daemon-reload' "$COMMAND_LOG")" = "1"
