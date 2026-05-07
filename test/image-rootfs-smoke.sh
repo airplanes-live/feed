@@ -84,6 +84,12 @@ chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
 IPATH="$ROOT_DIR/usr/local/share/airplanes"
 mkdir -p "$IPATH/venv/bin"
 cp "$FEED_REPO/update.sh" "$IPATH/update.sh"
+# Simulate an upgraded install that still has the legacy second-mlat.sh
+# helper left over from an older feed release; update.sh must sweep it
+# regardless of whether the new tree carries the file or not. The post-update
+# `test ! -e "$IPATH/second-mlat.sh"` below guards the sweep.
+printf '#!/bin/bash\nexit 0\n' > "$IPATH/second-mlat.sh"
+chmod +x "$IPATH/second-mlat.sh"
 cat > "$IPATH/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -177,6 +183,7 @@ test -x "$ROOT_DIR/usr/local/bin/apl-feed"
 test -f "$IPATH/apl-feed/common.sh"
 test -f "$IPATH/airplanes-feed.sh"
 test -f "$IPATH/airplanes-mlat.sh"
+test ! -e "$IPATH/second-mlat.sh"
 test -f "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
 test -f "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
 test ! -e "$ROOT_DIR/lib/systemd/system/airplanes-feed.service"
