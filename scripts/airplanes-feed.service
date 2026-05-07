@@ -6,7 +6,6 @@ After=network.target
 
 [Service]
 User=airplanes-feed
-RuntimeDirectory=airplanes-feed
 ExecStart=/usr/local/share/airplanes/airplanes-feed.sh
 Type=simple
 Restart=always
