@@ -318,6 +318,14 @@ SH
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
     [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
     grep -q 'target-at-restart=TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"' "$ROOT_DIR/commands.log"
+    # Lifecycle handover: even when MLAT is disabled by config, update.sh
+    # no longer disables/stops the unit — the daemon self-disables via
+    # sleep+exit. The state-file pattern depends on the daemon being
+    # invoked at all (so it can publish state=disabled, reason=...).
+    ! grep -q 'systemctl disable airplanes-mlat' "$ROOT_DIR/commands.log"
+    ! grep -q 'systemctl stop airplanes-mlat' "$ROOT_DIR/commands.log"
+    grep -q 'systemctl enable airplanes-mlat' "$ROOT_DIR/commands.log"
+    grep -q 'systemctl restart airplanes-mlat' "$ROOT_DIR/commands.log"
 }
 
 # Mirror /usr/bin and /bin into $out via symlinks, but skip nc, netcat,

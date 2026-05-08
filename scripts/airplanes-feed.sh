@@ -70,6 +70,33 @@ else
     FEED_IMAGE_OPTIONS=""
 fi
 
+# State writer (defensive: a partial install where this script is in
+# place but the lib isn't yet must not take down the daemon).
+STATE_WRITER="$(airplanes_path /usr/local/share/airplanes/lib/state-writer.sh)"
+if [[ -r "$STATE_WRITER" ]]; then
+    # shellcheck source=lib/state-writer.sh
+    source "$STATE_WRITER"
+else
+    airplanes_write_state() { return 0; }
+fi
+
+# Feed has no MLAT-style disable predicate; it's essentially always-on
+# once the daemon reaches this point. State file is mostly diagnostic
+# (effective config + binary path) for consumers. Forward-compatible
+# with future signals (e.g. an explicit FEED_ENABLED=false toggle
+# would add a reason token without bumping schema_version).
+STATE_FILE="$(airplanes_path /run/airplanes-feed/state)"
+mkdir -p "$(dirname "$STATE_FILE")"
+airplanes_write_state "$STATE_FILE" \
+    "service=airplanes-feed" \
+    "state=enabled" \
+    "reason=ok" \
+    "decided_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "latitude=${LATITUDE:-}" \
+    "longitude=${LONGITUDE:-}" \
+    "input=${INPUT:-}" \
+    "feed_bin=$FEED_BIN" || true
+
 exec "$FEED_BIN" --net --net-only --quiet \
     "--uuid-file=$FEEDER_ID_FILE" \
     $FEED_IMAGE_OPTIONS \
