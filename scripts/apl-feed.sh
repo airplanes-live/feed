@@ -27,6 +27,8 @@ source "$APL_FEED_LIB_DIR/id.sh"
 source "$APL_FEED_LIB_DIR/status.sh"
 # shellcheck source=scripts/apl-feed/backup.sh
 source "$APL_FEED_LIB_DIR/backup.sh"
+# shellcheck source=scripts/apl-feed/mlat.sh
+source "$APL_FEED_LIB_DIR/mlat.sh"
 
 main() {
     local cmd="${1:-}"
@@ -50,6 +52,10 @@ main() {
         restore)
             shift
             config_restore "$@"
+            ;;
+        mlat)
+            shift
+            dispatch_mlat "$@"
             ;;
         -h|--help|'')
             usage

@@ -161,3 +161,103 @@ run_configure_env() {
     [[ "$output" =~ "Latitude must be a decimal number" ]]
     [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
 }
+
+@test "configure.sh empty AIRPLANES_MLAT_USER falls back to Anonymous" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="Anonymous"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh unset AIRPLANES_MLAT_USER also falls back to Anonymous" {
+    # Triggering non-interactive via AIRPLANES_LATITUDE; MLAT_USER is unset.
+    run_configure_env \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="Anonymous"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh AIRPLANES_MLAT_ENABLED=false preserves the supplied name" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="alice" \
+        AIRPLANES_MLAT_ENABLED="false" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="alice"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="false"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh AIRPLANES_MLAT_ENABLED=false plus empty user still fills Anonymous" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="" \
+        AIRPLANES_MLAT_ENABLED="false" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="Anonymous"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="false"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh AIRPLANES_MLAT_ENABLED with bogus value rejects with documented message" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="alice" \
+        AIRPLANES_MLAT_ENABLED="probably" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "AIRPLANES_MLAT_ENABLED must be 'true' or 'false'" ]]
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
+}
+
+@test "configure.sh AIRPLANES_MLAT_USER=0 is now a literal username (sentinel dropped)" {
+    # Contract change: pre-migration this would have disabled MLAT.
+    # Now it's a regular name and MLAT stays enabled.
+    run_configure_env \
+        AIRPLANES_MLAT_USER="0" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="0"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh AIRPLANES_MLAT_ENABLED alone triggers non-interactive mode" {
+    # Even with no other AIRPLANES_* vars set, AIRPLANES_MLAT_ENABLED on
+    # its own should make has_noninteractive_config_env return true.
+    # Required lat/lon/alt are then missing, so this exits 1 with the
+    # standard "Missing required" error — proving has_noninteractive
+    # recognized AIRPLANES_MLAT_ENABLED.
+    run_configure_env AIRPLANES_MLAT_ENABLED="false"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Missing required non-interactive configure value: AIRPLANES_LATITUDE" ]]
+    [ ! -e "$WHIPTAIL_LOG" ]
+}
+
+@test "configure.sh interactive: empty MLAT name input writes Anonymous" {
+    # The first interactive inputbox (name) gets an empty line. The flow
+    # falls back to DEFAULT_MLAT_NAME on disk.
+    run_configure $'\n52.52000\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="Anonymous"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
