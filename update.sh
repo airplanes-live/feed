@@ -555,10 +555,6 @@ echo 50
 mkdir -p "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-mlat.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-feed.service "$SYSTEMD_DIR"
-if [[ "$IMAGE_SERVICE_LAYOUT" == "1" ]]; then
-    sed -i '/^\[Service\]$/i After=airplanes-first-run.service' "$SYSTEMD_DIR/airplanes-mlat.service"
-    sed -i '/^\[Service\]$/i After=airplanes-first-run.service' "$SYSTEMD_DIR/airplanes-feed.service"
-fi
 if ! airplanes_is_build_mode; then
     systemctl daemon-reload >> "$LOGFILE" || true
 fi

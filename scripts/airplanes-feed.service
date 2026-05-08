@@ -2,7 +2,7 @@
 [Unit]
 Description=airplanes-feed
 Wants=network.target
-After=network.target
+After=network.target airplanes-first-run.service
 
 [Service]
 User=airplanes-feed
