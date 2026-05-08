@@ -214,6 +214,50 @@ esac'
     grep -q "^getGIT https://example/mlat-client master " "$COMMAND_LOG"
 }
 
+@test "install_mlat_client: REINSTALL=yes forces rebuild even when skip-conditions match" {
+    # Skip would otherwise fire: matching version, mlat-client binary in
+    # place, active service. REINSTALL=yes is the operator's explicit
+    # override for "rebuild regardless".
+    echo deadbeef > "$IPATH/mlat_version"
+    mkdir -p "$VENV/bin"
+    printf "#!/bin/sh\n" > "$VENV/bin/mlat-client"
+    chmod +x "$VENV/bin/mlat-client"
+    _stub systemctl 'printf "systemctl %s\n" "$*" >> "$COMMAND_LOG"; [[ "$1" == "is-active" ]] && exit 0; exit 0'
+
+    install_mlat_client \
+        https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" yes 0
+
+    grep -q "^getGIT https://example/mlat-client master " "$COMMAND_LOG"
+}
+
+@test "install_mlat_client: missing version file forces rebuild" {
+    # No prior $IPATH/mlat_version file at all (fresh-ish install or
+    # post-uninstall). The skip's `grep -qs ... mlat_version` fails on
+    # the missing file, forcing rebuild.
+    [ ! -f "$IPATH/mlat_version" ]
+    mkdir -p "$VENV/bin"
+    printf "#!/bin/sh\n" > "$VENV/bin/mlat-client"
+    chmod +x "$VENV/bin/mlat-client"
+
+    install_mlat_client \
+        https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" no 0
+
+    grep -q "^getGIT https://example/mlat-client master " "$COMMAND_LOG"
+}
+
+@test "install_mlat_client: missing mlat-client binary forces rebuild" {
+    # Version file matches but $VENV/bin/mlat-client is gone (e.g.
+    # half-broken venv from a prior interrupted update). The skip's
+    # shebang grep on the binary fails, forcing rebuild.
+    echo deadbeef > "$IPATH/mlat_version"
+    [ ! -e "$VENV/bin/mlat-client" ]
+
+    install_mlat_client \
+        https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" no 0
+
+    grep -q "^getGIT https://example/mlat-client master " "$COMMAND_LOG"
+}
+
 @test "install_mlat_client: pip failure is masked by chain (regression — preserve verbatim)" {
     # Regression pin for the chain quirk in the install command list at
     # update.sh:472–484 (now in update-builds.sh): the trailing
@@ -372,6 +416,72 @@ esac'
 printf "make %s\n" "$*" >> "$COMMAND_LOG"
 [[ "$1" == "clean" ]] && exit 0
 printf "#!/bin/sh\n" > readsb
+chmod +x readsb
+exit 0'
+
+    build_readsb_feed_client \
+        https://example/readsb dev "$READSB_GIT" "$READSB_BIN" "$IPATH" "$LOGFILE" no
+
+    grep -q "^getGIT https://example/readsb dev " "$COMMAND_LOG"
+}
+
+@test "build_readsb_feed_client: REINSTALL=yes forces rebuild even when skip-conditions match" {
+    echo deadbeef > "$IPATH/readsb_version"
+    cat > "$READSB_BIN" <<'SH'
+#!/bin/sh
+[ "$1" = "-V" ] && exit 0
+exit 0
+SH
+    chmod +x "$READSB_BIN"
+    _stub systemctl 'printf "systemctl %s\n" "$*" >> "$COMMAND_LOG"; [[ "$1" == "is-active" ]] && exit 0; exit 0'
+    _stub make '
+printf "make %s\n" "$*" >> "$COMMAND_LOG"
+[[ "$1" == "clean" ]] && exit 0
+printf "#!/bin/sh\nexit 0\n" > readsb
+chmod +x readsb
+exit 0'
+
+    build_readsb_feed_client \
+        https://example/readsb dev "$READSB_GIT" "$READSB_BIN" "$IPATH" "$LOGFILE" yes
+
+    grep -q "^getGIT https://example/readsb dev " "$COMMAND_LOG"
+}
+
+@test "build_readsb_feed_client: missing version file forces rebuild" {
+    [ ! -f "$IPATH/readsb_version" ]
+    cat > "$READSB_BIN" <<'SH'
+#!/bin/sh
+[ "$1" = "-V" ] && exit 0
+exit 0
+SH
+    chmod +x "$READSB_BIN"
+    _stub make '
+printf "make %s\n" "$*" >> "$COMMAND_LOG"
+[[ "$1" == "clean" ]] && exit 0
+printf "#!/bin/sh\nexit 0\n" > readsb
+chmod +x readsb
+exit 0'
+
+    build_readsb_feed_client \
+        https://example/readsb dev "$READSB_GIT" "$READSB_BIN" "$IPATH" "$LOGFILE" no
+
+    grep -q "^getGIT https://example/readsb dev " "$COMMAND_LOG"
+}
+
+@test "build_readsb_feed_client: binary -V failure forces rebuild" {
+    # Version file matches but the existing binary refuses -V (corrupted,
+    # ABI mismatch, partial copy from interrupted prior update). The
+    # skip's `"$readsb_bin" -V` leg fails → rebuild.
+    echo deadbeef > "$IPATH/readsb_version"
+    cat > "$READSB_BIN" <<'SH'
+#!/bin/sh
+exit 1
+SH
+    chmod +x "$READSB_BIN"
+    _stub make '
+printf "make %s\n" "$*" >> "$COMMAND_LOG"
+[[ "$1" == "clean" ]] && exit 0
+printf "#!/bin/sh\nexit 0\n" > readsb
 chmod +x readsb
 exit 0'
 
