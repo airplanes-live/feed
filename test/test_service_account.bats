@@ -98,6 +98,74 @@ SH
     [[ "$output" == *"failed to create group 'airplanes-feed'"* ]]
 }
 
+@test "user cascade: adduser --ingroup fails, --gid form succeeds (no useradd)" {
+    # Group exists; user does not. adduser --ingroup is rejected by some
+    # distros (e.g. busybox adduser), so the cascade falls back to the
+    # --gid form which derives the GID via `getent group | cut -d: -f3`.
+    _stub getent 'case "$*" in
+    "group airplanes-feed") echo "airplanes-feed:x:999:" ;;
+    *) exit 0 ;;
+esac'
+    _stub id 'printf "id %s\n" "$*" >> "$COMMAND_LOG"; exit 1'
+    _stub adduser '
+printf "adduser %s\n" "$*" >> "$COMMAND_LOG"
+case "$*" in
+    *--ingroup*) exit 1 ;;
+    *--gid*)     exit 0 ;;
+esac
+exit 1'
+
+    set -e
+    ensure_airplanes_feed_account airplanes-feed airplanes-feed "$HOME_DIR" "$ETC_AIRPLANES"
+
+    grep -q "^adduser --system --ingroup airplanes-feed " "$COMMAND_LOG"
+    grep -q "^adduser --system --gid 999 --home-dir $HOME_DIR --no-create-home airplanes-feed$" "$COMMAND_LOG"
+    ! grep -q "^useradd " "$COMMAND_LOG"
+}
+
+@test "user cascade: both adduser forms fail, useradd succeeds" {
+    _stub getent 'case "$*" in
+    "group airplanes-feed") echo "airplanes-feed:x:999:" ;;
+    *) exit 0 ;;
+esac'
+    _stub id 'printf "id %s\n" "$*" >> "$COMMAND_LOG"; exit 1'
+    _stub adduser 'printf "adduser %s\n" "$*" >> "$COMMAND_LOG"; exit 1'
+    _stub useradd 'printf "useradd %s\n" "$*" >> "$COMMAND_LOG"; exit 0'
+
+    set -e
+    ensure_airplanes_feed_account airplanes-feed airplanes-feed "$HOME_DIR" "$ETC_AIRPLANES"
+
+    # Both adduser variants tried first, then useradd as the final tool.
+    grep -q "^adduser --system --ingroup airplanes-feed " "$COMMAND_LOG"
+    grep -q "^adduser --system --gid 999 " "$COMMAND_LOG"
+    grep -q "^useradd --system --gid 999 --home-dir $HOME_DIR --no-create-home airplanes-feed$" "$COMMAND_LOG"
+    # Cascade order: adduser-ingroup → adduser-gid → useradd. Pin via line numbers.
+    local ingroup_line gid_line useradd_line
+    ingroup_line="$(grep -n 'adduser --system --ingroup' "$COMMAND_LOG" | head -1 | cut -d: -f1)"
+    gid_line="$(grep -n 'adduser --system --gid' "$COMMAND_LOG" | head -1 | cut -d: -f1)"
+    useradd_line="$(grep -n '^useradd ' "$COMMAND_LOG" | head -1 | cut -d: -f1)"
+    [ "$ingroup_line" -lt "$gid_line" ]
+    [ "$gid_line" -lt "$useradd_line" ]
+}
+
+@test "user creation total failure: aborts with documented error message" {
+    # Group exists; every create-tool fails; the final id -u recheck also
+    # confirms the user still doesn't exist (no concurrent creation).
+    _stub getent 'case "$*" in
+    "group airplanes-feed") echo "airplanes-feed:x:999:" ;;
+    *) exit 0 ;;
+esac'
+    _stub id 'printf "id %s\n" "$*" >> "$COMMAND_LOG"; exit 1'
+    _stub adduser 'printf "adduser %s\n" "$*" >> "$COMMAND_LOG"; exit 1'
+    _stub useradd 'printf "useradd %s\n" "$*" >> "$COMMAND_LOG"; exit 1'
+
+    set -e
+    run ensure_airplanes_feed_account airplanes-feed airplanes-feed "$HOME_DIR" "$ETC_AIRPLANES"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"failed to create user 'airplanes-feed'"* ]]
+}
+
 @test "existing user, missing supplementary group: usermod succeeds, no gpasswd" {
     # Group exists, user exists, but `id -nG` doesn't list the group.
     _stub getent 'exit 0'
