@@ -37,10 +37,8 @@ fi
 #
 # Test "set vs unset" rather than "non-empty" — an explicit MLAT_USER=""
 # written by a future-aware writer is respected as "user opted in but left
-# the name blank" and triggers the strict-fail below. The `${VAR+x}` form
-# is portable to bash 3.2 (macOS); `[[ -v VAR ]]` would be cleaner but
-# is bash 4+.
-if [[ -z "${MLAT_USER+x}" && -z "${MLAT_ENABLED+x}" && -n "${USER+x}" ]]; then
+# the name blank" and triggers the strict-fail below.
+if [[ ! -v MLAT_USER && ! -v MLAT_ENABLED && -v USER ]]; then
     case "$USER" in
         0|disable)
             MLAT_USER=""

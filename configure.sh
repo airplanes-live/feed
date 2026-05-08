@@ -34,8 +34,15 @@ renice 10 $$ &>/dev/null || true
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/install-update-common.sh
 source "$SCRIPT_DIR/scripts/lib/install-update-common.sh"
+# shellcheck source=scripts/lib/configure-validators.sh
+source "$SCRIPT_DIR/scripts/lib/configure-validators.sh"
 airplanes_enable_build_mode_from_args "$@"
 airplanes_init_paths
+
+# Fallback name used when the operator doesn't supply one (empty or unset
+# AIRPLANES_MLAT_USER, or blank input in the interactive prompt). Multiple
+# feeders sharing this name on the MLAT map is the expected outcome.
+DEFAULT_MLAT_NAME="Anonymous"
 
 function abort() {
     echo ------------
@@ -49,35 +56,6 @@ function abort() {
 
 BACKTITLETEXT="airplanes.live Setup Script"
 
-sanitize_mlat_user() {
-    printf '%s' "$1" | tr -c '[a-zA-Z0-9]_\- ' '_'
-}
-
-valid_latitude() {
-    [[ "$1" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] \
-        && awk -v LAT="$1" 'BEGIN { exit !(LAT < 90 && LAT > -90) }'
-}
-
-valid_longitude() {
-    [[ "$1" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] \
-        && awk -v LON="$1" 'BEGIN { exit !(LON < 180 && LON > -180) }'
-}
-
-valid_altitude() {
-    [[ "$1" =~ ^-?[0-9]+(ft|m)?$ ]]
-}
-
-normalize_altitude() {
-    local alt="$1"
-    if [[ $alt =~ ^-([0-9]+)ft$ ]]; then
-        awk -v NUM="${BASH_REMATCH[1]}" 'BEGIN { printf "-%0.2f", NUM / 3.28 }'
-    elif [[ $alt =~ ^-([0-9]+)m$ ]]; then
-        printf -- '-%s' "${BASH_REMATCH[1]}"
-    else
-        printf '%s' "$alt"
-    fi
-}
-
 detect_receiver_input() {
     INPUT="127.0.0.1:30005"
     INPUT_TYPE="dump1090"
@@ -90,22 +68,17 @@ detect_receiver_input() {
     fi
 }
 
-# Derive MLAT_USER and MLAT_ENABLED from $NOSPACENAME (the sanitized
-# user-supplied feeder name, or one of the legacy disable sentinels). The
-# sentinel-based disable UX is preserved for interactive users — entering
-# "0" or "disable" turns MLAT off — while the on-disk schema is the new
-# explicit shape.
+# Derive MLAT_USER from the sanitized user-supplied feeder name. Empty
+# input falls back to DEFAULT_MLAT_NAME. This function does not set
+# MLAT_ENABLED — that's the caller's job (set explicitly from
+# AIRPLANES_MLAT_ENABLED in non-interactive mode, defaulted to "true"
+# in the interactive flow).
 derive_mlat_keys() {
-    case "$NOSPACENAME" in
-        0|disable)
-            MLAT_USER=""
-            MLAT_ENABLED="false"
-            ;;
-        *)
-            MLAT_USER="$NOSPACENAME"
-            MLAT_ENABLED="true"
-            ;;
-    esac
+    if [[ -z "$NOSPACENAME" ]]; then
+        MLAT_USER="$DEFAULT_MLAT_NAME"
+    else
+        MLAT_USER="$NOSPACENAME"
+    fi
 }
 
 write_feed_env() {
@@ -146,12 +119,13 @@ EOF
 }
 
 has_noninteractive_config_env() {
-    [[ -v AIRPLANES_MLAT_USER || -v AIRPLANES_LATITUDE || -v AIRPLANES_LONGITUDE || -v AIRPLANES_ALTITUDE ]]
+    [[ -v AIRPLANES_MLAT_USER || -v AIRPLANES_MLAT_ENABLED \
+       || -v AIRPLANES_LATITUDE || -v AIRPLANES_LONGITUDE || -v AIRPLANES_ALTITUDE ]]
 }
 
 configure_noninteractive() {
     local missing=0 name
-    for name in AIRPLANES_MLAT_USER AIRPLANES_LATITUDE AIRPLANES_LONGITUDE AIRPLANES_ALTITUDE; do
+    for name in AIRPLANES_LATITUDE AIRPLANES_LONGITUDE AIRPLANES_ALTITUDE; do
         if [[ ! -v "$name" ]]; then
             echo "Missing required non-interactive configure value: $name" >&2
             missing=1
@@ -159,8 +133,22 @@ configure_noninteractive() {
     done
     [[ "$missing" == "0" ]] || exit 1
 
-    ADSBFIUSERNAME="$AIRPLANES_MLAT_USER"
+    # MLAT_USER is optional. Empty / unset falls back to DEFAULT_MLAT_NAME
+    # via derive_mlat_keys (which write_feed_env calls).
+    ADSBFIUSERNAME="${AIRPLANES_MLAT_USER:-}"
     NOSPACENAME="$(sanitize_mlat_user "$ADSBFIUSERNAME")"
+
+    # MLAT_ENABLED is optional and defaults to "true". Only "true" or
+    # "false" are accepted; silently coercing other values would mask
+    # operator typos.
+    case "${AIRPLANES_MLAT_ENABLED:-true}" in
+        true|false) MLAT_ENABLED="${AIRPLANES_MLAT_ENABLED:-true}" ;;
+        *)
+            echo "AIRPLANES_MLAT_ENABLED must be 'true' or 'false' (got: '${AIRPLANES_MLAT_ENABLED:-}')" >&2
+            exit 1
+            ;;
+    esac
+
     RECEIVERLATITUDE="$AIRPLANES_LATITUDE"
     RECEIVERLONGITUDE="$AIRPLANES_LONGITUDE"
     ALT="$AIRPLANES_ALTITUDE"
@@ -181,20 +169,14 @@ fi
 
 whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "Thanks for choosing to share your data with airplanes.live!\n\nairplanes.live is a co-op of ADS-B/Mode S/MLAT feeders from around the world. This script will configure your current ADS-B receiver to feed data to airplanes.live.\n\nWould you like to continue setup?" 13 78 || abort
 
-ADSBFIUSERNAME=$(whiptail --backtitle "$BACKTITLETEXT" --title "Feeder MLAT Name" --nocancel --inputbox "\nPlease enter a unique name to be shown on the MLAT map (the pin will be offset for privacy)\n\nExample: \"william34-london\", \"william34-jersey\", etc.\nDisable MLAT: enter a zero: 0" 12 78 3>&1 1>&2 2>&3) || abort
+ADSBFIUSERNAME=$(whiptail --backtitle "$BACKTITLETEXT" --title "Feeder MLAT Name" --nocancel --inputbox "\nPlease enter a unique name to be shown on the MLAT map (the pin will be offset for privacy).\n\nExample: \"william34-london\", \"william34-jersey\", etc.\n\nLeave blank to use the default name \"$DEFAULT_MLAT_NAME\".\n\n(To disable MLAT after setup, run: sudo apl-feed mlat disable)" 14 78 3>&1 1>&2 2>&3) || abort
 
 NOSPACENAME="$(sanitize_mlat_user "$ADSBFIUSERNAME")"
 
-if [[ "$NOSPACENAME" != 0 ]]; then
-    whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" \
-        --msgbox "For MLAT the precise location of your antenna is required.\
-        \n\nA small error of 15m/45ft will cause issues with MLAT!\
-        \n\nTo get your location, use any online map service or this website: https://www.mapcoordinates.net/en" 12 78 || abort
-else
-    whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" \
-        --msgbox "MLAT DISABLED!.\
-        \n\n For some local functions the approximate location is still useful, it won't be sent to the server." 12 78 || abort
-fi
+whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" \
+    --msgbox "For MLAT the precise location of your antenna is required.\
+    \n\nA small error of 15m/45ft will cause issues with MLAT!\
+    \n\nTo get your location, use any online map service or this website: https://www.mapcoordinates.net/en" 12 78 || abort
 
 #((-90 <= RECEIVERLATITUDE <= 90))
 LAT_OK=0
@@ -226,7 +208,7 @@ until [ "$LON_OK" -eq 1 ]; do
 done
 
 ALT=0
-until [[ "$NOSPACENAME" == 0 ]] || [[ $ALT =~ ^-?[0-9]+ft$ ]] || [[ $ALT =~ ^-?[0-9]+m$ ]]; do
+until [[ $ALT =~ ^-?[0-9]+ft$ ]] || [[ $ALT =~ ^-?[0-9]+m$ ]]; do
     ALT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Altitude above sea level (at the antenna):" \
         --nocancel --inputbox \
 "\nEnter the altitude of your antenna, above sea level, including the unit with no spaces:\n\n\
@@ -241,6 +223,9 @@ RECEIVERALTITUDE="$ALT"
 
 #RECEIVERPORT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Receiver Feed Port" --nocancel --inputbox "\nChange only if you were assigned a custom feed port.\nFor most all users it is required this port remain set to port 30005." 10 78 "30005" 3>&1 1>&2 2>&3)
 
+# Interactive setup always enables MLAT. Operators who want it off run
+# `sudo apl-feed mlat disable` after setup completes.
+MLAT_ENABLED="true"
 
 detect_receiver_input
 write_feed_env

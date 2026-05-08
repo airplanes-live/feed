@@ -317,7 +317,7 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
     # check below sees MLAT_USER/MLAT_ENABLED. The boot config itself is
     # left alone (it's the user's edit surface and must keep working as-is
     # for users who hand-edit it).
-    if [[ -z "${MLAT_USER+x}" && -z "${MLAT_ENABLED+x}" && -n "${USER+x}" ]]; then
+    if [[ ! -v MLAT_USER && ! -v MLAT_ENABLED && -v USER ]]; then
         case "$USER" in
             0|disable)
                 MLAT_USER=""
@@ -410,6 +410,7 @@ historical_apl_feed_modules=(
     common.sh
     http.sh
     id.sh
+    mlat.sh
     status.sh
 )
 historical_daemon_libs=(
