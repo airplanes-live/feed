@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
 
+# State reader. Defensive — if the lib is missing (mid-update transient),
+# fall back to a stub that always returns 1 so the MLAT path degrades to
+# systemd-only rendering. The path is BASH_SOURCE-relative so it
+# resolves identically in source tree (scripts/apl-feed/.. -> scripts/lib)
+# and production install (/usr/local/share/airplanes/apl-feed/.. ->
+# /usr/local/share/airplanes/lib).
+_status_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+_state_reader="$_status_dir/../lib/state-reader.sh"
+if [[ -r "$_state_reader" ]]; then
+    # shellcheck source=../lib/state-reader.sh
+    source "$_state_reader"
+else
+    airplanes_read_state() { return 1; }
+fi
+unset _status_dir _state_reader
+
 STATUS_OUTPUT_JSON=0
 STATUS_CHECKS_FILE=''
 STATUS_FAIL_COUNT=0
@@ -130,24 +146,133 @@ service_status_line() {
     status_line fail "$label" "not running"
 }
 
-mlat_disabled_by_config() {
-    # Mirror the disable conditions in airplanes-mlat.sh and update.sh:
-    #   MLAT_ENABLED=false, LATITUDE=0, or LONGITUDE=0
-    # Falls back to legacy USER=0|disable when feed.env hasn't been migrated
-    # yet (e.g. a daemon read between a legacy webconfig write and the next
-    # update.sh run).
-    local mlat_enabled latitude longitude user
-    mlat_enabled="$(feed_env_get MLAT_ENABLED || true)"
-    latitude="$(feed_env_get LATITUDE || true)"
-    longitude="$(feed_env_get LONGITUDE || true)"
-    user="$(feed_env_get USER || true)"
-    if [[ -z "$mlat_enabled" && -n "$user" ]]; then
-        case "$user" in
-            0|disable) mlat_enabled="false" ;;
-            *)         mlat_enabled="true" ;;
-        esac
+# _render_systemd_state <unit> <label> <active_state>
+# Renders status_line output for the not-active cases (failed, inactive,
+# deactivating, masked, unrecognized). Shared between mlat_status_line
+# and any future state-file consumer that needs the same fall-through.
+# Note: ActiveState=inactive can mean either user-stopped or masked;
+# masked units report ActiveState=inactive AND is-enabled=masked, so
+# we check is-enabled separately.
+_render_systemd_state() {
+    local unit="$1" label="$2" active_state="$3"
+    local enabled
+    enabled="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+    if [[ "$enabled" == "masked" ]]; then
+        status_line fail "$label" "masked"
+        return
     fi
-    [[ "$mlat_enabled" == "false" || "$latitude" == "0" || "$longitude" == "0" ]]
+    case "$active_state" in
+        failed)
+            local exit_code
+            exit_code="$(systemctl show --property=ExecMainStatus --value "$unit" 2>/dev/null || true)"
+            status_line fail "$label" "failed${exit_code:+ (exit $exit_code)}"
+            ;;
+        inactive|deactivating|'')
+            status_line fail "$label" "not running"
+            ;;
+        *)
+            status_line fail "$label" "not running ($active_state)"
+            ;;
+    esac
+}
+
+# mlat_status_line — replaces the old mlat_disabled_by_config + the
+# matching service_status_line call in feed_status. Reads the daemon's
+# published decision from /run/airplanes-mlat/state when the unit is
+# active or transitioning; falls through to systemd-derived rendering
+# otherwise. Special-cases failed-with-exit-64 (the strict misconfig
+# fail from airplanes-mlat.sh) to surface the MLAT_USER-empty actionable
+# message via the state file's reason key.
+mlat_status_line() {
+    local label="MLAT service"
+    local unit="airplanes-mlat.service"
+    if ! command -v systemctl >/dev/null 2>&1; then
+        status_line warn "$label" "systemctl unavailable"
+        return
+    fi
+    local active_state
+    active_state="$(systemctl show --property=ActiveState --value "$unit" 2>/dev/null || true)"
+    local state_file
+    state_file="$(root_path /run/airplanes-mlat/state)"
+
+    case "$active_state" in
+        active|activating|reloading)
+            local decision reason
+            if decision="$(airplanes_read_state "$state_file" state)" \
+                && reason="$(airplanes_read_state "$state_file" reason)"; then
+                _render_mlat_decision "$active_state" "$decision" "$reason"
+                return
+            fi
+            # State file unavailable / unparseable. Daemon is alive but
+            # we can't tell what it decided.
+            if [[ "$active_state" == "active" ]]; then
+                status_line ok "$label" "running"
+            else
+                status_line warn "$label" "starting up ($active_state)"
+            fi
+            ;;
+        failed)
+            local exit_code
+            exit_code="$(systemctl show --property=ExecMainStatus --value "$unit" 2>/dev/null || true)"
+            if [[ "$exit_code" == "64" ]]; then
+                # Strict misconfig fail. State file persists across the
+                # failed terminal state via RuntimeDirectoryPreserve=yes;
+                # surface its reason as the actionable cause.
+                local reason
+                if reason="$(airplanes_read_state "$state_file" reason)" && [[ -n "$reason" ]]; then
+                    _render_mlat_misconfig_reason "$reason"
+                    return
+                fi
+                status_line fail "$label" "failed (exit 64; check feed.env MLAT config)"
+                return
+            fi
+            _render_systemd_state "$unit" "$label" "$active_state"
+            ;;
+        *)
+            _render_systemd_state "$unit" "$label" "$active_state"
+            ;;
+    esac
+}
+
+_render_mlat_decision() {
+    local active_state="$1" decision="$2" reason="$3"
+    local label="MLAT service"
+    case "$decision" in
+        enabled)
+            if [[ "$active_state" == "active" ]]; then
+                status_line ok "$label" "running"
+            else
+                status_line warn "$label" "starting up ($active_state)"
+            fi
+            ;;
+        disabled)
+            local detail
+            case "$reason" in
+                mlat_enabled_false) detail="disabled by config (MLAT_ENABLED=false)" ;;
+                latitude_zero)      detail="disabled by config (LATITUDE=0)" ;;
+                longitude_zero)     detail="disabled by config (LONGITUDE=0)" ;;
+                *)                  detail="disabled by config ($reason)" ;;
+            esac
+            status_line ok "$label" "$detail"
+            ;;
+        misconfigured)
+            _render_mlat_misconfig_reason "$reason"
+            ;;
+        *)
+            # Forward-compat: an unknown decision token from a future
+            # schema would surface as a warn rather than a crash.
+            status_line warn "$label" "decision: $decision ($reason)"
+            ;;
+    esac
+}
+
+_render_mlat_misconfig_reason() {
+    local reason="$1"
+    local label="MLAT service"
+    case "$reason" in
+        mlat_user_empty) status_line fail "$label" "MLAT_USER is empty (set MLAT_USER, or set MLAT_ENABLED=false)" ;;
+        *)               status_line fail "$label" "misconfigured ($reason)" ;;
+    esac
 }
 
 receiver_status_line() {
@@ -330,11 +455,7 @@ feed_status() {
         echo
     fi
     service_status_line airplanes-feed "Feed service"
-    if mlat_disabled_by_config; then
-        status_line ok "MLAT service" "disabled by config"
-    else
-        service_status_line airplanes-mlat "MLAT service"
-    fi
+    mlat_status_line
     receiver_status_line
     airplanes_link_status_line
     claim_registration_status_line

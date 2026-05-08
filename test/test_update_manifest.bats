@@ -97,3 +97,9 @@ extract_manifest() {
     manifest="$(extract_manifest historical_daemon_libs)"
     grep -Fxq "state-writer.sh" <<<"$manifest"
 }
+
+@test "historical_daemon_libs retains state-reader.sh" {
+    local manifest
+    manifest="$(extract_manifest historical_daemon_libs)"
+    grep -Fxq "state-reader.sh" <<<"$manifest"
+}

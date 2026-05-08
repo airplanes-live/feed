@@ -219,78 +219,209 @@ STUB
     [[ "$output" == *'not running'* ]]
 }
 
-# --- mlat_disabled_by_config ---
+# --- mlat_status_line: state-file-driven (replaces old mlat_disabled_by_config) ---
 
-@test "mlat_disabled_by_config: USER=0 returns 0" {
-    printf 'USER="0"\nLATITUDE="52"\nLONGITUDE="13"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
+# Helper: write a state file under the test root for the MLAT daemon.
+write_mlat_state() {
+    # write_mlat_state <decision> <reason>
+    local decision="$1"
+    local reason="$2"
+    mkdir -p "$ROOT_DIR/run/airplanes-mlat"
+    {
+        printf 'schema_version=1\n'
+        printf 'service=airplanes-mlat\n'
+        printf 'state=%s\n' "$decision"
+        printf 'reason=%s\n' "$reason"
+    } > "$ROOT_DIR/run/airplanes-mlat/state"
+}
+
+# Helper: stub systemctl to return a chosen ActiveState / ExecMainStatus /
+# is-enabled. Real call shapes:
+#   systemctl show --property=ActiveState --value <unit>     (4 args)
+#   systemctl show --property=ExecMainStatus --value <unit>  (4 args)
+#   systemctl is-enabled <unit>                              (2 args)
+#   systemctl is-active --quiet <unit>                       (3 args)
+stub_systemctl_active_state() {
+    local active_state="$1"
+    local exec_main_status="${2:-0}"
+    local is_enabled_value="${3:-enabled}"
+    cat > "$STUB_DIR/systemctl" <<STUB
+#!/usr/bin/env bash
+case "\$1 \$2 \$3" in
+    "show --property=ActiveState --value") shift 3; printf '%s\n' '$active_state'; exit 0 ;;
+    "show --property=ExecMainStatus --value") shift 3; printf '%s\n' '$exec_main_status'; exit 0 ;;
+esac
+case "\$1" in
+    is-enabled) shift; printf '%s\n' '$is_enabled_value'; exit 0 ;;
+    is-active) [[ '$active_state' == 'active' ]] && exit 0 || exit 3 ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_DIR/systemctl"
+}
+
+@test "mlat_status_line: ActiveState=active + decision=enabled → OK running" {
+    write_mlat_state enabled ok
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'running'* ]]
+}
+
+@test "mlat_status_line: ActiveState=active + disabled mlat_enabled_false → 'disabled by config (MLAT_ENABLED=false)'" {
+    write_mlat_state disabled mlat_enabled_false
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'disabled by config (MLAT_ENABLED=false)'* ]]
+}
+
+@test "mlat_status_line: ActiveState=active + disabled latitude_zero → 'disabled by config (LATITUDE=0)'" {
+    write_mlat_state disabled latitude_zero
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'disabled by config (LATITUDE=0)'* ]]
+}
+
+@test "mlat_status_line: ActiveState=active + disabled longitude_zero → 'disabled by config (LONGITUDE=0)'" {
+    write_mlat_state disabled longitude_zero
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'disabled by config (LONGITUDE=0)'* ]]
+}
+
+@test "mlat_status_line: ActiveState=active + misconfigured mlat_user_empty → FIX with actionable message" {
+    write_mlat_state misconfigured mlat_user_empty
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'MLAT_USER is empty'* ]]
+    [[ "$output" == *'set MLAT_ENABLED=false'* ]]
+}
+
+@test "mlat_status_line: ActiveState=activating + enabled → 'starting up'" {
+    write_mlat_state enabled ok
+    stub_systemctl_active_state activating
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'starting up (activating)'* ]]
+}
+
+# Load-bearing case: misconfig surface is visible continuously across the
+# Restart=always cycle, not just during the microsecond active window.
+@test "mlat_status_line: ActiveState=activating + misconfigured → still surfaces the actionable message" {
+    write_mlat_state misconfigured mlat_user_empty
+    stub_systemctl_active_state activating
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'MLAT_USER is empty'* ]]
+}
+
+@test "mlat_status_line: ActiveState=failed + exit 64 + state file present → surfaces misconfig reason" {
+    write_mlat_state misconfigured mlat_user_empty
+    stub_systemctl_active_state failed 64
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'MLAT_USER is empty'* ]]
+}
+
+@test "mlat_status_line: ActiveState=failed + exit 64 + no state file → generic 'check feed.env MLAT config'" {
+    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    stub_systemctl_active_state failed 64
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'failed (exit 64'* ]]
+}
+
+@test "mlat_status_line: ActiveState=failed + exit other → 'failed (exit X)'" {
+    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    stub_systemctl_active_state failed 1
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'failed (exit 1)'* ]]
+}
+
+@test "mlat_status_line: ActiveState=inactive + is-enabled=enabled → 'not running'" {
+    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    stub_systemctl_active_state inactive 0 enabled
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'not running'* ]]
+}
+
+@test "mlat_status_line: ActiveState=inactive + is-enabled=masked → 'masked'" {
+    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    stub_systemctl_active_state inactive 0 masked
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'masked'* ]]
+}
+
+@test "mlat_status_line: ActiveState=deactivating → 'not running'" {
+    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    stub_systemctl_active_state deactivating
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'not running'* ]]
+}
+
+@test "mlat_status_line: ActiveState=active + no state file → degraded 'running' fallback" {
+    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'running'* ]]
+}
+
+@test "mlat_status_line: ActiveState=activating + no state file → 'starting up'" {
+    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    stub_systemctl_active_state activating
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'starting up (activating)'* ]]
+}
+
+# --root integration: catches source-time vs runtime path mismatches that
+# unit-testing mlat_status_line in isolation doesn't.
+@test "mlat_status_line --root: reads state file under the redirected root" {
+    write_mlat_state disabled mlat_enabled_false
+    stub_systemctl_active_state active
+    # ROOT was set in setup() to $ROOT_DIR; verify the function honors it.
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
     [ "$status" -eq 0 ]
-}
-
-@test "mlat_disabled_by_config: LATITUDE=0 returns 0" {
-    printf 'USER="me"\nLATITUDE="0"\nLONGITUDE="13"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 0 ]
-}
-
-@test "mlat_disabled_by_config: LONGITUDE=0 returns 0" {
-    printf 'USER="me"\nLATITUDE="52"\nLONGITUDE="0"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 0 ]
-}
-
-@test "mlat_disabled_by_config: USER=disable returns 0 (matches runtime daemon)" {
-    printf 'USER="disable"\nLATITUDE="52"\nLONGITUDE="13"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 0 ]
-}
-
-# `changeme` is the template default for an unconfigured feeder.
-# Neither airplanes-mlat.sh nor update.sh recognize it as an explicit
-# disable signal — they only honor USER=0 / USER=disable. This helper
-# matches that.
-@test "mlat_disabled_by_config: USER=changeme does NOT trigger" {
-    printf 'USER="changeme"\nLATITUDE="52"\nLONGITUDE="13"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 1 ]
-}
-
-@test "mlat_disabled_by_config: configured location returns 1" {
-    printf 'USER="me"\nLATITUDE="52"\nLONGITUDE="13"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 1 ]
-}
-
-# --- New schema: MLAT_ENABLED-driven ---
-
-@test "mlat_disabled_by_config: MLAT_ENABLED=false returns 0" {
-    printf 'MLAT_USER="alice"\nMLAT_ENABLED=false\nLATITUDE="52"\nLONGITUDE="13"\n' \
-        > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 0 ]
-}
-
-@test "mlat_disabled_by_config: MLAT_ENABLED=true with valid location returns 1" {
-    printf 'MLAT_USER="alice"\nMLAT_ENABLED=true\nLATITUDE="52"\nLONGITUDE="13"\n' \
-        > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 1 ]
-}
-
-@test "mlat_disabled_by_config: MLAT_ENABLED wins over orphan USER=0" {
-    # Legacy webconfig might write USER=0 via the symlink; the migrated
-    # schema should win until the next update.sh sweeps the orphan.
-    printf 'MLAT_USER="alice"\nMLAT_ENABLED=true\nUSER="0"\nLATITUDE="52"\nLONGITUDE="13"\n' \
-        > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 1 ]
-}
-
-@test "mlat_disabled_by_config: MLAT_ENABLED=true with LATITUDE=0 still triggers" {
-    printf 'MLAT_USER="alice"\nMLAT_ENABLED=true\nLATITUDE="0"\nLONGITUDE="13"\n' \
-        > "$ROOT_DIR/etc/airplanes/feed.env"
-    run mlat_disabled_by_config
-    [ "$status" -eq 0 ]
+    [[ "$output" == *'disabled by config (MLAT_ENABLED=false)'* ]]
 }
 
 # --- receiver_status_line ---

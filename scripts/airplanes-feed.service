@@ -7,7 +7,7 @@ After=network.target airplanes-first-run.service
 [Service]
 User=airplanes-feed
 RuntimeDirectory=airplanes-feed
-RuntimeDirectoryPreserve=restart
+RuntimeDirectoryPreserve=yes
 ExecStart=/usr/local/share/airplanes/airplanes-feed.sh
 Type=simple
 Restart=always
