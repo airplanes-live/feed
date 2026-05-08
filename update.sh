@@ -637,7 +637,7 @@ if airplanes_is_build_mode; then
     mkdir -p "$ETC_AIRPLANES"
     : > "$ETC_AIRPLANES/image-install"
     echo "Build mode setup complete; skipping receiver connectivity probe."
-elif ! timeout 5 nc -z "$INPUT_IP" "$INPUT_PORT" && command -v nc &>/dev/null; then
+elif command -v nc &>/dev/null && command -v timeout &>/dev/null && ! timeout 5 nc -z "$INPUT_IP" "$INPUT_PORT"; then
     #whiptail --title "airplanes.live Setup Script" --msgbox "$ENDTEXT2" 24 73
     echo -e "$ENDTEXT2"
 else

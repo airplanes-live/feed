@@ -83,7 +83,7 @@ INPUT_PORT=$(echo $INPUT | cut -d: -f2)
 
 sleep 2
 
-while ! nc -z "$INPUT_IP" "$INPUT_PORT" && command -v nc &>/dev/null; do
+while command -v nc &>/dev/null && ! nc -z "$INPUT_IP" "$INPUT_PORT"; do
     echo "Could not connect to $INPUT_IP:$INPUT_PORT, retry in 10 seconds."
     sleep 10
 done
