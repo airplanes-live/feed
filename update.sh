@@ -294,13 +294,16 @@ source "$GIT/scripts/lib/claim-registration.sh"
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
     if [[ -f "$FEED_ENV" ]]; then
+        # Migrate legacy USER if present before sourcing so the shell sees
+        # the new schema directly. No-op when feed.env was written by a
+        # post-split writer (configure.sh, image first-run, new webconfig).
+        migrate_user_to_mlat_split "$FEED_ENV"
         source "$FEED_ENV"
     else
         source "$BOOT_CONFIG"
         [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
     fi
 
-    USER="${USER:-airplanes_initial}"
     LATITUDE="${LATITUDE:-0}"
     LONGITUDE="${LONGITUDE:-0}"
     ALTITUDE="${ALTITUDE:-0}"
@@ -310,6 +313,8 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
     MLATSERVER="${MLATSERVER:-feed.airplanes.live:31090}"
     TARGET="${TARGET:-$(airplanes_image_target_default)}"
     JSON_OPTIONS="${JSON_OPTIONS:-"--json-location-accuracy 2"}"
+    MLAT_USER="${MLAT_USER-}"
+    MLAT_ENABLED="${MLAT_ENABLED:-true}"
 else
     prepare_legacy_feed_env_migration "$LEGACY_FEED_ENV" "$FEED_ENV" "$ETC_AIRPLANES"
     run_config_file_migrations "$FEED_ENV"
@@ -320,10 +325,13 @@ else
     elif [[ -f "$BOOT_ENV" ]]; then
         source "$BOOT_ENV"
     fi
+    MLAT_USER="${MLAT_USER-}"
+    MLAT_ENABLED="${MLAT_ENABLED:-true}"
 fi
-if [[ -z $INPUT ]] || [[ -z $INPUT_TYPE ]] || [[ -z $USER ]] \
+if [[ -z $INPUT ]] || [[ -z $INPUT_TYPE ]] \
     || [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]] \
     || [[ -z $MLATSERVER ]] || [[ -z $TARGET ]] \
+    || { [[ "$MLAT_ENABLED" == "true" ]] && [[ -z $MLAT_USER ]]; } \
     || { [[ "$IMAGE_INSTALL" != "1" ]] && [[ -z $NET_OPTIONS ]]; }; then
     if [[ "$IMAGE_INSTALL" == "1" ]]; then
         echo "Image configuration is incomplete; refusing to run interactive setup on an image." >&2
@@ -333,7 +341,7 @@ if [[ -z $INPUT ]] || [[ -z $INPUT_TYPE ]] || [[ -z $USER ]] \
     exit 0
 fi
 
-if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$USER" == 0 ]] || [[ "$USER" == "disable" ]]; then
+if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$MLAT_ENABLED" != "true" ]]; then
     MLAT_DISABLED=1
 else
     MLAT_DISABLED=0

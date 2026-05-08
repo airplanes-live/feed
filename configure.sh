@@ -90,15 +90,35 @@ detect_receiver_input() {
     fi
 }
 
+# Derive MLAT_USER and MLAT_ENABLED from $NOSPACENAME (the sanitized
+# user-supplied feeder name, or one of the legacy disable sentinels). The
+# sentinel-based disable UX is preserved for interactive users — entering
+# "0" or "disable" turns MLAT off — while the on-disk schema is the new
+# explicit shape.
+derive_mlat_keys() {
+    case "$NOSPACENAME" in
+        0|disable)
+            MLAT_USER=""
+            MLAT_ENABLED="false"
+            ;;
+        *)
+            MLAT_USER="$NOSPACENAME"
+            MLAT_ENABLED="true"
+            ;;
+    esac
+}
+
 write_feed_env() {
+    derive_mlat_keys
     mkdir -p "$ETC_AIRPLANES"
     tee "$FEED_ENV" >/dev/null <<EOF
 INPUT="$INPUT"
 REDUCE_INTERVAL="0.5"
 
-# feed name for checking MLAT sync
-# also displayed on the MLAT map
-USER="$NOSPACENAME"
+# Display name on the MLAT map. Used as the --user argument to mlat-client.
+MLAT_USER="$MLAT_USER"
+# Explicit on/off toggle for MLAT. When false, airplanes-mlat exits early.
+MLAT_ENABLED="$MLAT_ENABLED"
 
 LATITUDE="$RECEIVERLATITUDE"
 LONGITUDE="$RECEIVERLONGITUDE"

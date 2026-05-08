@@ -55,16 +55,43 @@ run_pre_config_legacy_retirements() {
 # Legacy feed.env preparation
 # ---------------------------------------------------------------------------
 
-# Copy /etc/default/airplanes into /etc/airplanes/feed.env when the legacy
-# path still holds a regular file. Idempotent: once the legacy path is
-# replaced with a symlink (see finalize_legacy_feed_env_migration), this is
-# a no-op.
+# Copy the legacy feed-env source into /etc/airplanes/feed.env so the new
+# daemons (which read feed.env) inherit the existing config.
+#
+# Three legacy shapes are recognized:
+#   1. Regular file at $legacy_feed_env (standalone install) — copied directly.
+#   2. Symlink that already points at $feed_env — no-op (already migrated).
+#   3. Symlink that points elsewhere (e.g. legacy ImageBuilder where
+#      /etc/default/airplanes -> /boot/airplanes-env) — followed; the
+#      target is copied into feed.env so daemons don't get stranded after
+#      finalize_legacy_feed_env_migration rewires the symlink.
+#
+# Subsequent updates are idempotent: once finalize_legacy_feed_env_migration
+# has rewired the legacy path to point at feed.env, case 2 fires and the
+# function does nothing.
 prepare_legacy_feed_env_migration() {
     local legacy_feed_env="$1"
     local feed_env="$2"
     local etc_airplanes="$3"
     mkdir -p "$etc_airplanes"
-    if [[ -f "$legacy_feed_env" && ! -L "$legacy_feed_env" ]]; then
+
+    if [[ -L "$legacy_feed_env" ]]; then
+        local target feed_env_canonical
+        target="$(readlink -f "$legacy_feed_env" 2>/dev/null || true)"
+        feed_env_canonical="$(readlink -f "$feed_env" 2>/dev/null || printf '%s' "$feed_env")"
+        if [[ -n "$target" && "$target" == "$feed_env_canonical" ]]; then
+            return 0
+        fi
+        # Symlink to legacy boot config or similar — copy through to feed.env
+        # only when feed.env doesn't already exist, so we don't clobber
+        # config that's already been migrated and edited.
+        if [[ -n "$target" && -f "$target" && ! -f "$feed_env" ]]; then
+            cp -fp "$target" "$feed_env"
+        fi
+        return 0
+    fi
+
+    if [[ -f "$legacy_feed_env" ]]; then
         cp -fp "$legacy_feed_env" "$feed_env"
     fi
 }
@@ -112,11 +139,91 @@ EOF
     fi
 }
 
+# Split the legacy USER key into MLAT_USER and MLAT_ENABLED. Idempotent:
+# no-op when USER is absent. When USER is present, derives:
+#
+#   USER=="0" or USER=="disable"  →  MLAT_USER="", MLAT_ENABLED=false
+#   USER=<other>                  →  MLAT_USER=<value>, MLAT_ENABLED=true
+#
+# Always strips USER on every invocation: a USER= line reappearing post-
+# migration most likely came from the legacy PHP webconfig (the only writer
+# that doesn't know the new schema), so we re-derive rather than orphan it.
+# New canonical writers (configure.sh, image first-run, new webconfig) drop
+# USER= on save so they never trigger spurious re-derivation.
+#
+# Backup at $feed_env.pre-mlat-split is the rollback path; written exactly
+# once (first migration) and never overwritten so subsequent runs can't
+# corrupt the original.
+#
+# Atomic write via mktemp + rename so a crash mid-migration leaves either
+# the original feed.env or the migrated one — never a partial file.
+migrate_user_to_mlat_split() {
+    local feed_env="$1"
+    [[ -f "$feed_env" ]] || return 0
+
+    if ! grep -qE '^USER=' "$feed_env"; then
+        return 0
+    fi
+
+    local user_value
+    user_value="$(_extract_env_value "$feed_env" USER)"
+
+    local mlat_user mlat_enabled
+    case "$user_value" in
+        0|disable)
+            mlat_user=""
+            mlat_enabled="false"
+            ;;
+        *)
+            mlat_user="$user_value"
+            mlat_enabled="true"
+            ;;
+    esac
+
+    local backup="${feed_env}.pre-mlat-split"
+    if [[ ! -f "$backup" ]]; then
+        cp -fp "$feed_env" "$backup"
+    fi
+
+    local tmp escaped
+    tmp="$(mktemp "${feed_env}.XXXXXX")"
+    grep -vE '^(USER|MLAT_USER|MLAT_ENABLED)=' "$feed_env" > "$tmp" || true
+    escaped="${mlat_user//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    printf 'MLAT_USER="%s"\n' "$escaped" >> "$tmp"
+    printf 'MLAT_ENABLED=%s\n' "$mlat_enabled" >> "$tmp"
+    chmod --reference="$feed_env" "$tmp" 2>/dev/null || true
+    chown --reference="$feed_env" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$feed_env"
+}
+
+# Extract a single env-style key's value from a feed.env-style file without
+# sourcing it (sourcing would execute arbitrary user-supplied shell content
+# in the context of the migration helpers). Last occurrence wins. Strips
+# matching surrounding quotes (both " and ').
+_extract_env_value() {
+    local feed_env="$1"
+    local key="$2"
+    local raw
+    raw="$(grep -E "^${key}=" "$feed_env" 2>/dev/null | tail -n 1)" || true
+    [[ -z "$raw" ]] && return 0
+    raw="${raw#"${key}="}"
+    if [[ "${#raw}" -ge 2 ]]; then
+        local first="${raw:0:1}"
+        local last="${raw: -1}"
+        if [[ "$first" == "$last" && ( "$first" == '"' || "$first" == "'" ) ]]; then
+            raw="${raw:1:${#raw}-2}"
+        fi
+    fi
+    printf '%s' "$raw"
+}
+
 run_config_file_migrations() {
     local feed_env="$1"
     migrate_net_options_beast_reduce_plus "$feed_env"
     migrate_target_fallback_host "$feed_env"
     migrate_strip_uuid_file_arg "$feed_env"
+    migrate_user_to_mlat_split "$feed_env"
 }
 
 # ---------------------------------------------------------------------------
