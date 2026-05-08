@@ -320,6 +320,84 @@ SH
     grep -q 'target-at-restart=TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"' "$ROOT_DIR/commands.log"
 }
 
+# Mirror /usr/bin and /bin into $out via symlinks, but skip nc, netcat,
+# and timeout. Used by the missing-nc regression test below to give the
+# updater a working PATH for everything *except* the connectivity-probe
+# tools, so `command -v nc` truly returns false during the test.
+_make_no_nc_bin() {
+    local out="$1"
+    mkdir -p "$out"
+    local d f name
+    for d in /usr/bin /bin; do
+        [[ -d "$d" ]] || continue
+        for f in "$d"/*; do
+            [[ -e "$f" ]] || continue
+            name="$(basename "$f")"
+            case "$name" in nc|nc.*|netcat|netcat-*|timeout) continue;; esac
+            [[ -e "$out/$name" || -L "$out/$name" ]] && continue
+            ln -s "$f" "$out/$name" 2>/dev/null || true
+        done
+    done
+}
+
+@test "update.sh post-install probe stays silent when nc is missing" {
+    # Regression pin for the nc-probe ordering bug: prior to the fix,
+    # update.sh ran `nc -z ...` before checking `command -v nc`, so a
+    # feeder that couldn't install netcat-openbsd (apt unreachable,
+    # alpine, custom image) saw `nc: command not found` from the shell
+    # right above the success message. The fix gates both `nc` and
+    # `timeout` via `command -v` so the probe is silently skipped when
+    # either is missing.
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local mlat_repo="$ROOT_DIR/mlat-source"
+    local readsb_repo="$ROOT_DIR/readsb-source"
+    local claim_bin="$ROOT_DIR/apl-feed-stub"
+    local nonc_bin="$ROOT_DIR/nonc-bin"
+
+    copy_feed_fixture_repo "$feed_repo"
+    make_component_repo "$mlat_repo" master
+    make_component_repo "$readsb_repo" dev
+    write_feed_env "$root"
+    prepare_skip_build_state "$root" "$feed_repo" "$mlat_repo" "$readsb_repo"
+    install_command_stubs
+    # install_command_stubs always installs an `nc` stub. Remove it so
+    # `command -v nc` fails when the only PATH entries are $STUB_DIR and
+    # $nonc_bin (the latter mirrors /usr/bin and /bin minus nc/timeout).
+    rm -f "$STUB_DIR/nc"
+    _make_no_nc_bin "$nonc_bin"
+    cat > "$claim_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CLAIM_LOG"
+exit 0
+SH
+    chmod +x "$claim_bin"
+
+    run env PATH="$STUB_DIR:$nonc_bin" \
+        COMMAND_LOG="$ROOT_DIR/commands.log" \
+        CLAIM_LOG="$ROOT_DIR/claim.log" \
+        SYSTEMCTL_FEED_ENV="$root/etc/airplanes/feed.env" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=apt \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        AIRPLANES_MLAT_REPO="$mlat_repo" \
+        AIRPLANES_MLAT_BRANCH=master \
+        AIRPLANES_READSB_REPO="$readsb_repo" \
+        AIRPLANES_READSB_BRANCH=dev \
+        APL_FEED_BIN="$claim_bin" \
+        bash "$UPDATE"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Thanks for choosing to share your data"* ]]
+    # The pre-fix code would leak these via stderr from nc / timeout.
+    # `run` merges stderr into $output by default, so this assertion
+    # fails before the fix and passes after.
+    [[ "$output" != *"nc: command not found"* ]]
+    [[ "$output" != *"timeout: failed to run command"* ]]
+}
+
 @test "update.sh build mode enables units without live systemd or per-device state" {
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"
