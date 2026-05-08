@@ -143,6 +143,23 @@ curl -L -o /tmp/update.sh https://raw.githubusercontent.com/airplanes-live/feed/
 sudo bash /tmp/update.sh
 ```
 
+## Legacy airplanes.live image users
+
+If your Pi is running the legacy [airplanes.live image](https://github.com/airplanes-live/image-releases),
+you can adopt the current feed scripts without reflashing — every feature of
+the current feed scripts is available via the legacy web UI's update buttons.
+
+1. Click **Update Webconfig**.
+2. Click **Update Feeder**.
+
+The first refreshes the on-disk update orchestration; the second runs it and
+installs the current feed scripts onto the feeder. After that, the feeder
+behaves as described elsewhere in this README.
+
+For the redesigned base OS image and web UI, reflash the
+[airplanes-live/image](https://github.com/airplanes-live/image) release —
+there is no in-place upgrade for those.
+
 ## Image Builder Integration
 
 Image builds should use build mode so the rootfs is prepared without touching
