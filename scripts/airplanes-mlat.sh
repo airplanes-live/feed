@@ -24,6 +24,27 @@ else
     source "$FEED_ENV"
 fi
 
+# Legacy USER read fallback. update.sh's migrate_user_to_mlat_split splits
+# USER into MLAT_USER + MLAT_ENABLED on every run, but a daemon restart
+# triggered by the legacy PHP webconfig (which still writes USER=) can race
+# ahead of the next update. When that happens, derive MLAT_USER/MLAT_ENABLED
+# in-memory so the daemon doesn't strict-fail on missing config. Removed
+# when airplanes-update is archived.
+if [[ -z "${MLAT_USER:-}" && -z "${MLAT_ENABLED:-}" && -n "${USER:-}" ]]; then
+    case "$USER" in
+        0|disable)
+            MLAT_USER=""
+            MLAT_ENABLED="false"
+            ;;
+        *)
+            MLAT_USER="$USER"
+            MLAT_ENABLED="true"
+            ;;
+    esac
+fi
+MLAT_ENABLED="${MLAT_ENABLED:-true}"
+MLAT_USER="${MLAT_USER-}"
+
 if [[ "${MLAT_MARKER:-}" == "no" ]]; then
     PRIVACY="--privacy"
 elif [[ -n "${MLAT_MARKER:-}" ]]; then
@@ -34,10 +55,17 @@ fi
 
 UUID_FILE="--uuid-file $FEEDER_ID_FILE"
 
-if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$USER" == 0 ]] || [[ "$USER" == "disable" ]]; then
+if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$MLAT_ENABLED" != "true" ]]; then
     echo MLAT DISABLED
     sleep 3600
     exit
+fi
+
+# Strict misconfigure exit. Matches RestartPreventExitStatus=64 in the unit
+# file so systemd marks the unit failed instead of restart-looping.
+if [[ -z "$MLAT_USER" ]]; then
+    echo "MLAT_ENABLED=true but MLAT_USER is empty; refusing to start mlat-client." >&2
+    exit 64
 fi
 
 INPUT_IP=$(echo $INPUT | cut -d: -f1)
@@ -54,7 +82,7 @@ exec "$(airplanes_path /usr/local/share/airplanes/venv/bin/mlat-client)" \
     --input-type "$INPUT_TYPE" --no-udp \
     --input-connect "$INPUT" \
     --server "$MLATSERVER" \
-    --user "$USER" \
+    --user "$MLAT_USER" \
     --lat "$LATITUDE" \
     --lon "$LONGITUDE" \
     --alt "$ALTITUDE" \

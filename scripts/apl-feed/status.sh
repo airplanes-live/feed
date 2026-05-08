@@ -132,14 +132,22 @@ service_status_line() {
 
 mlat_disabled_by_config() {
     # Mirror the disable conditions in airplanes-mlat.sh and update.sh:
-    #   USER=0|disable, LATITUDE=0, or LONGITUDE=0
-    # so the dashboard reports "disabled by config" instead of falsely
-    # flagging the inactive unit as a fix-it item.
-    local user latitude longitude
-    user="$(feed_env_get USER || true)"
+    #   MLAT_ENABLED=false, LATITUDE=0, or LONGITUDE=0
+    # Falls back to legacy USER=0|disable when feed.env hasn't been migrated
+    # yet (e.g. a daemon read between a legacy webconfig write and the next
+    # update.sh run).
+    local mlat_enabled latitude longitude user
+    mlat_enabled="$(feed_env_get MLAT_ENABLED || true)"
     latitude="$(feed_env_get LATITUDE || true)"
     longitude="$(feed_env_get LONGITUDE || true)"
-    [[ "$user" == "0" || "$user" == "disable" || "$latitude" == "0" || "$longitude" == "0" ]]
+    user="$(feed_env_get USER || true)"
+    if [[ -z "$mlat_enabled" && -n "$user" ]]; then
+        case "$user" in
+            0|disable) mlat_enabled="false" ;;
+            *)         mlat_enabled="true" ;;
+        esac
+    fi
+    [[ "$mlat_enabled" == "false" || "$latitude" == "0" || "$longitude" == "0" ]]
 }
 
 receiver_status_line() {

@@ -261,6 +261,38 @@ STUB
     [ "$status" -eq 1 ]
 }
 
+# --- New schema: MLAT_ENABLED-driven ---
+
+@test "mlat_disabled_by_config: MLAT_ENABLED=false returns 0" {
+    printf 'MLAT_USER="alice"\nMLAT_ENABLED=false\nLATITUDE="52"\nLONGITUDE="13"\n' \
+        > "$ROOT_DIR/etc/airplanes/feed.env"
+    run mlat_disabled_by_config
+    [ "$status" -eq 0 ]
+}
+
+@test "mlat_disabled_by_config: MLAT_ENABLED=true with valid location returns 1" {
+    printf 'MLAT_USER="alice"\nMLAT_ENABLED=true\nLATITUDE="52"\nLONGITUDE="13"\n' \
+        > "$ROOT_DIR/etc/airplanes/feed.env"
+    run mlat_disabled_by_config
+    [ "$status" -eq 1 ]
+}
+
+@test "mlat_disabled_by_config: MLAT_ENABLED wins over orphan USER=0" {
+    # Legacy webconfig might write USER=0 via the symlink; the migrated
+    # schema should win until the next update.sh sweeps the orphan.
+    printf 'MLAT_USER="alice"\nMLAT_ENABLED=true\nUSER="0"\nLATITUDE="52"\nLONGITUDE="13"\n' \
+        > "$ROOT_DIR/etc/airplanes/feed.env"
+    run mlat_disabled_by_config
+    [ "$status" -eq 1 ]
+}
+
+@test "mlat_disabled_by_config: MLAT_ENABLED=true with LATITUDE=0 still triggers" {
+    printf 'MLAT_USER="alice"\nMLAT_ENABLED=true\nLATITUDE="0"\nLONGITUDE="13"\n' \
+        > "$ROOT_DIR/etc/airplanes/feed.env"
+    run mlat_disabled_by_config
+    [ "$status" -eq 0 ]
+}
+
 # --- receiver_status_line ---
 
 @test "receiver_status_line: default INPUT (no env), nc fails → fail" {
