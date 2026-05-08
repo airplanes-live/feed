@@ -360,8 +360,8 @@ SH
     [ -f "$root/etc/systemd/system/airplanes-feed.service" ]
     [ -f "$root/etc/systemd/system/airplanes-mlat.service" ]
     [ ! -e "$root/lib/systemd/system/airplanes-feed.service" ]
-    grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-feed.service"
-    grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
+    grep -qE '^After=.*airplanes-first-run.service' "$root/etc/systemd/system/airplanes-feed.service"
+    grep -qE '^After=.*airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
     [ -x "$root/usr/local/share/airplanes/feed-airplanes" ]
     [ ! -x "$root/usr/bin/airplanes-feeder" ]
     [ -f "$root/etc/airplanes/image-install" ]
@@ -512,8 +512,8 @@ SH
     [ -f "$root/etc/systemd/system/airplanes-mlat.service" ]
     grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh' "$root/etc/systemd/system/airplanes-feed.service"
     grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh' "$root/etc/systemd/system/airplanes-mlat.service"
-    grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-feed.service"
-    grep -q 'After=airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
+    grep -qE '^After=.*airplanes-first-run.service' "$root/etc/systemd/system/airplanes-feed.service"
+    grep -qE '^After=.*airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
     [ ! -e "$root/lib/systemd/system/airplanes-feed.service" ]
     [ ! -e "$root/lib/systemd/system/airplanes-mlat.service" ]
     [ "$(cat "$root/etc/airplanes/feeder-id")" = "22222222-3333-4444-5555-666666666666" ]
