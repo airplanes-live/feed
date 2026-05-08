@@ -259,3 +259,53 @@ EOF
     printf 'OTHER_KEY="other"\nKEY="real"\n' > "$FEED_ENV"
     [ "$(_extract_env_value "$FEED_ENV" KEY)" = "real" ]
 }
+
+@test "_extract_env_value: strips CRLF line ending" {
+    printf 'KEY="0"\r\n' > "$FEED_ENV"
+    [ "$(_extract_env_value "$FEED_ENV" KEY)" = "0" ]
+}
+
+@test "_extract_env_value: unquoted value with trailing comment" {
+    printf 'KEY=0 # disabled\n' > "$FEED_ENV"
+    [ "$(_extract_env_value "$FEED_ENV" KEY)" = "0" ]
+}
+
+@test "_extract_env_value: unquoted value with trailing whitespace" {
+    printf 'KEY=disable   \n' > "$FEED_ENV"
+    [ "$(_extract_env_value "$FEED_ENV" KEY)" = "disable" ]
+}
+
+@test "_extract_env_value: quoted value preserves # inside quotes" {
+    printf 'KEY="hash#in-name" # comment\n' > "$FEED_ENV"
+    [ "$(_extract_env_value "$FEED_ENV" KEY)" = "hash#in-name" ]
+}
+
+# ---------------------------------------------------------------------------
+# migrate_user_to_mlat_split: shell-escape correctness
+# ---------------------------------------------------------------------------
+
+@test "migrate_user_to_mlat_split: USER with \$ does not expand on re-source" {
+    printf 'USER="price$5"\n' > "$FEED_ENV"
+    migrate_user_to_mlat_split "$FEED_ENV"
+
+    # Re-source in a clean subshell and check the literal value survives.
+    local resourced_value
+    resourced_value="$(env -i bash -c "source \"$FEED_ENV\"; printf '%s' \"\${MLAT_USER}\"")"
+    [ "$resourced_value" = "price\$5" ]
+}
+
+@test "migrate_user_to_mlat_split: USER with backticks does not execute on re-source" {
+    printf 'USER="`whoami`"\n' > "$FEED_ENV"
+    migrate_user_to_mlat_split "$FEED_ENV"
+
+    local resourced_value
+    resourced_value="$(env -i bash -c "source \"$FEED_ENV\"; printf '%s' \"\${MLAT_USER}\"")"
+    [ "$resourced_value" = "\`whoami\`" ]
+}
+
+# NOTE: _extract_env_value treats values as opaque strings — it does not unwind
+# bash's source-time backslash-escape semantics for double-quoted strings. So
+# values with embedded \" or \\ aren't preserved through round-trip. Real
+# feeder names are sanitized in configure.sh to letters/digits/underscores/
+# dashes/spaces (no backslashes, no quotes), so this corner only matters for
+# hand-edited feed.env files. Documented here, not enforced.

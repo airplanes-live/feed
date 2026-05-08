@@ -293,6 +293,10 @@ source "$GIT/scripts/lib/systemd-helpers.sh"
 source "$GIT/scripts/lib/claim-registration.sh"
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
+    # Unset USER before sourcing so a process-environment $USER (e.g. the
+    # systemd User= or the login shell) can't bleed into the legacy-USER
+    # detection below. Same precaution applies in the manual-install branch.
+    unset USER MLAT_USER MLAT_ENABLED
     if [[ -f "$FEED_ENV" ]]; then
         # Migrate legacy USER if present before sourcing so the shell sees
         # the new schema directly. No-op when feed.env was written by a
@@ -302,6 +306,24 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
     else
         source "$BOOT_CONFIG"
         [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
+    fi
+
+    # Legacy-boot-config feeders may carry USER= in airplanes-config.txt /
+    # airplanes-env. Derive the new schema in-shell so the completeness
+    # check below sees MLAT_USER/MLAT_ENABLED. The boot config itself is
+    # left alone (it's the user's edit surface and must keep working as-is
+    # for users who hand-edit it).
+    if [[ -z "${MLAT_USER+x}" && -z "${MLAT_ENABLED+x}" && -n "${USER+x}" ]]; then
+        case "$USER" in
+            0|disable)
+                MLAT_USER=""
+                MLAT_ENABLED="false"
+                ;;
+            *)
+                MLAT_USER="$USER"
+                MLAT_ENABLED="true"
+                ;;
+        esac
     fi
 
     LATITUDE="${LATITUDE:-0}"
@@ -319,6 +341,7 @@ else
     prepare_legacy_feed_env_migration "$LEGACY_FEED_ENV" "$FEED_ENV" "$ETC_AIRPLANES"
     run_config_file_migrations "$FEED_ENV"
 
+    unset USER MLAT_USER MLAT_ENABLED
     if [[ -f "$FEED_ENV" ]]; then
         source "$FEED_ENV"
         migrate_add_uat_input_default "$FEED_ENV"

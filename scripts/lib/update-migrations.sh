@@ -187,8 +187,17 @@ migrate_user_to_mlat_split() {
 
     local tmp escaped
     tmp="$(mktemp "${feed_env}.XXXXXX")"
+    # `grep -v` exits 1 when nothing matches; we want that to be a no-op
+    # (empty output) rather than a script abort under set -e.
     grep -vE '^(USER|MLAT_USER|MLAT_ENABLED)=' "$feed_env" > "$tmp" || true
+    # Escape every metachar that bash treats specially inside double quotes:
+    # backslash first (so subsequent escapes don't double-escape), then $,
+    # backtick, and double-quote. After this, sourcing "$tmp" will set
+    # MLAT_USER to the original literal value with no command substitution
+    # or parameter expansion, regardless of what's in the user's name.
     escaped="${mlat_user//\\/\\\\}"
+    escaped="${escaped//\$/\\\$}"
+    escaped="${escaped//\`/\\\`}"
     escaped="${escaped//\"/\\\"}"
     printf 'MLAT_USER="%s"\n' "$escaped" >> "$tmp"
     printf 'MLAT_ENABLED=%s\n' "$mlat_enabled" >> "$tmp"
@@ -199,8 +208,16 @@ migrate_user_to_mlat_split() {
 
 # Extract a single env-style key's value from a feed.env-style file without
 # sourcing it (sourcing would execute arbitrary user-supplied shell content
-# in the context of the migration helpers). Last occurrence wins. Strips
-# matching surrounding quotes (both " and ').
+# in the context of the migration helpers). Last occurrence wins.
+#
+# Handles:
+#   KEY=value                  → value
+#   KEY="value"                → value
+#   KEY='value'                → value
+#   KEY=value\r (CRLF)         → value (strips trailing \r)
+#   KEY=value # comment        → value (unquoted comment-strip)
+#   KEY=value   (trailing ws)  → value (unquoted whitespace-strip)
+#   KEY="value with #" # cmt   → value with # (quoted preserves #)
 _extract_env_value() {
     local feed_env="$1"
     local key="$2"
@@ -208,12 +225,21 @@ _extract_env_value() {
     raw="$(grep -E "^${key}=" "$feed_env" 2>/dev/null | tail -n 1)" || true
     [[ -z "$raw" ]] && return 0
     raw="${raw#"${key}="}"
-    if [[ "${#raw}" -ge 2 ]]; then
-        local first="${raw:0:1}"
-        local last="${raw: -1}"
-        if [[ "$first" == "$last" && ( "$first" == '"' || "$first" == "'" ) ]]; then
-            raw="${raw:1:${#raw}-2}"
-        fi
+    # Always strip a trailing CR from CRLF-edited files.
+    raw="${raw%$'\r'}"
+    if [[ "${raw:0:1}" == '"' ]]; then
+        # Double-quoted: value is between the first " and the next ".
+        raw="${raw#\"}"
+        raw="${raw%%\"*}"
+    elif [[ "${raw:0:1}" == "'" ]]; then
+        # Single-quoted: value is between the first ' and the next '.
+        raw="${raw#\'}"
+        raw="${raw%%\'*}"
+    else
+        # Unquoted: value ends at first whitespace (a trailing comment must
+        # be separated from the value by whitespace per shell parsing, so
+        # this captures both "value # comment" and "value  trailing-spaces").
+        raw="${raw%%[[:space:]]*}"
     fi
     printf '%s' "$raw"
 }

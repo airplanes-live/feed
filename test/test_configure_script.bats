@@ -121,7 +121,9 @@ run_configure_env() {
         AIRPLANES_ALTITUDE="35m"
 
     [ "$status" -eq 0 ]
-    grep -q 'USER="ci feeder"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_USER="ci feeder"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -q '^USER=' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q 'LATITUDE="52.52000"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q 'ALTITUDE="35m"' "$ROOT_DIR/etc/airplanes/feed.env"
