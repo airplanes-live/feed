@@ -192,7 +192,7 @@ build_readsb_feed_client() {
     # any failure aborts the script, matching the original inline form
     # where `make` failure was a hard stop for the updater.
     (
-        cd "$readsb_git"
+        cd "$readsb_git" || exit
         make clean
         make -j2 AIRCRAFT_HASH_BITS=12 >> "$logfile"
         echo 80
