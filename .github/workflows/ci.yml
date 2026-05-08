@@ -75,7 +75,10 @@ jobs:
         env:
           BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
-          git -C "$PWD" branch -f "$BRANCH" HEAD
+          current="$(git -C "$PWD" rev-parse --abbrev-ref HEAD)"
+          if [[ "$current" != "$BRANCH" ]]; then
+            git -C "$PWD" branch -f "$BRANCH" HEAD
+          fi
 
       - name: Run installer smoke
         env:
@@ -172,7 +175,13 @@ jobs:
           # only accepts {main, dev}, so a real PR branch name like
           # "feature/foo" would be refused even though it carries the code we
           # want under test. Branch labels are local only — origin is unchanged.
-          git -C feed branch -f dev HEAD
+          # Skip when already on dev (push-to-dev event) — git refuses to
+          # force-update the worktree's current branch, and the rename would
+          # be a no-op anyway.
+          current="$(git -C feed rev-parse --abbrev-ref HEAD)"
+          if [[ "$current" != "dev" ]]; then
+            git -C feed branch -f dev HEAD
+          fi
 
       - name: Checkout image regression harness
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
