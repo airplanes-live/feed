@@ -10,10 +10,19 @@
 # read or mutate update.sh's config-state globals (USER, TARGET, MLAT_*).
 #
 # Test seam: the mlat-client venv creation honors AIRPLANES_PYTHON_BIN so
-# tests can intercept the python binary without a PATH stub. This is the
-# only intentional diff from the original inline form; the rest of the
-# install command chain (mixed && / || ordering of setuptools/pyasyncore
-# fallbacks) is preserved verbatim.
+# tests can intercept the python binary without a PATH stub.
+#
+# The mlat install chain is structured as a strict `&&` sequence with
+# intentional fallbacks (`{ a || b; }`) braced into local groups. This
+# replaces an earlier free-form `&&`/`||` cascade whose precedence quirk
+# (`A && B || C && D` parses as `((A && B) || C) && D`) silently masked
+# build failures: any unintentional `||` could reset the chain accumulator
+# to success, so a `pip install` failure routed through later success
+# steps (`rm -f` always succeeds, `echo` always succeeds) and the
+# if-test's else branch — which restores the venv from backup and prints
+# a "build failed" warning — never fired. The braced groups confine each
+# fallback's scope so the chain ultimately fails when any required step
+# does, making the else branch reachable.
 
 # Compute the upstream HEAD SHA for $branch on $repo. Returns a random
 # sentinel when the lookup produces no output (network failure, DNS miss,
@@ -55,13 +64,16 @@ _compute_remote_version() {
 # Skip path: when version matches, mlat-client binary exists, and at
 # least one of {build mode, active service, mlat-disabled} holds.
 #
-# Failure handling: getGIT failure aborts under set -e (preserved from the
-# inline form — different from the in-build failure path below, which
-# restores $venv-backup and continues so the readsb build can still run).
-# In-build failure (any step in the && / || install chain returns
-# non-zero and the chain ultimately fails) restores $venv from backup and
+# Failure handling: getGIT failure aborts under set -e (different from
+# the in-build failure path, which restores $venv-backup and continues so
+# the readsb build can still run). In-build failure (any required step in
+# the install chain returns non-zero) restores $venv from backup and
 # prints the documented warning; the function returns 0 so update.sh can
-# continue.
+# continue. Note that `revision()` always exits 0 via its own internal
+# `|| echo "$RANDOM-$RANDOM"` sentinel (see install-update-common.sh), so
+# the `revision > $ipath/mlat_version || rm -f $ipath/mlat_version` group
+# in the chain defends against a write failure on $ipath/mlat_version
+# itself (disk full, permission denied), not git-dir failure.
 install_mlat_client() {
     local mlat_repo="$1"
     local mlat_branch="$2"
@@ -98,28 +110,29 @@ install_mlat_client() {
 
     # Build runs in a subshell so cd and venv activation don't leak to
     # the caller (caller's $PWD is unchanged after this function returns).
-    # The mixed && / || chain inside the if-test is preserved verbatim;
-    # the only intentional edit is the AIRPLANES_PYTHON_BIN seam at the
-    # venv-creation step. Chain leg semantics:
-    #   `python3 -c "import setuptools" || python3 -m pip install setuptools`
-    # routes through &&/|| so missing setuptools triggers the pip install
-    # fallback, then continues with `&& echo 39 && ...`. Same shape for
-    # asyncore → pyasyncore.
+    # Strict `&&` chain with `{ a || b; }`-braced fallbacks: each required
+    # step (venv creation, source activate, wheel install, `pip install .`)
+    # is unconditionally chained, while the setuptools/asyncore "import
+    # or install" fallbacks and the `revision`/`rm -f` tail are scoped
+    # locally so a fallback succeeding doesn't reset the accumulator for
+    # an unrelated earlier failure. The braces matter — without them the
+    # `||` would extend across the chain (see the precedence note in the
+    # file header).
     if (
-        cd "$mlat_git"
-        "${AIRPLANES_PYTHON_BIN:-/usr/bin/python3}" -m venv "$venv" >> "$logfile" \
-            && echo 36 \
-            && source "$venv/bin/activate" >> "$logfile" \
-            && echo 37 \
-            && python3 -c "import setuptools" || python3 -m pip install setuptools \
-            && echo 39 \
-            && python3 -c "import asyncore" || python3 -m pip install pyasyncore \
-            && python3 -m pip install wheel \
-            && echo 40 \
-            && pip install . \
-            && echo 46 \
-            && revision > "$ipath/mlat_version" || rm -f "$ipath/mlat_version" \
-            && echo 48
+        cd "$mlat_git" &&
+        "${AIRPLANES_PYTHON_BIN:-/usr/bin/python3}" -m venv "$venv" >> "$logfile" &&
+        echo 36 &&
+        source "$venv/bin/activate" >> "$logfile" &&
+        echo 37 &&
+        { python3 -c "import setuptools" || python3 -m pip install setuptools; } &&
+        echo 39 &&
+        { python3 -c "import asyncore" || python3 -m pip install pyasyncore; } &&
+        python3 -m pip install wheel &&
+        echo 40 &&
+        pip install . &&
+        echo 46 &&
+        { revision > "$ipath/mlat_version" || rm -f "$ipath/mlat_version"; } &&
+        echo 48
     ); then
         rm -rf "$venv-backup"
     else
