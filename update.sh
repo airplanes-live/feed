@@ -379,11 +379,13 @@ cp "$GIT"/scripts/*.sh "$IPATH"
 install -d -m 0755 "$IPATH/apl-feed"
 install -m 0644 "$GIT"/scripts/apl-feed/*.sh "$IPATH/apl-feed"
 install -d -m 0755 "$IPATH/lib"
-# Daemon-time runtime libs. Other scripts/lib/ files (install-update-common.sh,
-# update-migrations.sh, update-builds.sh, etc.) are sourced ONLY by update.sh
-# from $GIT/scripts/lib/ at update time and have no business at the daemon's
-# install path; copy selectively rather than wildcard.
+# Runtime libs: sourced at runtime by daemons (state-writer) and CLI tools
+# like apl-feed status (state-reader). Distinct from update-time-only libs
+# (install-update-common.sh, update-migrations.sh, update-builds.sh, etc.)
+# which are sourced ONLY by update.sh from $GIT/scripts/lib/ at update time
+# and are NOT installed at $IPATH; copy selectively rather than wildcard.
 install -m 0644 "$GIT"/scripts/lib/state-writer.sh "$IPATH/lib"
+install -m 0644 "$GIT"/scripts/lib/state-reader.sh "$IPATH/lib"
 
 # Historical-ship manifests for the wildcard cp/install above. Each entry is
 # a script we have ever shipped to $IPATH (top-level) or $IPATH/apl-feed/.
@@ -411,6 +413,7 @@ historical_apl_feed_modules=(
     status.sh
 )
 historical_daemon_libs=(
+    state-reader.sh
     state-writer.sh
 )
 

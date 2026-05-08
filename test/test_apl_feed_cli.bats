@@ -17,6 +17,8 @@ setup() {
     cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
 #!/usr/bin/env bash
 case "$*" in
+    "show --property=ActiveState --value "*) printf 'active\n'; exit 0 ;;
+    "show --property=ExecMainStatus --value "*) printf '0\n'; exit 0 ;;
     "is-active --quiet "*) exit 0 ;;
     "is-enabled "*) echo "enabled"; exit 0 ;;
 esac
