@@ -92,8 +92,9 @@ exit 0'
     source "$LIB"
 
     # Override real getGIT (which would actually clone) with a stub that
-    # creates the target dir as a usable git repo so subsequent `cd
-    # $target` and `revision` calls succeed naturally.
+    # creates the target dir so subsequent `cd $target` succeeds. (`git`
+    # is stubbed and `revision` is overridden below, so the dir's git
+    # state itself isn't read by anything in the test.)
     getGIT() {
         local target="$3"
         printf "getGIT %s %s %s\n" "$1" "$2" "$3" >> "$COMMAND_LOG"
@@ -258,19 +259,18 @@ esac'
     grep -q "^getGIT https://example/mlat-client master " "$COMMAND_LOG"
 }
 
-@test "install_mlat_client: pip failure is masked by chain (regression — preserve verbatim)" {
-    # Regression pin for the chain quirk in the install command list at
-    # update.sh:472–484 (now in update-builds.sh): the trailing
-    # `... || rm -f $ipath/mlat_version && echo 48` resets the chain's
-    # failure to success because `rm -f` always returns 0, then
-    # `echo 48` succeeds, leaving the chain's final exit status at 0.
-    # That means a `pip install` failure does NOT trigger the else
-    # branch / backup-restore path — the if-success branch fires and
-    # the (broken) new venv is kept while the backup is removed.
-    #
-    # The constraint says preserve verbatim; this test pins that
-    # semantics so a future "tidy up" of the chain can't silently
-    # change failure handling without the test failing.
+@test "install_mlat_client: pip install . failure restores backup and prints warning" {
+    # The chain restructure (strict && with braced fallback groups) makes
+    # the if-test's else branch reachable. A `pip install .` failure now
+    # propagates: backup is restored to $VENV with its original content,
+    # any pre-existing mlat_version stays untouched (the revision/rm-f
+    # group is never reached), and the operator-facing warning prints.
+    # Function still returns 0 so update.sh continues to the readsb build.
+    mkdir -p "$VENV/bin"
+    printf "OLD_VERSION_MARKER\n" > "$VENV/bin/mlat-client"
+    chmod +x "$VENV/bin/mlat-client"
+    printf "OLD_SHA" > "$IPATH/mlat_version"
+
     PIP_EXIT=1
     export PIP_EXIT
 
@@ -278,13 +278,160 @@ esac'
         https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" no 0
 
     [ "$status" -eq 0 ]
-    # Failure-message NOT printed: success branch fires.
-    [[ "$output" != *"Installing mlat-client failed"* ]]
-    # Backup removed (success branch's `rm -rf $venv-backup`).
+    [[ "$output" == *"Installing mlat-client failed"* ]]
+    # Backup restored to its original location with its original content.
+    [ -x "$VENV/bin/mlat-client" ]
+    grep -q OLD_VERSION_MARKER "$VENV/bin/mlat-client"
+    # Backup directory consumed by the rename.
     [ ! -e "$VENV-backup" ]
-    # mlat_version was removed by the chain's `|| rm -f` step before
-    # echo 48 reset the chain to success.
-    [ ! -f "$IPATH/mlat_version" ]
+    # Pre-existing version file is preserved — the chain failed before
+    # reaching `revision > X || rm -f X`, so neither side of that group
+    # touched the file.
+    [ "$(cat "$IPATH/mlat_version")" = "OLD_SHA" ]
+}
+
+@test "install_mlat_client: venv-creation failure restores backup and prints warning" {
+    mkdir -p "$VENV/bin"
+    printf "OLD_VERSION_MARKER\n" > "$VENV/bin/mlat-client"
+    chmod +x "$VENV/bin/mlat-client"
+
+    PYTHON_VENV_EXIT=1
+    export PYTHON_VENV_EXIT
+
+    run install_mlat_client \
+        https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" no 0
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Installing mlat-client failed"* ]]
+    [ -x "$VENV/bin/mlat-client" ]
+    grep -q OLD_VERSION_MARKER "$VENV/bin/mlat-client"
+}
+
+@test "install_mlat_client: source-activate failure restores backup and prints warning" {
+    # Override the python3 stub for venv: succeed but write an activate
+    # script that returns non-zero from the sourced context. The subtle
+    # bit: use `return 1`, NOT `exit 1`. `exit` inside a sourced file
+    # terminates the entire subshell immediately, which would also have
+    # short-circuited the OLD buggy chain — so the test wouldn't actually
+    # exercise the fix. `return` only returns from the sourced file,
+    # propagating the non-zero status through the `&&` chain. The new
+    # chain catches it; the old `||`-cascade would have masked it.
+    _stub python3 '
+printf "python3 %s\n" "$*" >> "$COMMAND_LOG"
+case "$1" in
+    -m)
+        case "$2" in
+            venv)
+                mkdir -p "$3/bin"
+                printf "return 1\n" > "$3/bin/activate"
+                printf "#!/bin/sh\nexit 0\n" > "$3/bin/mlat-client"
+                chmod +x "$3/bin/mlat-client"
+                exit 0
+                ;;
+            pip) exit 0 ;;
+        esac
+        ;;
+    -c) exit 0 ;;
+esac
+exit 0'
+
+    mkdir -p "$VENV/bin"
+    printf "OLD_VERSION_MARKER\n" > "$VENV/bin/mlat-client"
+    chmod +x "$VENV/bin/mlat-client"
+
+    run install_mlat_client \
+        https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" no 0
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Installing mlat-client failed"* ]]
+    [ -x "$VENV/bin/mlat-client" ]
+    grep -q OLD_VERSION_MARKER "$VENV/bin/mlat-client"
+}
+
+@test "install_mlat_client: setuptools double-failure restores backup and prints warning" {
+    # `python3 -c "import setuptools"` fails (setuptools missing) AND
+    # `python3 -m pip install setuptools` also fails — both legs of the
+    # `{ ... || ... }` fallback group fail, so the group exits non-zero
+    # and the chain aborts. Without the brace grouping, the second
+    # leg's `||` would extend across the rest of the chain and a later
+    # `&& <always-succeeds>` step could mask this failure.
+    mkdir -p "$VENV/bin"
+    printf "OLD_VERSION_MARKER\n" > "$VENV/bin/mlat-client"
+    chmod +x "$VENV/bin/mlat-client"
+
+    PYTHON_IMPORT_SETUPTOOLS_EXIT=1
+    PYTHON_PIP_EXIT=1
+    export PYTHON_IMPORT_SETUPTOOLS_EXIT PYTHON_PIP_EXIT
+
+    run install_mlat_client \
+        https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" no 0
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Installing mlat-client failed"* ]]
+    [ -x "$VENV/bin/mlat-client" ]
+    grep -q OLD_VERSION_MARKER "$VENV/bin/mlat-client"
+}
+
+@test "install_mlat_client: asyncore double-failure restores backup and prints warning" {
+    # Same shape as the setuptools double-failure test, one group later
+    # in the chain. Setuptools succeeds (import returns 0 by default), so
+    # PYTHON_PIP_EXIT=1 only ever bites at the asyncore-pip install
+    # invocation.
+    mkdir -p "$VENV/bin"
+    printf "OLD_VERSION_MARKER\n" > "$VENV/bin/mlat-client"
+    chmod +x "$VENV/bin/mlat-client"
+
+    PYTHON_IMPORT_ASYNCORE_EXIT=1
+    PYTHON_PIP_EXIT=1
+    export PYTHON_IMPORT_ASYNCORE_EXIT PYTHON_PIP_EXIT
+
+    run install_mlat_client \
+        https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" no 0
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Installing mlat-client failed"* ]]
+    [ -x "$VENV/bin/mlat-client" ]
+    grep -q OLD_VERSION_MARKER "$VENV/bin/mlat-client"
+}
+
+@test "install_mlat_client: pip install wheel failure restores backup and prints warning" {
+    # Wheel install is an unconditional step (no fallback). Its failure
+    # aborts the chain directly. Custom python3 stub fails only on
+    # `python3 -m pip install wheel` to avoid colliding with the
+    # setuptools/asyncore fallback paths (which use the same stub).
+    _stub python3 '
+printf "python3 %s\n" "$*" >> "$COMMAND_LOG"
+case "$1" in
+    -m)
+        case "$2" in
+            venv)
+                mkdir -p "$3/bin"
+                : > "$3/bin/activate"
+                printf "#!/bin/sh\nexit 0\n" > "$3/bin/mlat-client"
+                chmod +x "$3/bin/mlat-client"
+                exit 0
+                ;;
+            pip)
+                if [ "$3 $4" = "install wheel" ]; then exit 1; fi
+                exit 0
+                ;;
+        esac
+        ;;
+    -c) exit 0 ;;
+esac
+exit 0'
+
+    mkdir -p "$VENV/bin"
+    printf "OLD_VERSION_MARKER\n" > "$VENV/bin/mlat-client"
+    chmod +x "$VENV/bin/mlat-client"
+
+    run install_mlat_client \
+        https://example/mlat-client master "$VENV" "$IPATH" "$MLAT_GIT" "$LOGFILE" no 0
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Installing mlat-client failed"* ]]
+    [ -x "$VENV/bin/mlat-client" ]
+    grep -q OLD_VERSION_MARKER "$VENV/bin/mlat-client"
 }
 
 @test "install_mlat_client: getGIT failure aborts under set -e" {
