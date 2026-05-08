@@ -492,10 +492,12 @@ assert_updated_image_contracts() {
     fi
 
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
-    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'After=airplanes-first-run.service'
+    grep -qE '^After=.*airplanes-first-run.service' "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" \
+        || fail "airplanes-feed.service missing After=airplanes-first-run.service"
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'User=airplanes-feed'
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh'
-    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'After=airplanes-first-run.service'
+    grep -qE '^After=.*airplanes-first-run.service' "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" \
+        || fail "airplanes-mlat.service missing After=airplanes-first-run.service"
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'User=airplanes-feed'
     assert_contains "$ipath/airplanes-feed.sh" 'feed2.airplanes.live,64004'
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then

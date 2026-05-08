@@ -221,8 +221,8 @@ test "$(readlink "$ROOT_DIR/etc/default/airplanes")" = "/boot/airplanes-config.t
 
 grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh' "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
 grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh' "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
-grep -q 'After=airplanes-first-run.service' "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
-grep -q 'After=airplanes-first-run.service' "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
+grep -qE '^After=.*airplanes-first-run.service' "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
+grep -qE '^After=.*airplanes-first-run.service' "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
 grep -qE '^User=airplanes-feed$' "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
 grep -qE '^User=airplanes-feed$' "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
 grep -q 'feed2.airplanes.live,64004' "$IPATH/airplanes-feed.sh"
