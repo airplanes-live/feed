@@ -318,7 +318,7 @@ exit 0'
     echo deadbeef > "$IPATH/readsb_version"
     cat > "$READSB_BIN" <<'SH'
 #!/bin/sh
-[[ "$1" == "-V" ]] && exit 0
+[ "$1" = "-V" ] && exit 0
 exit 0
 SH
     chmod +x "$READSB_BIN"
@@ -335,7 +335,8 @@ SH
     echo deadbeef > "$IPATH/readsb_version"
     cat > "$READSB_BIN" <<'SH'
 #!/bin/sh
-[[ "$1" == "-V" ]] && exit 0
+[ "$1" = "-V" ] && exit 0
+exit 0
 SH
     chmod +x "$READSB_BIN"
     AIRPLANES_BUILD_MODE=1
@@ -352,7 +353,8 @@ SH
     echo "real-version-sha" > "$IPATH/readsb_version"
     cat > "$READSB_BIN" <<'SH'
 #!/bin/sh
-[[ "$1" == "-V" ]] && exit 0
+[ "$1" = "-V" ] && exit 0
+exit 0
 SH
     chmod +x "$READSB_BIN"
     _stub git '
