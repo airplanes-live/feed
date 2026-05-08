@@ -497,6 +497,10 @@ assert_contains() {
     grep -q -- "$2" "$1" || fail "$1 does not contain $2"
 }
 
+assert_regex() {
+    grep -qE -- "$2" "$1" || fail "$1 does not match regex: $2"
+}
+
 assert_not_exists() {
     [[ ! -e "$1" ]] || fail "unexpected path exists: $1"
 }
@@ -541,9 +545,9 @@ assert_image_contracts() {
     assert_file /etc/systemd/system/airplanes-mlat.service
     assert_file /etc/systemd/system/airplanes-first-run.service
     assert_contains /etc/systemd/system/airplanes-feed.service 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
-    assert_contains /etc/systemd/system/airplanes-feed.service 'After=airplanes-first-run.service'
+    assert_regex /etc/systemd/system/airplanes-feed.service '^After=.*airplanes-first-run.service'
     assert_contains /etc/systemd/system/airplanes-mlat.service 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh'
-    assert_contains /etc/systemd/system/airplanes-mlat.service 'After=airplanes-first-run.service'
+    assert_regex /etc/systemd/system/airplanes-mlat.service '^After=.*airplanes-first-run.service'
     assert_contains /usr/local/share/airplanes/airplanes-feed.sh 'feed2.airplanes.live,64004'
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
         assert_not_exists /etc/airplanes/feed.env
