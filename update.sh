@@ -291,6 +291,10 @@ run_pre_config_legacy_retirements
 source "$GIT/scripts/lib/systemd-helpers.sh"
 # shellcheck source=scripts/lib/claim-registration.sh
 source "$GIT/scripts/lib/claim-registration.sh"
+# shellcheck source=scripts/lib/service-account.sh
+source "$GIT/scripts/lib/service-account.sh"
+# shellcheck source=scripts/lib/update-builds.sh
+source "$GIT/scripts/lib/update-builds.sh"
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
     # Unset USER before sourcing so a process-environment $USER (e.g. the
@@ -419,53 +423,10 @@ install -m 0755 "$GIT/scripts/apl-feed.sh" "$LOCAL_BIN/apl-feed"
 # read claim-state files (mode 0640) without escalating to root. Membership
 # in this group grants read access to /etc/airplanes/feeder-claim-secret;
 # only add service accounts that legitimately need to reveal claim secrets.
-UNAME=airplanes-feed
-GNAME=airplanes-feed
-
-# Group must exist before write_secret_file (or the heal step) tries to
-# chown into it. Create idempotently — a later run on a feeder where the
-# group already exists is a no-op. Mirror the adduser/useradd cascade for
-# distro portability.
-if ! getent group "$GNAME" >/dev/null 2>&1
-then
-    # Trailing recheck handles the case where a concurrent update created
-    # the group between our guard and the addgroup call (rare, but the
-    # fatal exit would be wrong if the group now exists).
-    addgroup --system "$GNAME" \
-        || groupadd --system "$GNAME" \
-        || getent group "$GNAME" >/dev/null 2>&1 \
-        || { echo "ERROR: failed to create group '$GNAME' (no working addgroup/groupadd)." >&2; exit 1; }
-fi
-
-if ! id -u "${UNAME}" &>/dev/null
-then
-    # Fresh user creation: put the user in the airplanes-feed group as
-    # primary so processes started under User=airplanes-feed get the group
-    # in their initial credentials without needing a supplementary lookup.
-    # `||` chains are set -e safe; the trailing recheck handles concurrent
-    # creation by a parallel update; the final block makes the all-failed
-    # case explicit.
-    adduser --system --ingroup "$GNAME" --home "$IPATH" --no-create-home --quiet "$UNAME" \
-        || adduser --system --gid "$(getent group "$GNAME" | cut -d: -f3)" --home-dir "$IPATH" --no-create-home "$UNAME" \
-        || useradd --system --gid "$(getent group "$GNAME" | cut -d: -f3)" --home-dir "$IPATH" --no-create-home "$UNAME" \
-        || id -u "$UNAME" &>/dev/null \
-        || { echo "ERROR: failed to create user '$UNAME' (no working adduser/useradd)." >&2; exit 1; }
-else
-    # Existing user from a pre-pivot install: primary group is likely
-    # `nogroup`. Add airplanes-feed as a supplementary group so the daemon
-    # process picks it up after the post-install service restart.
-    if ! id -nG "$UNAME" 2>/dev/null | tr ' ' '\n' | grep -qx "$GNAME"
-    then
-        usermod -aG "$GNAME" "$UNAME" 2>/dev/null \
-            || gpasswd -a "$UNAME" "$GNAME" 2>/dev/null \
-            || echo "WARNING: could not add $UNAME to $GNAME group; webconfig 'claim show' may stay broken until manually fixed" >&2
-    fi
-fi
-
-# Heal claim-state files written by older feed versions that lacked the
-# airplanes-feed chown (which would be root:root mode 0600 and unreadable
-# by other service accounts in the airplanes-feed group).
-heal_claim_state_ownership "$ETC_AIRPLANES"
+#
+# See scripts/lib/service-account.sh for the create/repair logic and the
+# heal_claim_state_ownership chown step.
+ensure_airplanes_feed_account airplanes-feed airplanes-feed "$IPATH" "$ETC_AIRPLANES"
 
 echo 4
 sleep 0.25
@@ -483,56 +444,17 @@ fi
 
 MLAT_REPO="${AIRPLANES_MLAT_REPO:-https://github.com/airplanes-live/mlat-client}"
 MLAT_BRANCH="${AIRPLANES_MLAT_BRANCH:-master}"
-MLAT_VERSION="$(git ls-remote "$MLAT_REPO" "$MLAT_BRANCH" | cut -f1 || echo "$RANDOM-$RANDOM" )"
-if [[ $REINSTALL != yes ]] && grep -e "$MLAT_VERSION" -qs "$IPATH/mlat_version" \
-    && grep -qs -e '#!' "$VENV/bin/mlat-client" && { airplanes_is_build_mode || systemctl is-active airplanes-mlat &>/dev/null || [[ "${MLAT_DISABLED}" == "1" ]]; }
-then
-    echo
-    echo "mlat-client already installed, git hash:"
-    cat "$IPATH/mlat_version"
-    echo
-else
-    echo
-    echo "Installing mlat-client to virtual environment"
-    echo
-    # Check if the mlat-client git repository already exists.
+MLAT_GIT="$IPATH/mlat-client-git"
 
-    MLAT_GIT="$IPATH/mlat-client-git"
-
-    # getGIT REPO BRANCH TARGET-DIR
-    getGIT "$MLAT_REPO" "$MLAT_BRANCH" "$MLAT_GIT" &> "$LOGFILE"
-
-    cd "$MLAT_GIT"
-
-    echo 34
-
-    rm "$VENV-backup" -rf
-    mv "$VENV" "$VENV-backup" -f &>/dev/null || true
-    if /usr/bin/python3 -m venv "$VENV" >> "$LOGFILE" \
-        && echo 36 \
-        && source "$VENV/bin/activate" >> "$LOGFILE" \
-        && echo 37 \
-        && python3 -c "import setuptools" || python3 -m pip install setuptools \
-        && echo 39 \
-        && python3 -c "import asyncore" || python3 -m pip install pyasyncore \
-        && python3 -m pip install wheel \
-        && echo 40 \
-        && pip install . \
-        && echo 46 \
-        && revision > "$IPATH/mlat_version" || rm -f "$IPATH/mlat_version" \
-        && echo 48 \
-    ; then
-        rm "$VENV-backup" -rf
-    else
-        rm "$VENV" -rf
-        mv "$VENV-backup" "$VENV" &>/dev/null || true
-        echo "--------------------"
-        echo "Installing mlat-client failed, if there was an old version it has been restored."
-        echo "Will continue installation to try and get at least the feed client working."
-        echo "Please report this error on Discord."
-        echo "--------------------"
-    fi
-fi
+install_mlat_client \
+    "$MLAT_REPO" \
+    "$MLAT_BRANCH" \
+    "$VENV" \
+    "$IPATH" \
+    "$MLAT_GIT" \
+    "$LOGFILE" \
+    "$REINSTALL" \
+    "$MLAT_DISABLED"
 
 echo 50
 
@@ -585,44 +507,17 @@ else
     if airplanes_is_legacy_os; then
         READSB_BRANCH="jessie"
     fi
-    READSB_VERSION="$(git ls-remote "$READSB_REPO" "$READSB_BRANCH" | cut -f1 || echo "$RANDOM-$RANDOM" )"
     READSB_GIT="$IPATH/readsb-git"
     READSB_BIN="$IPATH/feed-airplanes"
-    if [[ $REINSTALL != yes ]] && grep -e "$READSB_VERSION" -qs "$IPATH/readsb_version" \
-        && "$READSB_BIN" -V && { airplanes_is_build_mode || systemctl is-active airplanes-feed &>/dev/null; }
-    then
-        echo
-        echo "Feed client already installed, git hash:"
-        cat "$IPATH/readsb_version"
-        echo
-    else
-        echo
-        echo "Compiling / installing the readsb based feed client"
-        echo
 
-        #compile readsb
-        echo 72
-
-        # getGIT REPO BRANCH TARGET-DIR
-        getGIT "$READSB_REPO" "$READSB_BRANCH" "$READSB_GIT" &> "$LOGFILE"
-
-        cd "$READSB_GIT"
-
-        echo "-----------------------------------------------"
-        echo "Now compiling code can take a few minutes"
-        echo "-----------------------------------------------"
-
-        echo 74
-
-        make clean
-        make -j2 AIRCRAFT_HASH_BITS=12 >> "$LOGFILE"
-        echo 80
-        rm -f "$READSB_BIN"
-        cp readsb "$READSB_BIN"
-        revision > "$IPATH/readsb_version" || rm -f "$IPATH/readsb_version"
-
-        echo
-    fi
+    build_readsb_feed_client \
+        "$READSB_REPO" \
+        "$READSB_BRANCH" \
+        "$READSB_GIT" \
+        "$READSB_BIN" \
+        "$IPATH" \
+        "$LOGFILE" \
+        "$REINSTALL"
 fi
 
 #end compile readsb
