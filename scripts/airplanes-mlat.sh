@@ -65,18 +65,58 @@ fi
 
 UUID_FILE="--uuid-file $FEEDER_ID_FILE"
 
-if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$MLAT_ENABLED" != "true" ]]; then
-    echo MLAT DISABLED
-    sleep 3600
-    exit
+# State writer (defensive: a partial install where this script is in
+# place but the lib isn't yet must not take down the daemon).
+STATE_WRITER="$(airplanes_path /usr/local/share/airplanes/lib/state-writer.sh)"
+if [[ -r "$STATE_WRITER" ]]; then
+    # shellcheck source=lib/state-writer.sh
+    source "$STATE_WRITER"
+else
+    airplanes_write_state() { return 0; }
 fi
 
-# Strict misconfigure exit. Matches RestartPreventExitStatus=64 in the unit
-# file so systemd marks the unit failed instead of restart-looping.
-if [[ -z "$MLAT_USER" ]]; then
-    echo "MLAT_ENABLED=true but MLAT_USER is empty; refusing to start mlat-client." >&2
-    exit 64
-fi
+# Classify the daemon's config decision. Order matters: explicit
+# MLAT_ENABLED disable is checked before geo so a user who turns MLAT
+# off on a fresh feeder (lat/lon still 0) sees reason=mlat_enabled_false
+# rather than reason=latitude_zero. The misconfigured branch only
+# triggers when the user opted INTO MLAT but left MLAT_USER empty —
+# that's the strict-fail-with-exit-64 shape.
+_mlat_classify() {
+    if [[ "$MLAT_ENABLED" != "true" ]]; then printf 'disabled mlat_enabled_false\n'; return; fi
+    if [[ "$LATITUDE" == 0 ]]; then printf 'disabled latitude_zero\n'; return; fi
+    if [[ "$LONGITUDE" == 0 ]]; then printf 'disabled longitude_zero\n'; return; fi
+    if [[ -z "$MLAT_USER" ]]; then printf 'misconfigured mlat_user_empty\n'; return; fi
+    printf 'enabled ok\n'
+}
+
+read -r STATE REASON < <(_mlat_classify)
+STATE_FILE="$(airplanes_path /run/airplanes-mlat/state)"
+mkdir -p "$(dirname "$STATE_FILE")"
+airplanes_write_state "$STATE_FILE" \
+    "service=airplanes-mlat" \
+    "state=$STATE" \
+    "reason=$REASON" \
+    "decided_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "mlat_enabled=${MLAT_ENABLED:-}" \
+    "mlat_user=${MLAT_USER:-}" \
+    "latitude=${LATITUDE:-}" \
+    "longitude=${LONGITUDE:-}" || true
+
+case "$STATE" in
+    disabled)
+        echo MLAT DISABLED
+        sleep 3600
+        exit
+        ;;
+    misconfigured)
+        # Matches RestartPreventExitStatus=64 in the unit file so
+        # systemd marks the unit failed instead of restart-looping.
+        echo "MLAT_ENABLED=true but MLAT_USER is empty; refusing to start mlat-client." >&2
+        exit 64
+        ;;
+    enabled)
+        ;;
+esac
 
 INPUT_IP=$(echo $INPUT | cut -d: -f1)
 INPUT_PORT=$(echo $INPUT | cut -d: -f2)

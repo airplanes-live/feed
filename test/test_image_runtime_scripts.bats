@@ -201,6 +201,244 @@ SH
     grep -q -- '--manual-net-option' "$arg_log"
 }
 
+# --- State-file foundation: daemons publish their config decision ---
+
+# Install state-writer.sh at the daemon's expected runtime path so the
+# defensive `if [[ -r ... ]]` branch sources the real lib. Without this,
+# the daemon falls through to the stub fallback (no-op) and no state
+# file is written.
+install_state_writer_lib() {
+    local root="$1"
+    install -d -m 0755 "$root/usr/local/share/airplanes/lib"
+    install -m 0644 "$BATS_TEST_DIRNAME/../scripts/lib/state-writer.sh" \
+        "$root/usr/local/share/airplanes/lib/state-writer.sh"
+}
+
+# Set up an mlat run with stubbed nc/sleep/mlat-client so the daemon
+# proceeds through its decision and either (a) emits MLAT DISABLED +
+# sleep + exit 0, (b) exits 64, or (c) execs the mlat-client stub.
+setup_mlat_runtime() {
+    local root="$1"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+}
+
+write_feed_env() {
+    local root="$1"; shift
+    mkdir -p "$root/etc/airplanes"
+    : > "$root/etc/airplanes/feed.env"
+    local kv
+    for kv in "$@"; do
+        printf '%s\n' "$kv" >> "$root/etc/airplanes/feed.env"
+    done
+}
+
+@test "airplanes-mlat.sh writes state=enabled,reason=ok with valid config" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" \
+        PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [ -f "$root/run/airplanes-mlat/state" ]
+    grep -qx 'schema_version=1' "$root/run/airplanes-mlat/state"
+    grep -qx 'service=airplanes-mlat' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=ok' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_enabled=true' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_user=alice' "$root/run/airplanes-mlat/state"
+    grep -qx 'latitude=52' "$root/run/airplanes-mlat/state"
+    grep -qx 'longitude=13' "$root/run/airplanes-mlat/state"
+    grep -qE '^decided_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$root/run/airplanes-mlat/state"
+    # mlat-client was invoked.
+    [ -f "$arg_log" ]
+}
+
+@test "airplanes-mlat.sh writes state=disabled,reason=mlat_enabled_false when MLAT_ENABLED=false" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=false' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" \
+        PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=mlat_enabled_false' "$root/run/airplanes-mlat/state"
+    [[ "$output" == *'MLAT DISABLED'* ]]
+    # mlat-client was NOT invoked.
+    [ ! -f "$arg_log" ]
+}
+
+@test "airplanes-mlat.sh: MLAT_ENABLED=false wins over LATITUDE=0 in reason priority" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=false' \
+        'LATITUDE=0' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'reason=mlat_enabled_false' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh writes state=disabled,reason=latitude_zero when LATITUDE=0" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=0' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=latitude_zero' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh writes state=disabled,reason=longitude_zero when LONGITUDE=0" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=0' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'reason=longitude_zero' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh exits 64 with state=misconfigured when MLAT_USER empty + MLAT_ENABLED=true" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER=""' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 64 ]
+    grep -qx 'state=misconfigured' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=mlat_user_empty' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_user=' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh runs without state-writer lib (defensive source falls through to stub)" {
+    # Don't install_state_writer_lib — daemon should still proceed.
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" \
+        PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    # Daemon still invoked mlat-client; no state file because lib was missing.
+    [ -f "$arg_log" ]
+    [ ! -f "$root/run/airplanes-mlat/state" ]
+}
+
+@test "airplanes-feed.sh writes state=enabled,reason=ok with effective config" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/feed-args.log"
+    install_state_writer_lib "$root"
+    write_image_config "$root"
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [ -f "$root/run/airplanes-feed/state" ]
+    grep -qx 'schema_version=1' "$root/run/airplanes-feed/state"
+    grep -qx 'service=airplanes-feed' "$root/run/airplanes-feed/state"
+    grep -qx 'state=enabled' "$root/run/airplanes-feed/state"
+    grep -qx 'reason=ok' "$root/run/airplanes-feed/state"
+    grep -qx 'latitude=52.52000' "$root/run/airplanes-feed/state"
+    grep -qx 'longitude=13.40500' "$root/run/airplanes-feed/state"
+    grep -qx 'input=127.0.0.1:30005' "$root/run/airplanes-feed/state"
+    grep -q -- "feed_bin=$root/usr/bin/airplanes-feeder" "$root/run/airplanes-feed/state"
+}
+
 @test "runtime scripts prefer canonical feed.env over boot config when both exist" {
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/args.log"

@@ -378,6 +378,12 @@ cp "$GIT/uninstall.sh" "$IPATH"
 cp "$GIT"/scripts/*.sh "$IPATH"
 install -d -m 0755 "$IPATH/apl-feed"
 install -m 0644 "$GIT"/scripts/apl-feed/*.sh "$IPATH/apl-feed"
+install -d -m 0755 "$IPATH/lib"
+# Daemon-time runtime libs. Other scripts/lib/ files (install-update-common.sh,
+# update-migrations.sh, update-builds.sh, etc.) are sourced ONLY by update.sh
+# from $GIT/scripts/lib/ at update time and have no business at the daemon's
+# install path; copy selectively rather than wildcard.
+install -m 0644 "$GIT"/scripts/lib/state-writer.sh "$IPATH/lib"
 
 # Historical-ship manifests for the wildcard cp/install above. Each entry is
 # a script we have ever shipped to $IPATH (top-level) or $IPATH/apl-feed/.
@@ -404,10 +410,16 @@ historical_apl_feed_modules=(
     id.sh
     status.sh
 )
+historical_daemon_libs=(
+    state-writer.sh
+)
 
 prune_installed_script_artifacts "$IPATH" "$GIT/scripts" historical_top_level_scripts
 if [[ -d "$IPATH/apl-feed" ]]; then
     prune_installed_script_artifacts "$IPATH/apl-feed" "$GIT/scripts/apl-feed" historical_apl_feed_modules
+fi
+if [[ -d "$IPATH/lib" ]]; then
+    prune_installed_script_artifacts "$IPATH/lib" "$GIT/scripts/lib" historical_daemon_libs
 fi
 mkdir -p "$LOCAL_BIN"
 install -m 0755 "$GIT/scripts/apl-feed.sh" "$LOCAL_BIN/apl-feed"
@@ -477,15 +489,13 @@ elif is_unit_masked airplanes-mlat.service; then
     echo "--------------------"
     sleep 3
 else
-    if [[ "${MLAT_DISABLED}" == "1" ]]; then
-        systemctl disable airplanes-mlat || true
-        systemctl stop airplanes-mlat || true
-    else
-        # Enable airplanes-mlat service
-        systemctl enable airplanes-mlat >> "$LOGFILE" || true
-        # Start or restart airplanes-mlat service
-        systemctl restart airplanes-mlat || true
-    fi
+    # The daemon classifies disabled-by-config and self-disables via
+    # sleep+exit; systemd Restart=always re-runs it. This keeps the
+    # daemon-owned state-file pattern coherent: apl-feed status and the
+    # dashboards trust the daemon's published /run/airplanes-mlat/state
+    # rather than re-deriving the predicate from feed.env.
+    systemctl enable airplanes-mlat >> "$LOGFILE" || true
+    systemctl restart airplanes-mlat || true
 fi
 
 echo 70

@@ -63,3 +63,37 @@ extract_manifest() {
     manifest="$(extract_manifest historical_top_level_scripts)"
     grep -Fxq "second-mlat.sh" <<<"$manifest"
 }
+
+@test "historical_daemon_libs manifest covers every currently shipped daemon-time lib" {
+    # Daemon-time libs (libs sourced by airplanes-feed.sh / airplanes-mlat.sh
+    # at runtime) are installed to $IPATH/lib and pruned via this manifest.
+    # NOT every scripts/lib/*.sh file is daemon-time — install-update-common,
+    # update-migrations, update-builds, claim-registration, service-account,
+    # and systemd-helpers are sourced ONLY by update.sh at update time, NOT
+    # by the daemons. This test asserts every lib that the daemons actually
+    # source (grep'd from the daemon scripts) is present in the manifest.
+    local manifest
+    manifest="$(extract_manifest historical_daemon_libs)"
+    [ -n "$manifest" ]
+    local daemon_lib_names
+    # Discover daemon-time libs by grepping the daemon scripts for source
+    # statements that reference $IPATH/lib/<name>.sh (or its airplanes_path
+    # equivalent /usr/local/share/airplanes/lib/<name>.sh).
+    daemon_lib_names="$(grep -hoE '/usr/local/share/airplanes/lib/[A-Za-z0-9_-]+\.sh' \
+        "$REPO_ROOT/scripts/airplanes-feed.sh" \
+        "$REPO_ROOT/scripts/airplanes-mlat.sh" \
+        2>/dev/null | sed 's|.*/||' | sort -u)"
+    [ -n "$daemon_lib_names" ]
+    while IFS= read -r name; do
+        if ! grep -Fxq "$name" <<<"$manifest"; then
+            echo "scripts/lib/$name is sourced by a daemon but missing from historical_daemon_libs in update.sh" >&2
+            return 1
+        fi
+    done <<<"$daemon_lib_names"
+}
+
+@test "historical_daemon_libs retains state-writer.sh" {
+    local manifest
+    manifest="$(extract_manifest historical_daemon_libs)"
+    grep -Fxq "state-writer.sh" <<<"$manifest"
+}
