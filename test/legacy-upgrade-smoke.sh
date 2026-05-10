@@ -34,7 +34,10 @@ trap on_exit EXIT
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends bash ca-certificates git python3
+# pkg-config is pre-installed on Raspberry Pi OS but absent from debian:13-slim;
+# legacy main's update.sh package list doesn't include it (dev's does), so
+# without this the readsb build fails to link ncurses on the legacy install.
+apt-get install -y --no-install-recommends bash ca-certificates git pkg-config python3
 git config --global --add safe.directory '*'
 
 install -d -m 0755 /usr/local/sbin
@@ -170,13 +173,18 @@ sed -i \
 } >> "$LEGACY_ENV"
 
 # ---- Phase 3: upgrade via candidate ----
-# The on-disk legacy update.sh self-fetches from the candidate repo, replaces
-# itself with the candidate version, and runs the new migration code. This is
-# the realistic upgrade path that real feeders take.
+# Realistic upgrade path. Legacy main's `update.sh` has no working in-place
+# self-replace (its condition `if diff "$GIT/update.sh" "$IPATH/update.sh"`
+# is satisfied only when files are *identical*, which is a no-op). Real
+# feeders upgrade by re-bootstrapping from the latest tree, so we invoke the
+# candidate's update.sh directly. The candidate's first action is to fetch
+# AIRPLANES_FEED_REPO/AIRPLANES_FEED_BRANCH into $IPATH/git and self-replace
+# $IPATH/update.sh — exercising candidate's full install path against the
+# legacy state Phases 1-2 left in place.
 echo "=== Phase 3: upgrade via candidate from $AIRPLANES_CANDIDATE_REPO ==="
 AIRPLANES_FEED_REPO="$AIRPLANES_CANDIDATE_REPO" \
 AIRPLANES_FEED_BRANCH=dev \
-    bash /usr/local/share/airplanes/git/update.sh
+    bash /candidate/update.sh
 
 # ---- Phase 4: enabled-USER assertions ----
 echo "=== Phase 4: assertions (enabled-USER migration) ==="
@@ -272,7 +280,12 @@ sed -i \
     /etc/airplanes/feed.env
 echo 'USER=0' >> /etc/airplanes/feed.env
 
-bash /usr/local/share/airplanes/git/update.sh
+# After Phase 3 self-replace, $IPATH/update.sh is the candidate version.
+# Pass the env vars explicitly so it doesn't fall back to the public main
+# branch (which would self-replace away from candidate).
+AIRPLANES_FEED_REPO="$AIRPLANES_CANDIDATE_REPO" \
+AIRPLANES_FEED_BRANCH=dev \
+    bash /usr/local/share/airplanes/git/update.sh
 
 env -i bash -c '
     set -euo pipefail
