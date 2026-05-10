@@ -9,7 +9,27 @@ if [[ -f "$SCRIPT_DIR/scripts/lib/install-update-common.sh" ]]; then
 else
     AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
     AIRPLANES_FEED_REPO="${AIRPLANES_FEED_REPO:-https://github.com/airplanes-live/feed.git}"
-    AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-main}"
+
+    # Release CI renders this asset with __FEED_REF__ substituted for the
+    # tag being released, so a curl of releases/<tag>/download/install.sh
+    # installs that exact tag. The source-tree copy on feed/dev or feed/main
+    # leaves the placeholder literal; AIRPLANES_RELEASE_REF resets to empty
+    # in that case and the fallback chain lands on "main" — same behavior as
+    # before this template marker existed.
+    #
+    # An explicit AIRPLANES_FEED_BRANCH env var still wins (image-build use,
+    # operator overrides). Source-clone use sources install-update-common.sh,
+    # which defines airplanes_resolve_feed_branch for stable-channel tag
+    # resolution; the inline fallback doesn't do channel resolution and
+    # provides a no-op stub so call sites work either way.
+    AIRPLANES_RELEASE_REF='__FEED_REF__'
+    if [[ "$AIRPLANES_RELEASE_REF" == "__FEED_REF__" ]]; then
+        AIRPLANES_RELEASE_REF=""
+    fi
+    AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-${AIRPLANES_RELEASE_REF:-main}}"
+    unset AIRPLANES_RELEASE_REF
+
+    airplanes_resolve_feed_branch() { :; }
 
     airplanes_path() {
         local path="$1"
@@ -104,6 +124,12 @@ airplanes_init_paths
 airplanes_require_root
 mkdir -p "$IPATH"
 airplanes_install_bootstrap_deps
+
+# Resolve the "stable" channel sentinel into a concrete tag now that git is
+# available. No-op in inline-fallback mode (the stub returns immediately) and
+# no-op in lib-sourced mode when AIRPLANES_FEED_BRANCH is already concrete.
+airplanes_resolve_feed_branch
+
 getGIT "$AIRPLANES_FEED_REPO" "$AIRPLANES_FEED_BRANCH" "$GIT"
 
 cd "$GIT"
