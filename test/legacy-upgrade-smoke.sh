@@ -131,11 +131,23 @@ export APL_FEED_SERVER_URL="http://127.0.0.1:18080"
 export APL_FEED_MAX_RETRY_TIME=5
 export AIRPLANES_PACKAGE_MANAGER=apt
 
-# ---- Phase 1: install legacy (origin/main HEAD) ----
+# ---- Phase 1: install legacy ----
+# Legacy main's install.sh AND update.sh both hardcode
+# REPO="https://github.com/airplanes-live/feed.git". A literal
+# `bash /legacy/install.sh` would re-fetch *public* main into $IPATH/git,
+# silently bypassing the SHA pinning of the /legacy mount. Mimic install.sh
+# (which is just mkdir + apt + clone + setup.sh) but seed $IPATH/git from
+# the mount, then redirect the in-update.sh re-fetch at the same mount so
+# the pin holds end-to-end.
 echo "=== Phase 1: install legacy from $AIRPLANES_LEGACY_REPO ==="
-AIRPLANES_FEED_REPO="$AIRPLANES_LEGACY_REPO" \
-AIRPLANES_FEED_BRANCH=main \
-    bash /legacy/install.sh
+mkdir -p /usr/local/share/airplanes
+git clone --branch main "$AIRPLANES_LEGACY_REPO" /usr/local/share/airplanes/git
+
+sed -i \
+    -e 's|^REPO=".*airplanes-live/feed\.git"$|REPO="'"$AIRPLANES_LEGACY_REPO"'"|' \
+    /usr/local/share/airplanes/git/update.sh
+
+bash /usr/local/share/airplanes/git/setup.sh
 
 # Post-install sanity. Only assert artifacts that legacy main is guaranteed
 # to produce — apl-feed CLI, feed.env-only layout, etc. are dev-branch
