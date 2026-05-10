@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${AIRPLANES_LEGACY_REPO:?AIRPLANES_LEGACY_REPO is required}"
+: "${AIRPLANES_SOURCE_REPO:?AIRPLANES_SOURCE_REPO is required}"
 : "${AIRPLANES_CANDIDATE_REPO:?AIRPLANES_CANDIDATE_REPO is required}"
 
-DIAG_DIR=/tmp/legacy-upgrade-diag
+DIAG_DIR=/tmp/upgrade-smoke-diag
 mkdir -p "$DIAG_DIR"
 MOCK_PID=
 
@@ -35,8 +35,8 @@ trap on_exit EXIT
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 # pkg-config is pre-installed on Raspberry Pi OS but absent from debian:13-slim;
-# legacy main's update.sh package list doesn't include it (dev's does), so
-# without this the readsb build fails to link ncurses on the legacy install.
+# main's update.sh package list doesn't include it (dev's does), so without
+# this the readsb build fails to link ncurses during the source install.
 apt-get install -y --no-install-recommends bash ca-certificates git pkg-config python3
 git config --global --add safe.directory '*'
 
@@ -131,36 +131,36 @@ export APL_FEED_SERVER_URL="http://127.0.0.1:18080"
 export APL_FEED_MAX_RETRY_TIME=5
 export AIRPLANES_PACKAGE_MANAGER=apt
 
-# ---- Phase 1: install legacy ----
-# Legacy main's install.sh AND update.sh both hardcode
+# ---- Phase 1: install source ----
+# main's install.sh AND update.sh both hardcode
 # REPO="https://github.com/airplanes-live/feed.git". A literal
-# `bash /legacy/install.sh` would re-fetch *public* main into $IPATH/git,
-# silently bypassing the SHA pinning of the /legacy mount. Mimic install.sh
+# `bash /source/install.sh` would re-fetch *public* main into $IPATH/git,
+# silently bypassing the SHA pinning of the /source mount. Mimic install.sh
 # (which is just mkdir + apt + clone + setup.sh) but seed $IPATH/git from
 # the mount, then redirect the in-update.sh re-fetch at the same mount so
 # the pin holds end-to-end.
-echo "=== Phase 1: install legacy from $AIRPLANES_LEGACY_REPO ==="
+echo "=== Phase 1: install source from $AIRPLANES_SOURCE_REPO ==="
 mkdir -p /usr/local/share/airplanes
-git clone --branch main "$AIRPLANES_LEGACY_REPO" /usr/local/share/airplanes/git
+git clone --branch main "$AIRPLANES_SOURCE_REPO" /usr/local/share/airplanes/git
 
 sed -i \
-    -e 's|^REPO=".*airplanes-live/feed\.git"$|REPO="'"$AIRPLANES_LEGACY_REPO"'"|' \
+    -e 's|^REPO=".*airplanes-live/feed\.git"$|REPO="'"$AIRPLANES_SOURCE_REPO"'"|' \
     /usr/local/share/airplanes/git/update.sh
 
 bash /usr/local/share/airplanes/git/setup.sh
 
-# Post-install sanity. Only assert artifacts that legacy main is guaranteed
+# Post-install sanity. Only assert artifacts the source install is guaranteed
 # to produce — apl-feed CLI, feed.env-only layout, etc. are dev-branch
-# additions that predate this test. Phase 2's detect_legacy_env picks the
-# right config file regardless of which shape legacy produced.
+# additions that predate this test. Phase 2's detect_source_env picks the
+# right config file regardless of which shape the source produced.
 test -d /usr/local/share/airplanes/git
 
-# ---- Phase 2: seed legacy USER= state ----
-# Force the migration code path: drop any MLAT_* keys the legacy install may
+# ---- Phase 2: seed USER= state ----
+# Force the migration code path: drop any MLAT_* keys the source install may
 # have written, leave a single legacy USER=. Detect whichever config file the
 # install actually produced — modern main writes /etc/airplanes/feed.env;
 # ancient main writes /etc/default/airplanes as a real file.
-detect_legacy_env() {
+detect_source_env() {
     if [[ -f /etc/airplanes/feed.env && ! -L /etc/airplanes/feed.env ]]; then
         echo /etc/airplanes/feed.env; return
     fi
@@ -169,32 +169,32 @@ detect_legacy_env() {
     fi
     echo /etc/airplanes/feed.env
 }
-LEGACY_ENV="$(detect_legacy_env)"
-echo "=== Phase 2: seed USER=ci-legacy-feeder into $LEGACY_ENV ==="
-mkdir -p "$(dirname "$LEGACY_ENV")"
-touch "$LEGACY_ENV"
+SOURCE_ENV="$(detect_source_env)"
+echo "=== Phase 2: seed USER=ci-source-feeder into $SOURCE_ENV ==="
+mkdir -p "$(dirname "$SOURCE_ENV")"
+touch "$SOURCE_ENV"
 sed -i \
     -e '/^MLAT_USER=/d' \
     -e '/^MLAT_ENABLED=/d' \
     -e '/^USER=/d' \
     -e '/^LATITUDE=/d' \
     -e '/^LONGITUDE=/d' \
-    "$LEGACY_ENV"
+    "$SOURCE_ENV"
 {
-    echo 'USER=ci-legacy-feeder'
+    echo 'USER=ci-source-feeder'
     echo 'LATITUDE=52.52000'
     echo 'LONGITUDE=13.40500'
-} >> "$LEGACY_ENV"
+} >> "$SOURCE_ENV"
 
 # ---- Phase 3: upgrade via candidate ----
-# Realistic upgrade path. Legacy main's `update.sh` has no working in-place
+# Realistic upgrade path. main's `update.sh` has no working in-place
 # self-replace (its condition `if diff "$GIT/update.sh" "$IPATH/update.sh"`
 # is satisfied only when files are *identical*, which is a no-op). Real
 # feeders upgrade by re-bootstrapping from the latest tree, so we invoke the
 # candidate's update.sh directly. The candidate's first action is to fetch
 # AIRPLANES_FEED_REPO/AIRPLANES_FEED_BRANCH into $IPATH/git and self-replace
 # $IPATH/update.sh — exercising candidate's full install path against the
-# legacy state Phases 1-2 left in place.
+# source state Phases 1-2 left in place.
 echo "=== Phase 3: upgrade via candidate from $AIRPLANES_CANDIDATE_REPO ==="
 AIRPLANES_FEED_REPO="$AIRPLANES_CANDIDATE_REPO" \
 AIRPLANES_FEED_BRANCH=dev \
@@ -210,8 +210,8 @@ env -i bash -c '
     set -euo pipefail
     # shellcheck disable=SC1091
     source /etc/airplanes/feed.env
-    [[ "${MLAT_USER:-}"    == "ci-legacy-feeder" ]] || { echo "FAIL: MLAT_USER=${MLAT_USER:-<unset>}" >&2; exit 1; }
-    [[ "${MLAT_ENABLED:-}" == "true" ]]              || { echo "FAIL: MLAT_ENABLED=${MLAT_ENABLED:-<unset>}" >&2; exit 1; }
+    [[ "${MLAT_USER:-}"    == "ci-source-feeder" ]] || { echo "FAIL: MLAT_USER=${MLAT_USER:-<unset>}" >&2; exit 1; }
+    [[ "${MLAT_ENABLED:-}" == "true" ]]             || { echo "FAIL: MLAT_ENABLED=${MLAT_ENABLED:-<unset>}" >&2; exit 1; }
 '
 
 [[ "$(grep -c '^USER='        /etc/airplanes/feed.env || true)" -eq 0 ]] \
@@ -311,4 +311,4 @@ env -i bash -c '
         || { echo "FAIL: USER=0 should yield empty MLAT_USER, got ${MLAT_USER}" >&2; exit 1; }
 '
 
-echo "=== Legacy upgrade smoke OK ==="
+echo "=== Upgrade smoke OK ==="

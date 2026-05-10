@@ -203,37 +203,38 @@ jobs:
           name: update-regression-artifacts
           path: ${{ runner.temp }}/update-regression
 
-  legacy-upgrade-smoke:
-    name: legacy script upgrade smoke (${{ matrix.legacy.label }})
+  upgrade-smoke:
+    name: script upgrade smoke (${{ matrix.source.label }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        legacy:
-          # Tracking-main axis: catches regressions in the "current main →
-          # candidate" upgrade path as main moves. Becomes near-identity
-          # to the candidate after a dev→main merge.
-          - label: tracking main
+        source:
+          # `stable` axis tracks origin/main HEAD — the currently-released
+          # script-installed feeders. Catches regressions in the
+          # "main → candidate" upgrade path as main moves.
+          - label: stable
             ref: main
-          # Pinned pre-schema-split axis: hard regression coverage for
-          # feeders installed before MLAT_USER / MLAT_ENABLED split landed.
-          # Update this SHA only when retiring legacy coverage deliberately.
-          - label: pinned pre-schema-split
+          # `legacy` axis pins a pre-schema-split commit so historical
+          # regression coverage survives the dev→main merge that introduces
+          # the MLAT_USER / MLAT_ENABLED split. Update only when retiring
+          # the coverage deliberately.
+          - label: legacy
             ref: 9318d02efd70488f831cbcb84ca3ec4cb9cc9ece
     steps:
-      - name: Checkout legacy (${{ matrix.legacy.label }})
+      - name: Checkout source (${{ matrix.source.label }})
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ matrix.legacy.ref }}
-          path: legacy
+          ref: ${{ matrix.source.ref }}
+          path: source
           persist-credentials: false
 
-      - name: Pin legacy branch label to main
+      - name: Pin source branch label to main
         run: |
-          current="$(git -C legacy rev-parse --abbrev-ref HEAD)"
+          current="$(git -C source rev-parse --abbrev-ref HEAD)"
           if [[ "$current" != "main" ]]; then
-            git -C legacy branch -f main HEAD
+            git -C source branch -f main HEAD
           fi
 
       - name: Checkout candidate (PR / branch HEAD)
@@ -253,22 +254,22 @@ jobs:
           fi
 
       - name: Prepare diagnostics directory
-        run: mkdir -p "${{ runner.temp }}/legacy-upgrade-smoke"
+        run: mkdir -p "${{ runner.temp }}/upgrade-smoke"
 
-      - name: Run legacy upgrade smoke
+      - name: Run upgrade smoke
         run: |
           docker run --rm \
-            -e AIRPLANES_LEGACY_REPO=file:///legacy \
+            -e AIRPLANES_SOURCE_REPO=file:///source \
             -e AIRPLANES_CANDIDATE_REPO=file:///candidate \
-            -v "$PWD/legacy:/legacy:ro" \
+            -v "$PWD/source:/source:ro" \
             -v "$PWD/candidate:/candidate:ro" \
-            -v "${{ runner.temp }}/legacy-upgrade-smoke:/tmp/legacy-upgrade-diag" \
+            -v "${{ runner.temp }}/upgrade-smoke:/tmp/upgrade-smoke-diag" \
             debian:13-slim \
-            bash /candidate/test/legacy-upgrade-smoke.sh
+            bash /candidate/test/upgrade-smoke.sh
 
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: legacy-upgrade-smoke-diagnostics
-          path: ${{ runner.temp }}/legacy-upgrade-smoke
+          name: upgrade-smoke-diagnostics-${{ matrix.source.label }}
+          path: ${{ runner.temp }}/upgrade-smoke
