@@ -261,3 +261,58 @@ run_configure_env() {
     grep -q 'MLAT_USER="Anonymous"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
 }
+
+@test "configure.sh: interactive flow defaults MLAT_PRIVATE=false" {
+    run_configure $'ci-feeder\n52.52000\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    grep -qx 'MLAT_PRIVATE=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    # Comment from the legacy flow that taught operators to hand-edit
+    # PRIVACY="--privacy" must not reappear.
+    ! grep -q 'add --privacy between the quotes' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -q '^PRIVACY=' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh: noninteractive AIRPLANES_MLAT_PRIVATE=true honored" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="alice" \
+        AIRPLANES_MLAT_PRIVATE="true" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh: noninteractive AIRPLANES_MLAT_PRIVATE defaults to false" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="alice" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'MLAT_PRIVATE=false' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh: noninteractive AIRPLANES_MLAT_PRIVATE rejects bogus value" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="alice" \
+        AIRPLANES_MLAT_PRIVATE="probably" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "AIRPLANES_MLAT_PRIVATE must be 'true' or 'false'" ]]
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
+}
+
+@test "configure.sh: AIRPLANES_MLAT_PRIVATE alone triggers non-interactive mode" {
+    run_configure_env AIRPLANES_MLAT_PRIVATE="true"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Missing required non-interactive configure value: AIRPLANES_LATITUDE" ]]
+    [ ! -e "$WHIPTAIL_LOG" ]
+}

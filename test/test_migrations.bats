@@ -321,3 +321,194 @@ EOF
 # feeder names are sanitized in configure.sh to letters/digits/underscores/
 # dashes/spaces (no backslashes, no quotes), so this corner only matters for
 # hand-edited feed.env files. Documented here, not enforced.
+
+# ---------------------------------------------------------------------------
+# migrate_privacy_to_mlat_private
+# ---------------------------------------------------------------------------
+
+@test "migrate_privacy_to_mlat_private: PRIVACY=--privacy → MLAT_PRIVATE=true" {
+    cat > "$FEED_ENV" <<'EOF'
+INPUT="127.0.0.1:30005"
+PRIVACY="--privacy"
+LATITUDE="52.5"
+EOF
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=true' "$FEED_ENV"
+    ! grep -q '^PRIVACY=' "$FEED_ENV"
+    grep -q '^INPUT="127.0.0.1:30005"$' "$FEED_ENV"
+    grep -q '^LATITUDE="52.5"$' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: PRIVACY=\"\" → MLAT_PRIVATE=false" {
+    cat > "$FEED_ENV" <<'EOF'
+PRIVACY=""
+EOF
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=false' "$FEED_ENV"
+    ! grep -q '^PRIVACY=' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: unquoted PRIVACY=--privacy → MLAT_PRIVATE=true" {
+    printf 'PRIVACY=--privacy\n' > "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=true' "$FEED_ENV"
+    ! grep -q '^PRIVACY=' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: PRIVACY with surrounding whitespace tolerated" {
+    printf 'PRIVACY=" --privacy "\n' > "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=true' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: CRLF line ending tolerated" {
+    printf 'PRIVACY="--privacy"\r\n' > "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=true' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: PRIVACY with garbage value → MLAT_PRIVATE=false" {
+    printf 'PRIVACY="--something-else"\n' > "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=false' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: both keys absent → MLAT_PRIVATE=false appended" {
+    cat > "$FEED_ENV" <<'EOF'
+INPUT="127.0.0.1:30005"
+LATITUDE="52.5"
+EOF
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=false' "$FEED_ENV"
+    grep -q '^INPUT="127.0.0.1:30005"$' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: only MLAT_PRIVATE present → no-op" {
+    cat > "$FEED_ENV" <<'EOF'
+INPUT="127.0.0.1:30005"
+MLAT_PRIVATE=true
+LATITUDE="52.5"
+EOF
+    local snapshot
+    snapshot="$(cat "$FEED_ENV")"
+
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+    [ "$(cat "$FEED_ENV")" = "$snapshot" ]
+}
+
+@test "migrate_privacy_to_mlat_private: both keys present → canonical wins, PRIVACY stripped" {
+    cat > "$FEED_ENV" <<'EOF'
+INPUT="127.0.0.1:30005"
+MLAT_PRIVATE=false
+PRIVACY="--privacy"
+LATITUDE="52.5"
+EOF
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=false' "$FEED_ENV"
+    ! grep -q '^PRIVACY=' "$FEED_ENV"
+    [ "$(grep -c '^MLAT_PRIVATE=' "$FEED_ENV")" -eq 1 ]
+}
+
+@test "migrate_privacy_to_mlat_private: idempotent — second call is a no-op" {
+    printf 'PRIVACY="--privacy"\n' > "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+    local snapshot
+    snapshot="$(cat "$FEED_ENV")"
+
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+    [ "$(cat "$FEED_ENV")" = "$snapshot" ]
+}
+
+@test "migrate_privacy_to_mlat_private: writes backup at .pre-privacy-split when modifying" {
+    printf 'PRIVACY="--privacy"\n' > "$FEED_ENV"
+    [ ! -f "$FEED_ENV.pre-privacy-split" ]
+
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+    [ -f "$FEED_ENV.pre-privacy-split" ]
+    grep -q '^PRIVACY="--privacy"$' "$FEED_ENV.pre-privacy-split"
+}
+
+@test "migrate_privacy_to_mlat_private: backup is NEVER overwritten on subsequent calls" {
+    printf 'PRIVACY="--privacy"\n' > "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    local backup_snapshot
+    backup_snapshot="$(cat "$FEED_ENV.pre-privacy-split")"
+
+    # Re-introduce PRIVACY and re-migrate.
+    printf 'PRIVACY=""\n' >> "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+    [ "$(cat "$FEED_ENV.pre-privacy-split")" = "$backup_snapshot" ]
+}
+
+@test "migrate_privacy_to_mlat_private: feed.env missing → no-op (no error)" {
+    [ ! -f "$FEED_ENV" ]
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+    [ ! -f "$FEED_ENV" ]
+}
+
+@test "migrate_privacy_to_mlat_private: preserves all non-privacy keys verbatim" {
+    cat > "$FEED_ENV" <<'EOF'
+INPUT="127.0.0.1:30005"
+MLAT_USER="alice"
+MLAT_ENABLED=true
+PRIVACY="--privacy"
+LATITUDE="52.5"
+LONGITUDE="13.4"
+ALTITUDE="35m"
+NET_OPTIONS="--net-heartbeat 60"
+SOME_USER_CUSTOM_KEY="leave-me-alone"
+EOF
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    for line in \
+        'INPUT="127.0.0.1:30005"' \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE="52.5"' \
+        'LONGITUDE="13.4"' \
+        'ALTITUDE="35m"' \
+        'NET_OPTIONS="--net-heartbeat 60"' \
+        'SOME_USER_CUSTOM_KEY="leave-me-alone"' \
+    ; do
+        grep -qF "$line" "$FEED_ENV"
+    done
+}
+
+@test "migrate_privacy_to_mlat_private: legacy PRIVACY reappearing post-migration is stripped" {
+    # Simulates a legacy webconfig writing PRIVACY= via the symlink while
+    # MLAT_PRIVATE is already in place. Conflict rule: canonical wins, legacy
+    # stripped. (Diverges from migrate_user_to_mlat_split's re-derivation
+    # because no observed legacy PRIVACY writer needs precedence.)
+    cat > "$FEED_ENV" <<'EOF'
+MLAT_PRIVATE=false
+PRIVACY="--privacy"
+EOF
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=false' "$FEED_ENV"
+    ! grep -q '^PRIVACY=' "$FEED_ENV"
+}
+
+@test "run_config_file_migrations: chains migrate_privacy_to_mlat_private after migrate_user_to_mlat_split" {
+    cat > "$FEED_ENV" <<'EOF'
+USER="alice"
+PRIVACY="--privacy"
+LATITUDE="52.5"
+EOF
+    run_config_file_migrations "$FEED_ENV"
+
+    grep -qx 'MLAT_USER="alice"' "$FEED_ENV"
+    grep -qx 'MLAT_ENABLED=true' "$FEED_ENV"
+    grep -qx 'MLAT_PRIVATE=true' "$FEED_ENV"
+    ! grep -q '^USER=' "$FEED_ENV"
+    ! grep -q '^PRIVACY=' "$FEED_ENV"
+}

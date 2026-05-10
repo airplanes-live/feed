@@ -357,15 +357,18 @@ source "$GIT/scripts/lib/service-account.sh"
 source "$GIT/scripts/lib/update-builds.sh"
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
-    # Unset USER before sourcing so a process-environment $USER (e.g. the
-    # systemd User= or the login shell) can't bleed into the legacy-USER
-    # detection below. Same precaution applies in the manual-install branch.
-    unset USER MLAT_USER MLAT_ENABLED
+    # Unset USER (and the privacy keys) before sourcing so a process-
+    # environment value (systemd User= or login-shell $USER, or a stray
+    # MLAT_PRIVATE from the orchestrator's env) can't bleed into the
+    # legacy-USER detection or the privacy resolution below. Same
+    # precaution applies in the manual-install branch.
+    unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER
     if [[ -f "$FEED_ENV" ]]; then
-        # Migrate legacy USER if present before sourcing so the shell sees
-        # the new schema directly. No-op when feed.env was written by a
-        # post-split writer (configure.sh, image first-run, new webconfig).
+        # Migrate legacy keys before sourcing so the shell sees the new
+        # schema directly. No-op when feed.env was written by a post-split
+        # writer (configure.sh, image first-run, new webconfig).
         migrate_user_to_mlat_split "$FEED_ENV"
+        migrate_privacy_to_mlat_private "$FEED_ENV"
         source "$FEED_ENV"
     else
         source "$BOOT_CONFIG"
@@ -395,11 +398,24 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
     JSON_OPTIONS="${JSON_OPTIONS:-"--json-location-accuracy 2"}"
     MLAT_USER="${MLAT_USER-}"
     MLAT_ENABLED="${MLAT_ENABLED:-true}"
+    # Legacy MLAT_MARKER read fallback. PHP webconfig still writes
+    # MLAT_MARKER (inverted polarity, "no" = privacy ON) to
+    # /boot/airplanes-config.txt. When this branch sources BOOT_CONFIG
+    # because feed.env is absent, the migrator never saw the key. Without
+    # this fallback, a legacy-image feeder updating to the new schema
+    # would silently lose its stored privacy preference.
+    if [[ ! -v MLAT_PRIVATE && -v MLAT_MARKER ]]; then
+        case "$MLAT_MARKER" in
+            no) MLAT_PRIVATE="true" ;;
+            *)  MLAT_PRIVATE="false" ;;
+        esac
+    fi
+    MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 else
     prepare_legacy_feed_env_migration "$LEGACY_FEED_ENV" "$FEED_ENV" "$ETC_AIRPLANES"
     run_config_file_migrations "$FEED_ENV"
 
-    unset USER MLAT_USER MLAT_ENABLED
+    unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER
     if [[ -f "$FEED_ENV" ]]; then
         source "$FEED_ENV"
         migrate_add_uat_input_default "$FEED_ENV"
@@ -408,6 +424,13 @@ else
     fi
     MLAT_USER="${MLAT_USER-}"
     MLAT_ENABLED="${MLAT_ENABLED:-true}"
+    if [[ ! -v MLAT_PRIVATE && -v MLAT_MARKER ]]; then
+        case "$MLAT_MARKER" in
+            no) MLAT_PRIVATE="true" ;;
+            *)  MLAT_PRIVATE="false" ;;
+        esac
+    fi
+    MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 fi
 if [[ -z $INPUT ]] || [[ -z $INPUT_TYPE ]] \
     || [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]] \

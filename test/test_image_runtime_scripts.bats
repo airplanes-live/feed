@@ -26,7 +26,7 @@ USER="image-feeder"
 MLAT_USER="image-feeder"
 MLAT_ENABLED=true
 MODEAC="yes"
-MLAT_MARKER="no"
+MLAT_PRIVATE=true
 EOF
     cat > "$root/boot/airplanes-env" <<'EOF'
 INPUT="127.0.0.1:30005"
@@ -73,7 +73,7 @@ SH
     fi
 }
 
-@test "airplanes-mlat.sh reads image config and applies privacy marker" {
+@test "airplanes-mlat.sh: image-side MLAT_PRIVATE=true → mlat-client gets --privacy" {
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
@@ -105,14 +105,259 @@ SH
     grep -q -- "--uuid-file $root/etc/airplanes/feeder-id" "$arg_log"
 }
 
-@test "airplanes-mlat.sh lets MLAT_MARKER enable the marker" {
+@test "airplanes-mlat.sh: image-side MLAT_PRIVATE=false → no --privacy" {
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
     write_image_config "$root"
-    sed -i -e 's/MLAT_MARKER="no"/MLAT_MARKER="yes"/' "$root/boot/airplanes-config.txt"
-    printf 'PRIVACY="--privacy"\n' >> "$root/boot/airplanes-env"
+    sed -i -e 's/MLAT_PRIVATE=true/MLAT_PRIVATE=false/' "$root/boot/airplanes-config.txt"
     mkdir -p "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    if grep -q -- '--privacy' "$arg_log"; then
+        return 1
+    fi
+}
+
+# Legacy PRIVACY in-memory fallback. Pins the only deployed code path
+# from the pre-rename schema: a manual install whose feed.env still
+# carries PRIVACY="--privacy" (inherited from the original ADS-B
+# Exchange installer or previously hand-edited) gets the --privacy
+# flag passed through even before update.sh runs the migration.
+@test "airplanes-mlat.sh: legacy PRIVACY=--privacy with no MLAT_PRIVATE → fallback derives true" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52"
+LONGITUDE="13"
+ALTITUDE="35m"
+MLAT_USER="legacy-feeder"
+MLAT_ENABLED=true
+PRIVACY="--privacy"
+MLATSERVER="feed.airplanes.live:31090"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--privacy' "$arg_log"
+}
+
+@test "airplanes-mlat.sh: legacy PRIVACY=\"\" with no MLAT_PRIVATE → fallback derives false" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52"
+LONGITUDE="13"
+ALTITUDE="35m"
+MLAT_USER="legacy-feeder"
+MLAT_ENABLED=true
+PRIVACY=""
+MLATSERVER="feed.airplanes.live:31090"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    if grep -q -- '--privacy' "$arg_log"; then
+        return 1
+    fi
+}
+
+# Conflict rule: when both the canonical MLAT_PRIVATE and the legacy
+# PRIVACY are present, canonical wins. The legacy fallback only fires
+# when MLAT_PRIVATE is unset.
+@test "airplanes-mlat.sh: MLAT_PRIVATE=false beats legacy PRIVACY=--privacy" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52"
+LONGITUDE="13"
+ALTITUDE="35m"
+MLAT_USER="alice"
+MLAT_ENABLED=true
+PRIVACY="--privacy"
+MLAT_PRIVATE=false
+MLATSERVER="feed.airplanes.live:31090"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    if grep -q -- '--privacy' "$arg_log"; then
+        return 1
+    fi
+}
+
+# Legacy MLAT_MARKER in-memory fallback. PHP webconfig's still-shipping
+# yes/no dropdown writes MLAT_MARKER to /boot/airplanes-config.txt
+# (inverted polarity — "no" means privacy ON). Without this fallback a
+# feeder whose user toggled privacy in legacy webconfig would silently
+# lose privacy on first daemon start under the new schema.
+@test "airplanes-mlat.sh: legacy MLAT_MARKER=no with no MLAT_PRIVATE → fallback derives true" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52"
+LONGITUDE="13"
+ALTITUDE="35m"
+MLAT_USER="legacy-feeder"
+MLAT_ENABLED=true
+MLAT_MARKER="no"
+MLATSERVER="feed.airplanes.live:31090"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--privacy' "$arg_log"
+}
+
+@test "airplanes-mlat.sh: legacy MLAT_MARKER=yes with no MLAT_PRIVATE → fallback derives false" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52"
+LONGITUDE="13"
+ALTITUDE="35m"
+MLAT_USER="legacy-feeder"
+MLAT_ENABLED=true
+MLAT_MARKER="yes"
+MLATSERVER="feed.airplanes.live:31090"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    if grep -q -- '--privacy' "$arg_log"; then
+        return 1
+    fi
+}
+
+# Conflict rule: canonical MLAT_PRIVATE always wins over legacy MLAT_MARKER.
+@test "airplanes-mlat.sh: MLAT_PRIVATE=false beats legacy MLAT_MARKER=no" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52"
+LONGITUDE="13"
+ALTITUDE="35m"
+MLAT_USER="alice"
+MLAT_ENABLED=true
+MLAT_MARKER="no"
+MLAT_PRIVATE=false
+MLATSERVER="feed.airplanes.live:31090"
+EOF
     cat > "$stub_bin/nc" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -418,6 +663,71 @@ EOF
     [[ "$output" == *"Update Webconfig"* ]]
     # State file is not written: we exit before classifier runs.
     [ ! -f "$root/run/airplanes-mlat/state" ]
+}
+
+@test "airplanes-mlat.sh exits 64 with reason=mlat_private_invalid for hand-edited bad MLAT_PRIVATE" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'MLAT_PRIVATE=yes' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 64 ]
+    grep -qx 'state=misconfigured' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=mlat_private_invalid' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_private=yes' "$root/run/airplanes-mlat/state"
+    [[ "$output" == *"MLAT_PRIVATE must be 'true' or 'false'"* ]]
+}
+
+@test "airplanes-mlat.sh state file publishes mlat_private=true when MLAT_PRIVATE=true" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'MLAT_PRIVATE=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'mlat_private=true' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh state file publishes mlat_private=false when MLAT_PRIVATE absent (runtime default)" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'mlat_private=false' "$root/run/airplanes-mlat/state"
 }
 
 @test "airplanes-mlat.sh runs without state-writer lib (defensive source falls through to stub)" {
