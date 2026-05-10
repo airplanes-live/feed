@@ -123,10 +123,6 @@ jobs:
             bash /feed/test/image-rootfs-smoke.sh
 
   mounted-image-smoke-legacy:
-    # Renamed from `image-release-rootfs-smoke`. Branch protection rules on
-    # airplanes-live/feed that previously required `image release rootfs smoke`
-    # must be migrated to require `mounted image smoke (legacy)` before this
-    # change merges, otherwise future PRs hang on a stuck-pending old check.
     name: mounted image smoke (legacy)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
