@@ -93,11 +93,23 @@ jobs:
           PUSH_REF: ${{ github.ref_name }}
           DISPATCH_REF: ${{ inputs.validation_ref }}
         run: |
+          # Push tags are pre-validated by the validate-tag job. Dispatch
+          # input is operator-supplied and must be sanity-checked before it
+          # flows into the rendered install.sh as a shell string literal —
+          # otherwise a malicious dispatch could inject quote characters and
+          # produce a rendered asset that executes attacker-supplied code.
+          # Allow: tag-shaped strings (v0.0.0-validation, v0.1.0-test, etc.)
+          # plus the strict semver shape. Reject anything else.
           if [[ "$EVENT_NAME" == "push" ]]; then
-            echo "ref=$PUSH_REF" >> "$GITHUB_OUTPUT"
+            REF="$PUSH_REF"
           else
-            echo "ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
+            REF="$DISPATCH_REF"
+            if ! [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+              echo "::error::validation_ref '$REF' must match v[0-9]+.[0-9]+.[0-9]+ optionally followed by -[alnum.]+"
+              exit 1
+            fi
           fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
 
       - name: Render dist/install.sh
         env:
@@ -211,7 +223,7 @@ jobs:
         working-directory: dist
         run: sha256sum -c SHA256SUMS
 
-      - name: Create draft release with assets
+      - name: Create or update draft release with assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
@@ -220,13 +232,26 @@ jobs:
           # release content after publish, so create as draft, attach assets,
           # then flip to published. This avoids a window where the release is
           # public but assets aren't all uploaded yet.
-          gh release create "$TAG_NAME" \
-            --draft \
-            --title "$TAG_NAME" \
-            --generate-notes \
-            dist/install.sh \
-            dist/update.sh \
-            dist/SHA256SUMS
+          #
+          # Re-entrant: if a previous job partially succeeded (draft created
+          # but asset upload failed), a re-run finds the existing draft and
+          # uses `--clobber` on upload to overwrite stale assets.
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Draft release $TAG_NAME exists; uploading assets with --clobber"
+            gh release upload "$TAG_NAME" \
+              dist/install.sh \
+              dist/update.sh \
+              dist/SHA256SUMS \
+              --clobber
+          else
+            gh release create "$TAG_NAME" \
+              --draft \
+              --title "$TAG_NAME" \
+              --generate-notes \
+              dist/install.sh \
+              dist/update.sh \
+              dist/SHA256SUMS
+          fi
 
       - name: Publish (flip draft to released)
         env:

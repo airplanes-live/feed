@@ -51,7 +51,15 @@ airplanes_resolve_feed_branch() {
     local resolved rc=0
     resolved="$(airplanes_resolve_latest_stable_tag "$AIRPLANES_FEED_REPO")" || rc=$?
     case $rc in
-        0) AIRPLANES_FEED_BRANCH="$resolved" ;;
+        0)
+            # Export so the resolved tag survives update.sh's self-replace
+            # re-exec. Without this, a default-stable install re-resolves on
+            # every self-replace and could install a different tag if a new
+            # release lands mid-update (or thrash on a transient ls-remote
+            # failure between invocations).
+            AIRPLANES_FEED_BRANCH="$resolved"
+            export AIRPLANES_FEED_BRANCH
+            ;;
         1)
             echo "ERROR: stable release channel selected but no v[MAJOR].[MINOR].[PATCH] tags exist at $AIRPLANES_FEED_REPO." >&2
             echo "       Keeping current install unchanged." >&2

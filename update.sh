@@ -74,7 +74,10 @@ else
         local resolved rc=0
         resolved="$(airplanes_resolve_latest_stable_tag "$AIRPLANES_FEED_REPO")" || rc=$?
         case $rc in
-            0) AIRPLANES_FEED_BRANCH="$resolved" ;;
+            0)
+                AIRPLANES_FEED_BRANCH="$resolved"
+                export AIRPLANES_FEED_BRANCH
+                ;;
             1)
                 echo "ERROR: stable release channel selected but no v[MAJOR].[MINOR].[PATCH] tags exist at $AIRPLANES_FEED_REPO." >&2
                 echo "       Keeping current install unchanged." >&2
