@@ -199,10 +199,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AIRPLANES_IMAGE_RELEASE_REPO: airplanes-live/image
           AIRPLANES_IMAGE_CONTRACT: new
+          # CHANNEL maps the asset name we're looking for:
+          #   stable channel → `airplanes-feeder-stable-arm64.img.xz` (in tagged stable releases)
+          #   dev channel    → `airplanes-feeder-dev-arm64.img.xz`    (in the rolling dev-latest prerelease)
+          # When testing against a `main`-bound change we want the stable build;
+          # otherwise we want the latest dev build (rolling prerelease).
+          AIRPLANES_IMAGE_CHANNEL: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'stable' || (github.event_name == 'pull_request' && github.base_ref == 'main') && 'stable' || 'dev' }}
           AIRPLANES_IMAGE_SOURCE_TIERS: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release-stable' || (github.event_name == 'pull_request' && github.base_ref == 'main') && 'release-stable' || 'release-any' }}
           AIRPLANES_RELEASE_ROOTFS_WORK_DIR: ${{ runner.temp }}/airplanes-mounted-image-smoke-new
         run: |
-          sudo --preserve-env=GH_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_IMAGE_SOURCE_TIERS,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
+          sudo --preserve-env=GH_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_IMAGE_CHANNEL,AIRPLANES_IMAGE_SOURCE_TIERS,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
             bash test/image-release-rootfs-smoke.sh
 
   update-regression:

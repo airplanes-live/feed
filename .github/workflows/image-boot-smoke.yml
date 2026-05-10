@@ -86,7 +86,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AIRPLANES_IMAGE_RELEASE_REPO: ${{ matrix.image_release_repo }}
           AIRPLANES_IMAGE_CONTRACT: ${{ matrix.image_contract }}
-          AIRPLANES_IMAGE_CHANNEL: ${{ github.event.inputs.image_channel || 'stable' }}
+          # Same channel-vs-event mapping as ci.yml's mounted-image-smoke-new:
+          # main-bound runs use stable channel (looks for the stable-named
+          # asset in stable releases); dev-bound runs use dev channel (looks
+          # for the dev-named asset, picked up via the rolling dev-latest
+          # prerelease). Manual dispatch can still override via the input.
+          AIRPLANES_IMAGE_CHANNEL: ${{ github.event.inputs.image_channel || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'stable' || 'dev' }}
           AIRPLANES_IMAGE_ARCH: ${{ github.event.inputs.image_arch || 'arm64' }}
           AIRPLANES_IMAGE_ASSET_REGEX: ${{ github.event.inputs.image_asset_regex || '' }}
           # Push to main → only stable releases (production track).
