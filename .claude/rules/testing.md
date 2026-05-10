@@ -76,16 +76,23 @@ Don't blanket-ignore. Default mental model: if a failing test on macOS doesn't f
 
 ## CI workflows
 
-All run on `ubuntu-24.04` host:
+All run on `ubuntu-24.04` host. Names below are the status-check display names.
 
-- `bats` — full BATS suite (now includes `test_image_source.bats` for the asset-resolution library).
-- `shellcheck + bash -n` — shellcheck at warning severity, plus bash syntax check.
-- `update-regression smoke` — `update.sh` regression run.
-- `installer smoke` × 4 — debian:13-slim and ubuntu:24.04, each in bundled (`install.sh`) and standalone (`update.sh` direct) modes.
-- `image rootfs smoke` — Docker rootfs build (synthetic rootfs from `airplanes-live/airplanes-update`).
-- `mounted image smoke (legacy)` — renamed from `image release rootfs smoke`. Mounts the legacy ARM64 image rootfs (downloaded from `airplanes-live/image-releases`), runs `update.sh` chroot-style with stubbed systemd, asserts post-update state. The job ID changed; branch protection rules referring to the old name must be migrated.
-- `mounted image smoke (new)` — same shape, against `airplanes-live/image`. Sources its image asset via the new tier-based library (`test/lib/image-source.sh`) — stable release on `main` paths, the rolling `dev-latest` prerelease on `dev` paths.
-- `image-boot-smoke` (workflow `image-boot-smoke.yml`) — push-event matrix over both contracts. Full QEMU boot + update + reboot + idempotency assertions. Manual `workflow_dispatch` supports `image_contract={all,legacy,new}`.
+PR + push (workflow `ci.yml`):
+
+- `lint` — shellcheck at warning severity, plus bash syntax check (`bash -n`).
+- `unit tests` — full BATS suite.
+- `script install (debian:13, bundle)` / `(debian:13, bootstrap)` / `(ubuntu:24, bundle)` / `(ubuntu:24, bootstrap)` — `install.sh` on a fresh OS, either with the full repo mounted (`bundle`) or with `install.sh` alone in a temp dir (`bootstrap`, simulating `curl … \| bash`).
+- `image build mode` — runs `update.sh` in `AIRPLANES_BUILD_MODE=1` against a synthetic build-time rootfs (synthetic rootfs from `airplanes-live/airplanes-update`).
+- `mounted image upgrade (legacy contract)` — mounts the legacy ARM64 image rootfs (downloaded from `airplanes-live/image-releases`) and runs `update.sh` chroot-style with stubbed systemd; asserts post-update state.
+- `mounted image upgrade (new contract)` — same shape, against `airplanes-live/image`. Sources its image asset via the new tier-based library (`test/lib/image-source.sh`) — stable release on `main` paths, the rolling `dev-latest` prerelease on `dev` paths.
+- `webconfig drift` — builds a webconfig-flavored rootfs, fingerprints webconfig-owned artifacts, runs `update.sh`, fails on any drift. Catches feed/update.sh clobbering files the image's webconfig layer owns.
+- `script upgrade (stable main)` — installs `origin/main` HEAD, seeds legacy `USER=`, runs candidate `update.sh`, asserts MLAT migration + wire endpoints + state files.
+- `script upgrade (pre-schema-split pin)` — same with a pinned pre-schema-split source SHA (historical regression coverage).
+
+Push to main/dev + manual dispatch (workflow `image-boot-smoke.yml`, top-level name `Image boot`):
+
+- `image boot (legacy contract)` / `(new contract)` — full QEMU boot + update + reboot + idempotency assertions across both image contracts. Manual `workflow_dispatch` supports `image_contract={all,legacy,new}`.
 
 ## Asset-source library
 
