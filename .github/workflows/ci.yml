@@ -122,8 +122,12 @@ jobs:
             debian:13-slim \
             bash /feed/test/image-rootfs-smoke.sh
 
-  image-release-rootfs-smoke:
-    name: image release rootfs smoke
+  mounted-image-smoke-legacy:
+    # Renamed from `image-release-rootfs-smoke`. Branch protection rules on
+    # airplanes-live/feed that previously required `image release rootfs smoke`
+    # must be migrated to require `mounted image smoke (legacy)` before this
+    # change merges, otherwise future PRs hang on a stuck-pending old check.
+    name: mounted image smoke (legacy)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -138,6 +142,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             ca-certificates \
             curl \
+            gh \
             git \
             jq \
             parted \
@@ -146,14 +151,58 @@ jobs:
             unzip \
             xz-utils
 
-      - name: Run mounted release image smoke
+      - name: Run mounted image smoke (legacy contract)
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          # The smoke uses the lib/image-source.sh library which reads GH_TOKEN
+          # (gh CLI convention). github.token is sufficient for cross-repo
+          # release downloads against the public airplanes-live/image-releases.
+          GH_TOKEN: ${{ github.token }}
           AIRPLANES_IMAGE_RELEASE_REPO: airplanes-live/image-releases
           AIRPLANES_IMAGE_CONTRACT: legacy
-          AIRPLANES_RELEASE_ROOTFS_WORK_DIR: ${{ runner.temp }}/airplanes-image-release-rootfs-smoke
+          AIRPLANES_RELEASE_ROOTFS_WORK_DIR: ${{ runner.temp }}/airplanes-mounted-image-smoke-legacy
         run: |
-          sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
+          sudo --preserve-env=GH_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
+            bash test/image-release-rootfs-smoke.sh
+
+  mounted-image-smoke-new:
+    # Mirror of mounted-image-smoke-legacy, against airplanes-live/image.
+    # Tier list picks release-stable on PRs targeting main / pushes to main
+    # (production track), release-any otherwise (development track, which
+    # accepts the rolling dev-latest prerelease published by airplanes-live/
+    # image's build-image.yml on every dev push).
+    name: mounted image smoke (new)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout feed
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install image smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            gh \
+            git \
+            jq \
+            parted \
+            p7zip-full \
+            rsync \
+            unzip \
+            xz-utils
+
+      - name: Run mounted image smoke (new contract)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRPLANES_IMAGE_RELEASE_REPO: airplanes-live/image
+          AIRPLANES_IMAGE_CONTRACT: new
+          AIRPLANES_IMAGE_SOURCE_TIERS: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release-stable' || (github.event_name == 'pull_request' && github.base_ref == 'main') && 'release-stable' || 'release-any' }}
+          AIRPLANES_RELEASE_ROOTFS_WORK_DIR: ${{ runner.temp }}/airplanes-mounted-image-smoke-new
+        run: |
+          sudo --preserve-env=GH_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_IMAGE_SOURCE_TIERS,AIRPLANES_RELEASE_ROOTFS_WORK_DIR \
             bash test/image-release-rootfs-smoke.sh
 
   update-regression:

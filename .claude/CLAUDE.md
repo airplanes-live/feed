@@ -16,6 +16,7 @@ Installer and updater shipped to end-user feeder hardware. Bash. Target: Debian 
 | `scripts/` | `apl-feed.sh` (CLI dispatcher), `airplanes-feed.sh` / `airplanes-mlat.sh` (daemon scripts), unit files. |
 | `scripts/apl-feed/` | CLI command modules: `claim`, `id`, `status`, `backup`, `http`, `common`. |
 | `test/` | BATS test suite. See `rules/testing.md`. |
+| `test/lib/image-source.sh` | Asset-resolution library used by both mounted-image rootfs smoke and QEMU boot smoke. Resolves a GitHub release asset from a tiered source list (`release-stable`, `release-any`) and downloads it. Exits 64 on tier exhaustion (skip-with-notice contract). |
 
 ## Where to start for common tasks
 
