@@ -137,9 +137,11 @@ AIRPLANES_FEED_REPO="$AIRPLANES_LEGACY_REPO" \
 AIRPLANES_FEED_BRANCH=main \
     bash /legacy/install.sh
 
-# Post-install sanity (catch breakage in main itself).
+# Post-install sanity. Only assert artifacts that legacy main is guaranteed
+# to produce — apl-feed CLI, feed.env-only layout, etc. are dev-branch
+# additions that predate this test. Phase 2's detect_legacy_env picks the
+# right config file regardless of which shape legacy produced.
 test -d /usr/local/share/airplanes/git
-test -x /usr/local/bin/apl-feed
 
 # ---- Phase 2: seed legacy USER= state ----
 # Force the migration code path: drop any MLAT_* keys the legacy install may
