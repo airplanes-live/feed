@@ -133,13 +133,98 @@ apl_feed_mlat_enable() {
     fi
 }
 
+# Atomic single-key rewrite for MLAT_PRIVATE. Targeted (not generalized
+# to arbitrary keys) so the `grep -vE` pattern stays a fixed literal and
+# the boolean serializer (no shell-escape rules needed for true|false)
+# stays distinct from MLAT_USER's escape rules.
+#
+# Refuses to write into a feed.env that hasn't yet been touched by
+# update.sh's migrate_privacy_to_mlat_private — silently inserting
+# MLAT_PRIVATE alongside legacy PRIVACY would cross update-migrations.sh's
+# responsibility and produce a confusing mid-state.
+_mlat_rewrite_feed_env_private() {
+    local feed_env="$1"
+    local new_value="$2"
+
+    [[ -f "$feed_env" ]] || die "feed.env not found at $feed_env; run setup first"
+
+    if ! grep -qE '^MLAT_PRIVATE=' "$feed_env"; then
+        die "feed.env at $feed_env appears unmigrated (no MLAT_PRIVATE= line); run \`sudo /usr/local/share/airplanes/update.sh\` first"
+    fi
+
+    local tmp
+    tmp="$(mktemp "${feed_env}.XXXXXX")"
+    grep -vE '^MLAT_PRIVATE=' "$feed_env" > "$tmp" || true
+    printf 'MLAT_PRIVATE=%s\n' "$new_value" >> "$tmp"
+    chmod --reference="$feed_env" "$tmp" 2>/dev/null || true
+    chown --reference="$feed_env" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$feed_env"
+}
+
+apl_feed_mlat_private_enable() {
+    local opt_rc
+    while [[ $# -gt 0 ]]; do
+        if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
+        case "$opt_rc" in
+            1) shift ;;
+            2) shift 2 ;;
+            0) die "unknown flag for mlat private enable: $1" ;;
+        esac
+    done
+
+    local feed_env
+    feed_env="$(feed_env_path)"
+    _mlat_rewrite_feed_env_private "$feed_env" "true"
+    echo "MLAT_PRIVATE set to true in $feed_env (feed name will be hidden on the public MLAT map)"
+    if _mlat_restart_service; then
+        echo "Restarting airplanes-mlat.service ... done"
+    else
+        return 1
+    fi
+}
+
+apl_feed_mlat_private_disable() {
+    local opt_rc
+    while [[ $# -gt 0 ]]; do
+        if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
+        case "$opt_rc" in
+            1) shift ;;
+            2) shift 2 ;;
+            0) die "unknown flag for mlat private disable: $1" ;;
+        esac
+    done
+
+    local feed_env
+    feed_env="$(feed_env_path)"
+    _mlat_rewrite_feed_env_private "$feed_env" "false"
+    echo "MLAT_PRIVATE set to false in $feed_env (feed name will be shown on the public MLAT map)"
+    if _mlat_restart_service; then
+        echo "Restarting airplanes-mlat.service ... done"
+    else
+        return 1
+    fi
+}
+
+dispatch_mlat_private() {
+    local sub="${1:-}"
+    [[ -n "$sub" ]] || die "mlat private requires a subcommand (enable|disable)"
+    shift || true
+    case "$sub" in
+        enable)  apl_feed_mlat_private_enable  "$@" ;;
+        disable) apl_feed_mlat_private_disable "$@" ;;
+        -h|--help) usage ;;
+        *) die "unknown mlat private subcommand: $sub" ;;
+    esac
+}
+
 dispatch_mlat() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "mlat requires a subcommand (enable|disable)"
+    [[ -n "$sub" ]] || die "mlat requires a subcommand (enable|disable|private)"
     shift || true
     case "$sub" in
         enable)  apl_feed_mlat_enable  "$@" ;;
         disable) apl_feed_mlat_disable "$@" ;;
+        private) dispatch_mlat_private "$@" ;;
         -h|--help) usage ;;
         *) die "unknown mlat subcommand: $sub" ;;
     esac

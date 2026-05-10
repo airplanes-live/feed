@@ -15,10 +15,12 @@ BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
 FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
 FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
 
-# Unset USER (and the new keys) before sourcing so the process env's $USER
-# (systemd User= sets it to airplanes-feed) can't be mistaken for a legacy
-# boot-config key.
-unset USER MLAT_USER MLAT_ENABLED
+# Unset USER (and the privacy keys) before sourcing so the process env
+# can't bleed into the legacy-USER, legacy-PRIVACY, or legacy-MLAT_MARKER
+# fallbacks below. systemd's User= sets $USER for airplanes-mlat.service;
+# an env-supplied MLAT_PRIVATE / PRIVACY / MLAT_MARKER (e.g. from a
+# Drop-In) would otherwise mask the on-disk value.
+unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER
 if [[ -f "$FEED_ENV" ]]; then
     source "$FEED_ENV"
 elif [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && -f "$BOOT_CONFIG" ]]; then
@@ -41,13 +43,31 @@ fi
 MLAT_ENABLED="${MLAT_ENABLED:-true}"
 MLAT_USER="${MLAT_USER-}"
 
-if [[ "${MLAT_MARKER:-}" == "no" ]]; then
-    PRIVACY="--privacy"
-elif [[ -n "${MLAT_MARKER:-}" ]]; then
-    PRIVACY=""
-else
-    PRIVACY="${PRIVACY:-}"
+# Legacy PRIVACY read fallback. update.sh's migrate_privacy_to_mlat_private
+# converts PRIVACY=--privacy to MLAT_PRIVATE=true on every run; this in-
+# memory derivation handles a daemon restart that races ahead of the next
+# update.sh. Validation of MLAT_PRIVATE happens in the classifier below
+# so an invalid hand-edit fails loud.
+if [[ ! -v MLAT_PRIVATE && -v PRIVACY ]]; then
+    case "$PRIVACY" in
+        --privacy) MLAT_PRIVATE="true" ;;
+        *)         MLAT_PRIVATE="false" ;;
+    esac
 fi
+
+# Legacy MLAT_MARKER read fallback. PHP webconfig still writes MLAT_MARKER
+# in /boot/airplanes-config.txt via its yes/no dropdown — inverted polarity
+# where "no" means privacy ON. Without this fallback a legacy-image feeder
+# would silently lose privacy on first daemon start under the new schema,
+# even though their stored preference says "private". The webconfig-side
+# migrator translation closes the window on the next save/update.
+if [[ ! -v MLAT_PRIVATE && -v MLAT_MARKER ]]; then
+    case "$MLAT_MARKER" in
+        no) MLAT_PRIVATE="true" ;;
+        *)  MLAT_PRIVATE="false" ;;
+    esac
+fi
+MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 
 UUID_FILE="--uuid-file $FEEDER_ID_FILE"
 
@@ -61,13 +81,18 @@ else
     airplanes_write_state() { return 0; }
 fi
 
-# Classify the daemon's config decision. Order matters: explicit
-# MLAT_ENABLED disable is checked before geo so a user who turns MLAT
-# off on a fresh feeder (lat/lon still 0) sees reason=mlat_enabled_false
-# rather than reason=latitude_zero. The misconfigured branch only
-# triggers when the user opted INTO MLAT but left MLAT_USER empty —
-# that's the strict-fail-with-exit-64 shape.
+# Classify the daemon's config decision. Order matters: invalid
+# MLAT_PRIVATE is checked first (fail-loud rather than silently
+# defaulting), then explicit MLAT_ENABLED disable (so a user who turns
+# MLAT off on a fresh feeder with lat/lon still 0 sees reason=
+# mlat_enabled_false rather than reason=latitude_zero), then geo
+# sentinels, then the empty-MLAT_USER check. The misconfigured branch
+# is the strict-fail-with-exit-64 shape.
 _mlat_classify() {
+    case "$MLAT_PRIVATE" in
+        true|false) ;;
+        *) printf 'misconfigured mlat_private_invalid\n'; return ;;
+    esac
     if [[ "$MLAT_ENABLED" != "true" ]]; then printf 'disabled mlat_enabled_false\n'; return; fi
     if [[ "$LATITUDE" == 0 ]]; then printf 'disabled latitude_zero\n'; return; fi
     if [[ "$LONGITUDE" == 0 ]]; then printf 'disabled longitude_zero\n'; return; fi
@@ -85,6 +110,7 @@ airplanes_write_state "$STATE_FILE" \
     "decided_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "mlat_enabled=${MLAT_ENABLED:-}" \
     "mlat_user=${MLAT_USER:-}" \
+    "mlat_private=${MLAT_PRIVATE:-}" \
     "latitude=${LATITUDE:-}" \
     "longitude=${LONGITUDE:-}" || true
 
@@ -97,12 +123,31 @@ case "$STATE" in
     misconfigured)
         # Matches RestartPreventExitStatus=64 in the unit file so
         # systemd marks the unit failed instead of restart-looping.
-        echo "MLAT_ENABLED=true but MLAT_USER is empty; refusing to start mlat-client." >&2
+        case "$REASON" in
+            mlat_private_invalid)
+                echo "MLAT_PRIVATE must be 'true' or 'false' (got: '${MLAT_PRIVATE:-}'); refusing to start mlat-client." >&2
+                ;;
+            mlat_user_empty)
+                echo "MLAT_ENABLED=true but MLAT_USER is empty; refusing to start mlat-client." >&2
+                ;;
+            *)
+                echo "Misconfigured ($REASON); refusing to start mlat-client." >&2
+                ;;
+        esac
         exit 64
         ;;
     enabled)
         ;;
 esac
+
+# Build the mlat-client privacy flag from the canonical boolean. The
+# literal --privacy flag string never appears on disk anywhere; storing
+# CLI fragments in feed.env was the legacy PRIVACY pattern this refactor
+# retired.
+PRIVACY_ARG=""
+if [[ "$MLAT_PRIVATE" == "true" ]]; then
+    PRIVACY_ARG="--privacy"
+fi
 
 INPUT_IP=$(echo $INPUT | cut -d: -f1)
 INPUT_PORT=$(echo $INPUT | cut -d: -f2)
@@ -122,6 +167,6 @@ exec "$(airplanes_path /usr/local/share/airplanes/venv/bin/mlat-client)" \
     --lat "$LATITUDE" \
     --lon "$LONGITUDE" \
     --alt "$ALTITUDE" \
-    $PRIVACY \
+    $PRIVACY_ARG \
     ${UUID_FILE:-} \
     $RESULTS $RESULTS1 $RESULTS2 $RESULTS3 $RESULTS4

@@ -270,8 +270,28 @@ _render_mlat_misconfig_reason() {
     local reason="$1"
     local label="MLAT service"
     case "$reason" in
-        mlat_user_empty) status_line fail "$label" "MLAT_USER is empty (set MLAT_USER, or set MLAT_ENABLED=false)" ;;
-        *)               status_line fail "$label" "misconfigured ($reason)" ;;
+        mlat_user_empty)      status_line fail "$label" "MLAT_USER is empty (set MLAT_USER, or set MLAT_ENABLED=false)" ;;
+        mlat_private_invalid) status_line fail "$label" "MLAT_PRIVATE must be 'true' or 'false' in feed.env" ;;
+        *)                    status_line fail "$label" "misconfigured ($reason)" ;;
+    esac
+}
+
+# Read the daemon's published privacy posture from /run/airplanes-mlat/state.
+# Daemon-state-file rule: never fall back to feed.env. If the state file
+# is unavailable (daemon down, partial install) we emit no privacy line
+# at all rather than re-deriving — mlat_status_line already covers the
+# "daemon down" actionable signal.
+mlat_privacy_status_line() {
+    local state_file mlat_private
+    state_file="$(root_path /run/airplanes-mlat/state)"
+    if ! mlat_private="$(airplanes_read_state "$state_file" mlat_private)"; then
+        return 0
+    fi
+    case "$mlat_private" in
+        true)  status_line ok "MLAT name privacy" "private (--privacy; name hidden on map)" ;;
+        false) status_line ok "MLAT name privacy" "public (name shown on map)" ;;
+        '')    return 0 ;;
+        *)     status_line warn "MLAT name privacy" "unknown value: $mlat_private" ;;
     esac
 }
 
@@ -456,6 +476,7 @@ feed_status() {
     fi
     service_status_line airplanes-feed "Feed service"
     mlat_status_line
+    mlat_privacy_status_line
     receiver_status_line
     airplanes_link_status_line
     claim_registration_status_line

@@ -43,6 +43,19 @@ write_feed_env() {
 INPUT="127.0.0.1:30005"
 MLAT_USER="$1"
 MLAT_ENABLED=$2
+MLAT_PRIVATE=false
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35m"
+EOF
+}
+
+write_feed_env_with_private() {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+INPUT="127.0.0.1:30005"
+MLAT_USER="$1"
+MLAT_ENABLED=$2
+MLAT_PRIVATE=$3
 LATITUDE="52.52"
 LONGITUDE="13.40"
 ALTITUDE="35m"
@@ -210,4 +223,134 @@ EOF
     grep -q '^MLAT_ENABLED=false$' "$ROOT_DIR/etc/airplanes/feed.env"
     [ ! -f "$SYSTEMCTL_LOG" ] || ! grep -q 'restart' "$SYSTEMCTL_LOG"
     [[ "$output" == *"--root=$ROOT_DIR"* ]]
+}
+
+# --- mlat private subcommand ---
+
+@test "dispatch_mlat private: missing subcommand dies" {
+    run bash -c "
+        set -euo pipefail
+        source '$LIB_DIR/common.sh'
+        source '$LIB_DIR/mlat.sh'
+        dispatch_mlat private
+    "
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'mlat private requires a subcommand'* ]]
+}
+
+@test "dispatch_mlat private: unknown subcommand dies" {
+    run bash -c "
+        set -euo pipefail
+        source '$LIB_DIR/common.sh'
+        source '$LIB_DIR/mlat.sh'
+        dispatch_mlat private frobnitz
+    "
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'unknown mlat private subcommand: frobnitz'* ]]
+}
+
+@test "private enable flips MLAT_PRIVATE false→true, preserves other keys, restarts service" {
+    write_feed_env_with_private "alice" "true" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_private_enable
+
+    [ "$status" -eq 0 ]
+    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'MLAT_USER="alice"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'MLAT_ENABLED=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
+}
+
+@test "private disable flips MLAT_PRIVATE true→false, preserves other keys" {
+    write_feed_env_with_private "alice" "true" "true"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_private_disable
+
+    [ "$status" -eq 0 ]
+    grep -qx 'MLAT_PRIVATE=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'MLAT_USER="alice"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'MLAT_ENABLED=true' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "private round-trip enable→disable→enable returns to true" {
+    write_feed_env_with_private "alice" "true" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_private_enable
+    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+
+    apl_feed_mlat_private_disable
+    grep -qx 'MLAT_PRIVATE=false' "$ROOT_DIR/etc/airplanes/feed.env"
+
+    apl_feed_mlat_private_enable
+    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "private enable: missing feed.env dies with documented message" {
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
+
+    run apl_feed_mlat_private_enable
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'feed.env not found'* ]]
+    [[ "$output" == *'run setup first'* ]]
+}
+
+@test "private enable: unmigrated feed.env (PRIVACY= without MLAT_PRIVATE=) dies" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+INPUT="127.0.0.1:30005"
+MLAT_USER="alice"
+MLAT_ENABLED=true
+PRIVACY="--privacy"
+LATITUDE="52.52"
+EOF
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_private_disable
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'unmigrated'* ]]
+    [[ "$output" == *'no MLAT_PRIVATE='* ]]
+    [[ "$output" == *'/usr/local/share/airplanes/update.sh'* ]]
+}
+
+@test "private enable: rewrite leaves no duplicate MLAT_PRIVATE lines" {
+    write_feed_env_with_private "alice" "true" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_private_enable
+    apl_feed_mlat_private_enable
+
+    [ "$(grep -c '^MLAT_PRIVATE=' "$ROOT_DIR/etc/airplanes/feed.env")" -eq 1 ]
+}
+
+@test "private enable under AIRPLANES_BUILD_MODE=1 skips restart, edits file" {
+    write_feed_env_with_private "alice" "true" "false"
+    ROOT="/"
+    AIRPLANES_BUILD_MODE=1
+    export AIRPLANES_BUILD_MODE
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_private_enable
+
+    [ "$status" -eq 0 ]
+    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    [ ! -f "$SYSTEMCTL_LOG" ] || ! grep -q 'restart' "$SYSTEMCTL_LOG"
+    [[ "$output" == *'AIRPLANES_BUILD_MODE'* ]]
 }

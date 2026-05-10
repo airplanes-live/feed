@@ -37,6 +37,8 @@ Usage:
   apl-feed id set [--force]
   apl-feed mlat enable
   apl-feed mlat disable
+  apl-feed mlat private enable
+  apl-feed mlat private disable
   apl-feed backup <file>
   apl-feed restore <file>
   apl-feed restore --check <file>

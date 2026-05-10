@@ -223,15 +223,19 @@ STUB
 
 # Helper: write a state file under the test root for the MLAT daemon.
 write_mlat_state() {
-    # write_mlat_state <decision> <reason>
+    # write_mlat_state <decision> <reason> [<mlat_private>]
     local decision="$1"
     local reason="$2"
+    local mlat_private="${3:-}"
     mkdir -p "$ROOT_DIR/run/airplanes-mlat"
     {
         printf 'schema_version=1\n'
         printf 'service=airplanes-mlat\n'
         printf 'state=%s\n' "$decision"
         printf 'reason=%s\n' "$reason"
+        if [[ -n "$mlat_private" ]]; then
+            printf 'mlat_private=%s\n' "$mlat_private"
+        fi
     } > "$ROOT_DIR/run/airplanes-mlat/state"
 }
 
@@ -307,6 +311,16 @@ STUB
     [[ "$output" == *'FIX'* ]]
     [[ "$output" == *'MLAT_USER is empty'* ]]
     [[ "$output" == *'set MLAT_ENABLED=false'* ]]
+}
+
+@test "mlat_status_line: ActiveState=failed + exit 64 + misconfigured mlat_private_invalid → actionable" {
+    write_mlat_state misconfigured mlat_private_invalid
+    stub_systemctl_active_state failed 64
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *"MLAT_PRIVATE must be 'true' or 'false'"* ]]
 }
 
 @test "mlat_status_line: ActiveState=activating + enabled → 'starting up'" {
@@ -422,6 +436,60 @@ STUB
     run mlat_status_line
     [ "$status" -eq 0 ]
     [[ "$output" == *'disabled by config (MLAT_ENABLED=false)'* ]]
+}
+
+# --- mlat_privacy_status_line: state-file-driven privacy posture ---
+
+@test "mlat_privacy_status_line: mlat_private=true → OK 'private' line" {
+    write_mlat_state enabled ok true
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_privacy_status_line
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'MLAT name privacy'* ]]
+    [[ "$output" == *'private'* ]]
+    [[ "$output" == *'name hidden'* ]]
+}
+
+@test "mlat_privacy_status_line: mlat_private=false → OK 'public' line" {
+    write_mlat_state enabled ok false
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_privacy_status_line
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'MLAT name privacy'* ]]
+    [[ "$output" == *'public'* ]]
+    [[ "$output" == *'name shown'* ]]
+}
+
+@test "mlat_privacy_status_line: state file absent → no line emitted (silent skip)" {
+    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_privacy_status_line
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "mlat_privacy_status_line: state file lacks mlat_private key → silent skip" {
+    write_mlat_state enabled ok ''  # no mlat_private key written
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_privacy_status_line
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "mlat_privacy_status_line: unknown value → warn (forward-compat)" {
+    write_mlat_state enabled ok futureschema
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_privacy_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'unknown value'* ]]
+    [[ "$output" == *'futureschema'* ]]
 }
 
 # --- receiver_status_line ---

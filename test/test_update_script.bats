@@ -108,7 +108,7 @@ USER="image-feeder"
 MLAT_USER="image-feeder"
 MLAT_ENABLED=true
 MODEAC="yes"
-MLAT_MARKER="no"
+MLAT_PRIVATE=true
 EOF
     cat > "$root/boot/airplanes-env" <<'EOF'
 INPUT="127.0.0.1:30005"

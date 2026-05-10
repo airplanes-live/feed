@@ -92,6 +92,11 @@ REDUCE_INTERVAL="0.5"
 MLAT_USER="$MLAT_USER"
 # Explicit on/off toggle for MLAT. When false, airplanes-mlat exits early.
 MLAT_ENABLED="$MLAT_ENABLED"
+# Hide the feed name on the public MLAT map. true|false. Position is
+# never shown accurately no matter the setting. Toggle after setup with:
+#   sudo apl-feed mlat private enable
+#   sudo apl-feed mlat private disable
+MLAT_PRIVATE=$MLAT_PRIVATE
 
 LATITUDE="$RECEIVERLATITUDE"
 LONGITUDE="$RECEIVERLONGITUDE"
@@ -106,9 +111,6 @@ RESULTS="--results beast,connect,127.0.0.1:30104"
 RESULTS2="--results basestation,listen,31015"
 RESULTS3="--results beast,listen,30157"
 RESULTS4="--results beast,connect,127.0.0.1:30187"
-# add --privacy between the quotes below to disable having the feed name shown on the mlat map
-# (position is never shown accurately no matter the settings)
-PRIVACY=""
 INPUT_TYPE="$INPUT_TYPE"
 
 MLATSERVER="feed.airplanes.live:31090"
@@ -119,7 +121,7 @@ EOF
 }
 
 has_noninteractive_config_env() {
-    [[ -v AIRPLANES_MLAT_USER || -v AIRPLANES_MLAT_ENABLED \
+    [[ -v AIRPLANES_MLAT_USER || -v AIRPLANES_MLAT_ENABLED || -v AIRPLANES_MLAT_PRIVATE \
        || -v AIRPLANES_LATITUDE || -v AIRPLANES_LONGITUDE || -v AIRPLANES_ALTITUDE ]]
 }
 
@@ -145,6 +147,16 @@ configure_noninteractive() {
         true|false) MLAT_ENABLED="${AIRPLANES_MLAT_ENABLED:-true}" ;;
         *)
             echo "AIRPLANES_MLAT_ENABLED must be 'true' or 'false' (got: '${AIRPLANES_MLAT_ENABLED:-}')" >&2
+            exit 1
+            ;;
+    esac
+
+    # MLAT_PRIVATE is optional and defaults to "false" (name shown on
+    # the MLAT map). Same strict true|false validation as MLAT_ENABLED.
+    case "${AIRPLANES_MLAT_PRIVATE:-false}" in
+        true|false) MLAT_PRIVATE="${AIRPLANES_MLAT_PRIVATE:-false}" ;;
+        *)
+            echo "AIRPLANES_MLAT_PRIVATE must be 'true' or 'false' (got: '${AIRPLANES_MLAT_PRIVATE:-}')" >&2
             exit 1
             ;;
     esac
@@ -223,9 +235,12 @@ RECEIVERALTITUDE="$ALT"
 
 #RECEIVERPORT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Receiver Feed Port" --nocancel --inputbox "\nChange only if you were assigned a custom feed port.\nFor most all users it is required this port remain set to port 30005." 10 78 "30005" 3>&1 1>&2 2>&3)
 
-# Interactive setup always enables MLAT. Operators who want it off run
-# `sudo apl-feed mlat disable` after setup completes.
+# Interactive setup always enables MLAT and shows the feeder name on the
+# map. Operators who want either off run, after setup completes:
+#   sudo apl-feed mlat disable
+#   sudo apl-feed mlat private enable
 MLAT_ENABLED="true"
+MLAT_PRIVATE="false"
 
 detect_receiver_input
 write_feed_env
