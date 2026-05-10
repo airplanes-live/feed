@@ -17,17 +17,17 @@ if [[ -z "$IMAGE_CONTRACT" ]]; then
         IMAGE_CONTRACT="legacy"
     fi
 fi
-if [[ -n "${AIRPLANES_IMAGE_ASSET_REGEX:-}" ]]; then
-    IMAGE_ASSET_REGEX="$AIRPLANES_IMAGE_ASSET_REGEX"
-elif [[ "$IMAGE_CONTRACT" == "new" ]]; then
-    IMAGE_ASSET_REGEX="(?i)^airplanes-feeder-${IMAGE_CHANNEL}-${IMAGE_ARCH}\\.img\\.xz$"
-else
-    IMAGE_ASSET_REGEX="(?i)\\.(img|img\\.xz|img\\.gz|zip|7z)$"
-fi
-IMAGE_ASSET_STRICT="${AIRPLANES_IMAGE_ASSET_STRICT:-}"
-if [[ -z "$IMAGE_ASSET_STRICT" ]]; then
-    [[ "$IMAGE_CONTRACT" == "new" ]] && IMAGE_ASSET_STRICT=1 || IMAGE_ASSET_STRICT=0
-fi
+# Asset selection (regex + strict-mode defaults) is owned by
+# test/lib/image-source.sh, derived from CONTRACT/CHANNEL/ARCH. The historical
+# AIRPLANES_IMAGE_ASSET_REGEX env var is still honored as an override.
+# AIRPLANES_IMAGE_SOURCE_TIERS picks the tier order; default `release-any`
+# preserves legacy behavior (the historical /releases/latest path picked the
+# newest non-prerelease release; release-any now also accepts the rolling
+# `dev-latest` prerelease for new-image dev-channel runs).
+AIRPLANES_IMAGE_SOURCE_TIERS="${AIRPLANES_IMAGE_SOURCE_TIERS:-release-any}"
+# shellcheck source=lib/image-source.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib/image-source.sh"
+
 FEED_BRANCH="${AIRPLANES_RELEASE_ROOTFS_FEED_BRANCH:-release-rootfs-smoke}"
 WORK_DIR="${AIRPLANES_RELEASE_ROOTFS_WORK_DIR:-}"
 KEEP_WORK_DIR="${AIRPLANES_RELEASE_ROOTFS_KEEP_WORK_DIR:-0}"
@@ -89,56 +89,6 @@ require_commands() {
     for command in "$@"; do
         require_command "$command"
     done
-}
-
-github_api() {
-    local url="$1"
-    local -a headers
-    headers=(-H "Accept: application/vnd.github+json")
-    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-        headers+=(
-            -H "Authorization: Bearer $GITHUB_TOKEN"
-            -H "X-GitHub-Api-Version: 2022-11-28"
-        )
-    fi
-    curl --fail --location --silent --show-error "${headers[@]}" "$url"
-}
-
-download_latest_release_image() {
-    local release_json asset_name asset_url output match_count
-    mkdir -p "$DOWNLOAD_DIR"
-    release_json="$DOWNLOAD_DIR/latest-release.json"
-
-    echo "Fetching latest image release from $IMAGE_RELEASE_REPO" >&2
-    github_api "https://api.github.com/repos/$IMAGE_RELEASE_REPO/releases/latest" > "$release_json"
-
-    match_count="$(jq -r --arg re "$IMAGE_ASSET_REGEX" '
-        [.assets[] | select(.name | test($re))] | length
-    ' "$release_json")"
-    if [[ "$match_count" == "0" ]]; then
-        jq -r '.assets[].name' "$release_json" >&2
-        fail "no release asset in $IMAGE_RELEASE_REPO matched $IMAGE_ASSET_REGEX"
-    fi
-    if [[ "$IMAGE_ASSET_STRICT" == "1" && "$match_count" != "1" ]]; then
-        jq -r --arg re "$IMAGE_ASSET_REGEX" '.assets[] | select(.name | test($re)) | .name' "$release_json" >&2
-        fail "expected exactly one release asset in $IMAGE_RELEASE_REPO to match $IMAGE_ASSET_REGEX, got $match_count"
-    fi
-
-    asset_name="$(jq -r --arg re "$IMAGE_ASSET_REGEX" '
-        [.assets[] | select(.name | test($re))] as $matches
-        | (($matches | map(select(.name | test("qemu"; "i"))) | first) // ($matches | first) // empty)
-        | .name // empty
-    ' "$release_json")"
-    asset_url="$(jq -r --arg name "$asset_name" '
-        .assets[] | select(.name == $name) | .browser_download_url
-    ' "$release_json")"
-
-    [[ -n "$asset_name" && -n "$asset_url" ]] || fail "failed to resolve selected release asset URL: $asset_name"
-
-    output="$DOWNLOAD_DIR/$asset_name"
-    echo "Downloading image asset: $asset_name" >&2
-    curl --fail --location --show-error --output "$output" "$asset_url"
-    printf '%s\n' "$output"
 }
 
 find_single_image() {
@@ -527,13 +477,33 @@ assert_runtime_args() {
 }
 
 main() {
-    local image_archive
-    require_commands curl jq git rsync parted awk mount umount find cp tee unzip xz gzip
+    local image_archive rc
+    require_commands curl jq git rsync parted awk mount umount find cp tee unzip xz gzip gh
     if [[ -n "${AIRPLANES_IMAGE_PATH:-}" ]]; then
         image_archive="$AIRPLANES_IMAGE_PATH"
         [[ -f "$image_archive" ]] || fail "AIRPLANES_IMAGE_PATH does not exist: $image_archive"
     else
-        image_archive="$(download_latest_release_image)"
+        # The library writes the resolved path to stdout. Capture under a
+        # temporarily-relaxed errexit so the 64 sentinel (tier exhaustion)
+        # can be handled as a skip rather than a hard failure.
+        mkdir -p "$DOWNLOAD_DIR"
+        rc=0
+        set +e
+        image_archive="$(image_source_resolve \
+            "$IMAGE_RELEASE_REPO" "$IMAGE_CONTRACT" "$IMAGE_CHANNEL" "$IMAGE_ARCH" \
+            "$AIRPLANES_IMAGE_SOURCE_TIERS" "$DOWNLOAD_DIR" "${AIRPLANES_IMAGE_ASSET_REGEX:-}")"
+        rc=$?
+        set -e
+        case "$rc" in
+            0) ;;
+            64)
+                echo "::notice::no asset available in tiers [$AIRPLANES_IMAGE_SOURCE_TIERS] for $IMAGE_RELEASE_REPO ($IMAGE_CONTRACT/$IMAGE_CHANNEL/$IMAGE_ARCH); skipping smoke"
+                exit 0
+                ;;
+            *)
+                fail "image source resolution failed with rc=$rc"
+                ;;
+        esac
     fi
 
     echo "Work dir: $WORK_DIR"
