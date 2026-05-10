@@ -15,11 +15,16 @@ write_image_config() {
     mkdir -p "$root/boot" "$root/usr/bin"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
     chmod +x "$root/usr/bin/airplanes-feeder"
+    # Represents post-migration boot config: USER preserved for legacy
+    # consumers, MLAT_USER + MLAT_ENABLED added by airplanes-webconfig's
+    # migrate-config.sh so the new daemon sees the split schema.
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="52.52000"
 LONGITUDE="13.40500"
 ALTITUDE="35m"
 USER="image-feeder"
+MLAT_USER="image-feeder"
+MLAT_ENABLED=true
 MODEAC="yes"
 MLAT_MARKER="no"
 EOF
@@ -387,6 +392,32 @@ write_feed_env() {
     grep -qx 'state=misconfigured' "$root/run/airplanes-mlat/state"
     grep -qx 'reason=mlat_user_empty' "$root/run/airplanes-mlat/state"
     grep -qx 'mlat_user=' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh exits 64 with schema-strict guard when boot config has legacy USER but no MLAT_USER" {
+    # Simulates a feeder where airplanes-update or webconfig migration
+    # did not run before the daemon started. The schema guard catches it
+    # early (before mlat_user_empty classifier) and points at the fix.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    mkdir -p "$root/boot" "$root/usr/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/usr/bin/airplanes-feeder"
+    cat > "$root/boot/airplanes-config.txt" <<'EOF'
+LATITUDE="52.52000"
+LONGITUDE="13.40500"
+ALTITUDE="35m"
+USER="legacy-only"
+EOF
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 64 ]
+    [[ "$output" == *"legacy USER= schema detected"* ]]
+    [[ "$output" == *"Update Webconfig"* ]]
+    # State file is not written: we exit before classifier runs.
+    [ ! -f "$root/run/airplanes-mlat/state" ]
 }
 
 @test "airplanes-mlat.sh runs without state-writer lib (defensive source falls through to stub)" {
