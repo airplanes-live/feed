@@ -16,8 +16,8 @@ FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
 FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
 
 # Unset USER (and the new keys) before sourcing so the process env's $USER
-# (systemd User= sets it to airplanes-feed) can't bleed into the legacy-USER
-# fallback below.
+# (systemd User= sets it to airplanes-feed) can't be mistaken for a legacy
+# boot-config key.
 unset USER MLAT_USER MLAT_ENABLED
 if [[ -f "$FEED_ENV" ]]; then
     source "$FEED_ENV"
@@ -28,27 +28,15 @@ else
     source "$FEED_ENV"
 fi
 
-# Legacy USER read fallback. update.sh's migrate_user_to_mlat_split splits
-# USER into MLAT_USER + MLAT_ENABLED on every run, but a daemon restart
-# triggered by the legacy PHP webconfig (which still writes USER=) can race
-# ahead of the next update. When that happens, derive MLAT_USER/MLAT_ENABLED
-# in-memory so the daemon doesn't strict-fail on missing config. Removed
-# when airplanes-update is archived.
-#
-# Test "set vs unset" rather than "non-empty" — an explicit MLAT_USER=""
-# written by a future-aware writer is respected as "user opted in but left
-# the name blank" and triggers the strict-fail below.
-if [[ ! -v MLAT_USER && ! -v MLAT_ENABLED && -v USER ]]; then
-    case "$USER" in
-        0|disable)
-            MLAT_USER=""
-            MLAT_ENABLED="false"
-            ;;
-        *)
-            MLAT_USER="$USER"
-            MLAT_ENABLED="true"
-            ;;
-    esac
+# Schema guard: this wrapper requires the new MLAT_USER + MLAT_ENABLED
+# schema. The legacy USER= → MLAT_USER translation is owned by airplanes-
+# webconfig's migrate-config.sh (also vendored into airplanes-update's
+# skeleton). Reaching this state means a config source has USER= but the
+# migrator never ran against it.
+if [[ -v USER && ! -v MLAT_USER && ! -v MLAT_ENABLED ]]; then
+    echo "ERROR: legacy USER= schema detected without MLAT_USER. " >&2
+    echo "Run 'Update Webconfig' to migrate the boot config, then restart this service." >&2
+    exit 64
 fi
 MLAT_ENABLED="${MLAT_ENABLED:-true}"
 MLAT_USER="${MLAT_USER-}"

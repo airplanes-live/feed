@@ -372,22 +372,16 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
         [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
     fi
 
-    # Legacy-boot-config feeders may carry USER= in airplanes-config.txt /
-    # airplanes-env. Derive the new schema in-shell so the completeness
-    # check below sees MLAT_USER/MLAT_ENABLED. The boot config itself is
-    # left alone (it's the user's edit surface and must keep working as-is
-    # for users who hand-edit it).
-    if [[ ! -v MLAT_USER && ! -v MLAT_ENABLED && -v USER ]]; then
-        case "$USER" in
-            0|disable)
-                MLAT_USER=""
-                MLAT_ENABLED="false"
-                ;;
-            *)
-                MLAT_USER="$USER"
-                MLAT_ENABLED="true"
-                ;;
-        esac
+    # Schema guard: this updater requires the boot config to already use
+    # the new MLAT_USER + MLAT_ENABLED schema. The legacy USER= →
+    # MLAT_USER translation is owned by airplanes-webconfig's migrate-
+    # config.sh (vendored into airplanes-update's skeleton). Hitting this
+    # error means the user has new feed/ scripts but the legacy stack
+    # hasn't migrated the boot config yet.
+    if [[ -v USER && ! -v MLAT_USER && ! -v MLAT_ENABLED ]]; then
+        echo "ERROR: Your boot config uses the legacy USER= schema." >&2
+        echo "Run 'Update Webconfig' first, then re-run 'Update Feeder'." >&2
+        exit 1
     fi
 
     LATITUDE="${LATITUDE:-0}"
