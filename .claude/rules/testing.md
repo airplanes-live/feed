@@ -78,11 +78,20 @@ Don't blanket-ignore. Default mental model: if a failing test on macOS doesn't f
 
 All run on `ubuntu-24.04` host:
 
-- `bats` — full BATS suite.
+- `bats` — full BATS suite (now includes `test_image_source.bats` for the asset-resolution library).
 - `shellcheck + bash -n` — shellcheck at warning severity, plus bash syntax check.
 - `update-regression smoke` — `update.sh` regression run.
 - `installer smoke` × 4 — debian:13-slim and ubuntu:24.04, each in bundled (`install.sh`) and standalone (`update.sh` direct) modes.
-- `image rootfs smoke` and `image release rootfs smoke` — Docker rootfs builds.
+- `image rootfs smoke` — Docker rootfs build (synthetic rootfs from `airplanes-live/airplanes-update`).
+- `mounted image smoke (legacy)` — renamed from `image release rootfs smoke`. Mounts the legacy ARM64 image rootfs (downloaded from `airplanes-live/image-releases`), runs `update.sh` chroot-style with stubbed systemd, asserts post-update state. The job ID changed; branch protection rules referring to the old name must be migrated.
+- `mounted image smoke (new)` — same shape, against `airplanes-live/image`. Sources its image asset via the new tier-based library (`test/lib/image-source.sh`) — stable release on `main` paths, the rolling `dev-latest` prerelease on `dev` paths.
+- `image-boot-smoke` (workflow `image-boot-smoke.yml`) — push-event matrix over both contracts. Full QEMU boot + update + reboot + idempotency assertions. Manual `workflow_dispatch` supports `image_contract={all,legacy,new}`.
+
+## Asset-source library
+
+The mounted-image smokes and the QEMU boot smoke share `test/lib/image-source.sh`, which resolves an image archive from a tiered source list. Tiers today: `release-stable` (excludes prereleases) and `release-any` (newest by `published_at`, prerelease-friendly). Library exits 64 on tier exhaustion — callers MUST handle this as skip-with-notice, not hard failure, so a long-dormant upstream image repo doesn't break feed CI.
+
+Exit-code capture pattern: the library uses `if cmd; then rc=0; else rc=$?; fi`, not `cmd; rc=$?` and not `if ! cmd; then rc=$?`. The first form puts the call in a tested context (suppresses `set -e` propagation from bats's `set -euo pipefail`) AND captures the un-inverted exit code in the else branch. The other forms either abort under `set -e` or capture the wrong value. Mirror this pattern in any future library code that needs to capture rcs explicitly.
 
 ## The drift test
 

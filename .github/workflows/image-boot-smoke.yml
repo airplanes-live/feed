@@ -1,22 +1,21 @@
 name: Image boot smoke
 
 on:
+  push:
+    branches: [main, dev]
   workflow_dispatch:
     inputs:
-      image_release_repo:
-        description: GitHub repository that publishes the image release
-        required: false
-        default: airplanes-live/image
       image_contract:
-        description: Expected image contract: new or legacy
-        required: false
-        default: new
+        description: Contract to run (legacy, new, or all)
+        type: choice
+        options: [all, legacy, new]
+        default: all
       image_channel:
-        description: Image release channel to select when no explicit regex is provided
+        description: Image release channel to select
         required: false
         default: stable
       image_arch:
-        description: Image architecture to select when no explicit regex is provided
+        description: Image architecture to select
         required: false
         default: arm64
       image_asset_regex:
@@ -33,22 +32,43 @@ concurrency:
 
 jobs:
   image-boot-smoke:
-    name: latest image boot + update + reboot
+    name: image boot smoke (${{ matrix.image_contract }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        image_contract: [legacy, new]
+        include:
+          - image_contract: legacy
+            image_release_repo: airplanes-live/image-releases
+          - image_contract: new
+            image_release_repo: airplanes-live/image
+    # Per-cell gating happens at step level: actionlint correctly rejects
+    # `matrix` context in job-level `if:` (matrix is expanded later in the
+    # evaluation pipeline). Every step below references this guard so the
+    # skipped-cell job runs zero meaningful steps.
     steps:
+      - name: Skip this matrix cell if not selected (dispatch input)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.image_contract != 'all' && matrix.image_contract != github.event.inputs.image_contract
+        run: |
+          echo "Skipping matrix cell ${{ matrix.image_contract }} — dispatch selected ${{ github.event.inputs.image_contract }}"
+          exit 0
+
       - name: Checkout feed
+        if: github.event_name == 'push' || github.event.inputs.image_contract == 'all' || matrix.image_contract == github.event.inputs.image_contract
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
 
       - name: Install QEMU smoke dependencies
+        if: github.event_name == 'push' || github.event.inputs.image_contract == 'all' || matrix.image_contract == github.event.inputs.image_contract
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ca-certificates \
             curl \
+            gh \
             git \
             jq \
             parted \
@@ -61,14 +81,33 @@ jobs:
             xz-utils
 
       - name: Run booted image smoke
+        if: github.event_name == 'push' || github.event.inputs.image_contract == 'all' || matrix.image_contract == github.event.inputs.image_contract
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          AIRPLANES_IMAGE_RELEASE_REPO: ${{ github.event.inputs.image_release_repo || 'airplanes-live/image' }}
-          AIRPLANES_IMAGE_CONTRACT: ${{ github.event.inputs.image_contract || 'new' }}
+          GH_TOKEN: ${{ github.token }}
+          AIRPLANES_IMAGE_RELEASE_REPO: ${{ matrix.image_release_repo }}
+          AIRPLANES_IMAGE_CONTRACT: ${{ matrix.image_contract }}
           AIRPLANES_IMAGE_CHANNEL: ${{ github.event.inputs.image_channel || 'stable' }}
           AIRPLANES_IMAGE_ARCH: ${{ github.event.inputs.image_arch || 'arm64' }}
           AIRPLANES_IMAGE_ASSET_REGEX: ${{ github.event.inputs.image_asset_regex || '' }}
+          # Push to main → only stable releases (production track).
+          # Push to dev / dispatch → release-any (also picks the rolling
+          # dev-latest prerelease published by airplanes-live/image's
+          # build-image.yml).
+          AIRPLANES_IMAGE_SOURCE_TIERS: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release-stable' || 'release-any' }}
           AIRPLANES_BOOT_SMOKE_WORK_DIR: ${{ runner.temp }}/airplanes-image-boot-smoke
+          # KEEP_WORK_DIR=1 preserves $WORK_DIR/qemu-logs across the script's
+          # cleanup trap so the failure-artifact upload step below can read
+          # them. Without this, the cleanup wipes the directory before the
+          # upload runs.
+          AIRPLANES_BOOT_SMOKE_KEEP_WORK_DIR: '1'
         run: |
-          sudo --preserve-env=GITHUB_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_IMAGE_CHANNEL,AIRPLANES_IMAGE_ARCH,AIRPLANES_IMAGE_ASSET_REGEX,AIRPLANES_BOOT_SMOKE_WORK_DIR \
+          sudo --preserve-env=GH_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_IMAGE_CHANNEL,AIRPLANES_IMAGE_ARCH,AIRPLANES_IMAGE_ASSET_REGEX,AIRPLANES_IMAGE_SOURCE_TIERS,AIRPLANES_BOOT_SMOKE_WORK_DIR,AIRPLANES_BOOT_SMOKE_KEEP_WORK_DIR \
             bash test/image-boot-smoke.sh
+
+      - name: Upload QEMU logs on failure
+        if: failure() && (github.event_name == 'push' || github.event.inputs.image_contract == 'all' || matrix.image_contract == github.event.inputs.image_contract)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-boot-smoke-${{ matrix.image_contract }}-logs
+          path: ${{ runner.temp }}/airplanes-image-boot-smoke/qemu-logs
+          if-no-files-found: warn
