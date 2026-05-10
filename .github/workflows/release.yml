@@ -1,0 +1,231 @@
+name: Release
+
+# Triggers:
+#   push of a v* tag — full release flow: validate format, run tests, render
+#       dist/install.sh with the tag substituted, publish a GitHub Release
+#       with install.sh + update.sh + SHA256SUMS attached.
+#   workflow_dispatch — validation mode: render dist/install.sh against an
+#       arbitrary supplied ref (defaults to v0.0.0-validation) and run the
+#       installer smoke against the rendered artifact. No GitHub Release
+#       published, no tag push required. Use this to exercise the pipeline
+#       before tagging anything for real.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      validation_ref:
+        description: 'Tag-shaped string to substitute into __FEED_REF__ for validation render (default: v0.0.0-validation)'
+        type: string
+        default: v0.0.0-validation
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    name: validate tag format
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Strict semver check
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Strict: vMAJOR.MINOR.PATCH, no leading zeroes, no prereleases.
+          # Matches the regex airplanes_resolve_latest_stable_tag uses.
+          if ! [[ "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Tag '$REF_NAME' does not match strict v[MAJOR].[MINOR].[PATCH] format."
+            echo "::error::Expected examples: v0.1.0, v1.2.3. Reject leading zeroes (v01.2.3) and prereleases (v0.1.0-rc.1)."
+            exit 1
+          fi
+
+  test:
+    name: bats + lint
+    needs: [validate-tag]
+    if: |
+      always() &&
+      (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install shellcheck, bats, jq, curl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck bats jq curl
+
+      - name: Run shellcheck (warning severity)
+        run: |
+          find . -name '*.sh' -not -path './.git/*' -print0 \
+            | xargs -0 shellcheck -S warning
+
+      - name: Run bash syntax check
+        run: |
+          find . -name '*.sh' -not -path './.git/*' -print0 \
+            | xargs -0 -n1 bash -n
+
+      - name: Run bats suite
+        run: bats test/
+
+  render:
+    name: render dist/install.sh
+    needs: [test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ref: ${{ steps.derive.outputs.ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Derive ref to substitute
+        id: derive
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_REF: ${{ github.ref_name }}
+          DISPATCH_REF: ${{ inputs.validation_ref }}
+        run: |
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            echo "ref=$PUSH_REF" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render dist/install.sh
+        env:
+          FEED_REF: ${{ steps.derive.outputs.ref }}
+        run: |
+          mkdir -p dist
+          # Substitute the literal __FEED_REF__ marker with the tag string.
+          # Python avoids regex-escaping pitfalls (slashes, dots) in shell sed.
+          python3 - "$FEED_REF" install.sh dist/install.sh <<'PY'
+          import sys
+          ref, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]
+          with open(src) as f:
+              content = f.read()
+          if "__FEED_REF__" not in content:
+              sys.stderr.write("ERROR: __FEED_REF__ marker not found in install.sh\n")
+              sys.exit(1)
+          content = content.replace("__FEED_REF__", ref)
+          with open(dst, "w") as f:
+              f.write(content)
+          PY
+          chmod +x dist/install.sh
+
+      - name: Assert rendered asset contains no __FEED_REF__
+        run: |
+          if grep -q '__FEED_REF__' dist/install.sh; then
+            echo "::error::dist/install.sh still contains __FEED_REF__ after render."
+            exit 1
+          fi
+
+      - name: Copy update.sh into dist (no rendering needed)
+        run: |
+          cp update.sh dist/update.sh
+          chmod +x dist/update.sh
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: sha256sum install.sh update.sh > SHA256SUMS
+
+      - name: Upload rendered artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          path: |
+            dist/install.sh
+            dist/update.sh
+            dist/SHA256SUMS
+          retention-days: 7
+
+  validation-smoke:
+    name: validation render smoke
+    needs: [render]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download rendered artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: dist/
+
+      - name: Assert rendered AIRPLANES_RELEASE_REF matches dispatch input
+        env:
+          EXPECTED_REF: ${{ needs.render.outputs.ref }}
+        run: |
+          if ! grep -F "AIRPLANES_RELEASE_REF='$EXPECTED_REF'" dist/install.sh; then
+            echo "::error::dist/install.sh does not contain AIRPLANES_RELEASE_REF='$EXPECTED_REF'"
+            grep "AIRPLANES_RELEASE_REF" dist/install.sh || true
+            exit 1
+          fi
+
+      - name: Bash syntax check on rendered installer
+        run: bash -n dist/install.sh
+
+      - name: Verify SHA256SUMS
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS
+
+  release:
+    name: publish GitHub Release
+    needs: [render]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Download rendered artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: dist/
+
+      - name: Verify SHA256SUMS
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS
+
+      - name: Create draft release with assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          # Draft-first publishing: GitHub's immutable-release model locks
+          # release content after publish, so create as draft, attach assets,
+          # then flip to published. This avoids a window where the release is
+          # public but assets aren't all uploaded yet.
+          gh release create "$TAG_NAME" \
+            --draft \
+            --title "$TAG_NAME" \
+            --generate-notes \
+            dist/install.sh \
+            dist/update.sh \
+            dist/SHA256SUMS
+
+      - name: Publish (flip draft to released)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release edit "$TAG_NAME" --draft=false --latest
