@@ -16,7 +16,7 @@ Find your antenna coordinates and elevation:
 Then install the feed client:
 
 ```
-curl -L -o /tmp/feed.sh https://raw.githubusercontent.com/airplanes-live/feed/main/install.sh
+curl -L -o /tmp/feed.sh https://github.com/airplanes-live/feed/releases/latest/download/install.sh
 sudo bash /tmp/feed.sh
 ```
 
@@ -139,7 +139,7 @@ sudo apl-feed restore airplanes-feeder-backup.json --force
 Update without reconfiguring:
 
 ```
-curl -L -o /tmp/update.sh https://raw.githubusercontent.com/airplanes-live/feed/main/update.sh
+curl -L -o /tmp/update.sh https://github.com/airplanes-live/feed/releases/latest/download/update.sh
 sudo bash /tmp/update.sh
 ```
 
@@ -206,7 +206,7 @@ sudo bash /usr/local/share/tar1090/uninstall.sh airplanes
 Run the installer again to change your feeder settings:
 
 ```
-curl -L -o /tmp/feed.sh https://raw.githubusercontent.com/airplanes-live/feed/main/install.sh
+curl -L -o /tmp/feed.sh https://github.com/airplanes-live/feed/releases/latest/download/install.sh
 sudo bash /tmp/feed.sh
 ```
 
