@@ -17,17 +17,13 @@ if [[ -z "$IMAGE_CONTRACT" ]]; then
         IMAGE_CONTRACT="legacy"
     fi
 fi
-if [[ -n "${AIRPLANES_IMAGE_ASSET_REGEX:-}" ]]; then
-    IMAGE_ASSET_REGEX="$AIRPLANES_IMAGE_ASSET_REGEX"
-elif [[ "$IMAGE_CONTRACT" == "new" ]]; then
-    IMAGE_ASSET_REGEX="(?i)^airplanes-feeder-${IMAGE_CHANNEL}-${IMAGE_ARCH}\\.img\\.xz$"
-else
-    IMAGE_ASSET_REGEX="(?i)\\.(img|img\\.xz|img\\.gz|zip|7z)$"
-fi
-IMAGE_ASSET_STRICT="${AIRPLANES_IMAGE_ASSET_STRICT:-}"
-if [[ -z "$IMAGE_ASSET_STRICT" ]]; then
-    [[ "$IMAGE_CONTRACT" == "new" ]] && IMAGE_ASSET_STRICT=1 || IMAGE_ASSET_STRICT=0
-fi
+# Asset selection (regex + strict-mode) is owned by lib/image-source.sh and
+# derived from CONTRACT/CHANNEL/ARCH. AIRPLANES_IMAGE_ASSET_REGEX is kept as
+# a manual override; AIRPLANES_IMAGE_SOURCE_TIERS picks the tier order.
+AIRPLANES_IMAGE_SOURCE_TIERS="${AIRPLANES_IMAGE_SOURCE_TIERS:-release-any}"
+# shellcheck source=lib/image-source.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib/image-source.sh"
+
 FEED_BRANCH="${AIRPLANES_BOOT_SMOKE_FEED_BRANCH:-boot-smoke}"
 QEMU_TIMEOUT="${AIRPLANES_BOOT_SMOKE_QEMU_TIMEOUT:-8m}"
 MAX_BOOT_ATTEMPTS="${AIRPLANES_BOOT_SMOKE_MAX_BOOT_ATTEMPTS:-2}"
@@ -122,56 +118,6 @@ cmdline_add_flag() {
         fi
     done
     printf '%s %s\n' "$cmdline" "$flag"
-}
-
-github_api() {
-    local url="$1"
-    local -a headers
-    headers=(-H "Accept: application/vnd.github+json")
-    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-        headers+=(
-            -H "Authorization: Bearer $GITHUB_TOKEN"
-            -H "X-GitHub-Api-Version: 2022-11-28"
-        )
-    fi
-    curl --fail --location --silent --show-error "${headers[@]}" "$url"
-}
-
-download_latest_release_image() {
-    local release_json asset_name asset_url output match_count
-    mkdir -p "$DOWNLOAD_DIR"
-    release_json="$DOWNLOAD_DIR/latest-release.json"
-
-    echo "Fetching latest image release from $IMAGE_RELEASE_REPO" >&2
-    github_api "https://api.github.com/repos/$IMAGE_RELEASE_REPO/releases/latest" > "$release_json"
-
-    match_count="$(jq -r --arg re "$IMAGE_ASSET_REGEX" '
-        [.assets[] | select(.name | test($re))] | length
-    ' "$release_json")"
-    if [[ "$match_count" == "0" ]]; then
-        jq -r '.assets[].name' "$release_json" >&2
-        fail "no release asset in $IMAGE_RELEASE_REPO matched $IMAGE_ASSET_REGEX"
-    fi
-    if [[ "$IMAGE_ASSET_STRICT" == "1" && "$match_count" != "1" ]]; then
-        jq -r --arg re "$IMAGE_ASSET_REGEX" '.assets[] | select(.name | test($re)) | .name' "$release_json" >&2
-        fail "expected exactly one release asset in $IMAGE_RELEASE_REPO to match $IMAGE_ASSET_REGEX, got $match_count"
-    fi
-
-    asset_name="$(jq -r --arg re "$IMAGE_ASSET_REGEX" '
-        [.assets[] | select(.name | test($re))] as $matches
-        | (($matches | map(select(.name | test("qemu"; "i"))) | first) // ($matches | first) // empty)
-        | .name // empty
-    ' "$release_json")"
-    asset_url="$(jq -r --arg name "$asset_name" '
-        .assets[] | select(.name == $name) | .browser_download_url
-    ' "$release_json")"
-
-    [[ -n "$asset_name" && -n "$asset_url" ]] || fail "failed to resolve selected release asset URL: $asset_name"
-
-    output="$DOWNLOAD_DIR/$asset_name"
-    echo "Downloading image asset: $asset_name" >&2
-    curl --fail --location --show-error --output "$output" "$asset_url"
-    printf '%s\n' "$output"
 }
 
 find_single_image() {
@@ -600,14 +546,84 @@ run_feed_update() {
         bash /opt/airplanes-boot-smoke/feed-worktree/update.sh
 }
 
+feed_binary_path() {
+    # The feed binary lives in different places per contract: legacy images
+    # ship an image-baked binary at /usr/bin/airplanes-feeder; new-contract
+    # installs build the binary into /usr/local/share/airplanes/feed-airplanes.
+    # Idempotency assertions need the right one.
+    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        printf '%s\n' /usr/bin/airplanes-feeder
+    else
+        printf '%s\n' /usr/local/share/airplanes/feed-airplanes
+    fi
+}
+
+snapshot_post_update_state() {
+    # Captures things that should be stable across reboot + idempotent re-run:
+    #   - feed + mlat binary mtimes (update.sh fast-path skip MUST not rebuild)
+    #   - feeder-id content hash (UUID must survive reboot byte-stable)
+    local feed_bin mlat_bin
+    feed_bin="$(feed_binary_path)"
+    mlat_bin=/usr/local/share/airplanes/venv/bin/mlat-client
+    stat -c '%Y %n' "$feed_bin" "$mlat_bin" > "$STATE_DIR/snapshot-mtimes"
+    sha256sum /etc/airplanes/feeder-id > "$STATE_DIR/snapshot-feeder-id"
+}
+
+assert_state_file_schema_v1() {
+    local path="$1"
+    assert_file "$path"
+    grep -q '^schema_version=1$' "$path" \
+        || fail "$path missing schema_version=1 (daemon state-file contract)"
+}
+
+assert_service_healthy() {
+    local unit="$1"
+    # is-active is the load-bearing check: catches inactive, dead, never-started.
+    systemctl is-active --quiet "$unit" \
+        || fail "$unit is not active"
+    # is-failed is an additional diagnostic: catches the explicit failed state
+    # that is-active alone would already cover, but surfaces it loudly with a
+    # distinct message.
+    if systemctl is-failed --quiet "$unit"; then
+        fail "$unit reports failed state"
+    fi
+}
+
+assert_uuid_stable_across_reboot() {
+    local before after
+    before="$(cut -d' ' -f1 < "$STATE_DIR/snapshot-feeder-id")"
+    after="$(sha256sum /etc/airplanes/feeder-id | cut -d' ' -f1)"
+    [[ "$before" == "$after" ]] \
+        || fail "feeder-id changed across reboot (before=$before after=$after)"
+}
+
+assert_binaries_unchanged() {
+    # Idempotency: a second update.sh run on a freshly-updated rootfs must
+    # take the version-match fast path and leave the costly artifacts alone.
+    local pre_snap post_snap
+    pre_snap="$STATE_DIR/snapshot-mtimes"
+    post_snap="$STATE_DIR/snapshot-mtimes-post-rerun"
+    local feed_bin mlat_bin
+    feed_bin="$(feed_binary_path)"
+    mlat_bin=/usr/local/share/airplanes/venv/bin/mlat-client
+    stat -c '%Y %n' "$feed_bin" "$mlat_bin" > "$post_snap"
+    if ! diff -q "$pre_snap" "$post_snap" >/dev/null; then
+        echo "pre-rerun snapshot:" >&2
+        cat "$pre_snap" >&2
+        echo "post-rerun snapshot:" >&2
+        cat "$post_snap" >&2
+        fail "idempotent update.sh rerun changed binary mtimes (legacy must not rebuild image-baked binary; new must hit the version-match fast path)"
+    fi
+}
+
 phase="$(cat "$STATE_DIR/phase" 2>/dev/null || true)"
 case "$phase" in
     '')
         echo "airplanes image boot smoke: initial update phase"
         run_feed_update
         assert_image_contracts
-        systemctl is-active --quiet airplanes-feed.service \
-            || fail "airplanes-feed.service is not active after update"
+        assert_service_healthy airplanes-feed.service
+        snapshot_post_update_state
         printf '%s\n' updated > "$STATE_DIR/phase"
         sync
         systemctl reboot
@@ -615,8 +631,23 @@ case "$phase" in
     updated)
         echo "airplanes image boot smoke: post-reboot verification phase"
         assert_image_contracts
-        systemctl is-active --quiet airplanes-feed.service \
-            || fail "airplanes-feed.service is not active after reboot"
+        assert_service_healthy airplanes-feed.service
+        # mlat unit stays active even when MLAT_ENABLED=false (it self-disables
+        # via sleep+exit per the daemon classifier in rules/architecture.md),
+        # so is-active is a safe assertion across both branches.
+        assert_service_healthy airplanes-mlat.service
+        assert_state_file_schema_v1 /run/airplanes-feed/state
+        assert_state_file_schema_v1 /run/airplanes-mlat/state
+        assert_uuid_stable_across_reboot
+
+        echo "airplanes image boot smoke: idempotency rerun phase"
+        # Re-run update.sh against the same fixture repos. The version-match
+        # fast paths in update-builds.sh should leave the binaries alone.
+        run_feed_update
+        assert_binaries_unchanged
+        assert_service_healthy airplanes-feed.service
+        assert_service_healthy airplanes-mlat.service
+
         printf '%s\n' success > "$STATE_DIR/result"
         sync
         systemctl poweroff
@@ -754,14 +785,33 @@ run_boot_smoke() {
 }
 
 main() {
-    local image_archive
+    local image_archive rc
     require_commands curl jq git rsync parted sfdisk awk mount umount find cp tee timeout file
-    require_commands unzip xz gzip
+    require_commands unzip xz gzip gh
     if [[ -n "${AIRPLANES_IMAGE_PATH:-}" ]]; then
         image_archive="$AIRPLANES_IMAGE_PATH"
         [[ -f "$image_archive" ]] || fail "AIRPLANES_IMAGE_PATH does not exist: $image_archive"
     else
-        image_archive="$(download_latest_release_image)"
+        # Capture under temporarily-relaxed errexit so the 64 sentinel
+        # (tier exhaustion) can be handled as a skip rather than hard fail.
+        mkdir -p "$DOWNLOAD_DIR"
+        rc=0
+        set +e
+        image_archive="$(image_source_resolve \
+            "$IMAGE_RELEASE_REPO" "$IMAGE_CONTRACT" "$IMAGE_CHANNEL" "$IMAGE_ARCH" \
+            "$AIRPLANES_IMAGE_SOURCE_TIERS" "$DOWNLOAD_DIR" "${AIRPLANES_IMAGE_ASSET_REGEX:-}")"
+        rc=$?
+        set -e
+        case "$rc" in
+            0) ;;
+            64)
+                echo "::notice::no asset available in tiers [$AIRPLANES_IMAGE_SOURCE_TIERS] for $IMAGE_RELEASE_REPO ($IMAGE_CONTRACT/$IMAGE_CHANNEL/$IMAGE_ARCH); skipping smoke"
+                exit 0
+                ;;
+            *)
+                fail "image source resolution failed with rc=$rc"
+                ;;
+        esac
     fi
 
     echo "Work dir: $WORK_DIR"
