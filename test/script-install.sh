@@ -3,10 +3,10 @@ set -euo pipefail
 
 : "${AIRPLANES_FEED_REPO:?AIRPLANES_FEED_REPO is required}"
 : "${AIRPLANES_FEED_BRANCH:?AIRPLANES_FEED_BRANCH is required}"
-TEST_PATH="${AIRPLANES_TEST_PATH:-bundled}"
+TEST_PATH="${AIRPLANES_TEST_PATH:-bundle}"
 case "$TEST_PATH" in
-    bundled|standalone) ;;
-    *) echo "Unknown AIRPLANES_TEST_PATH: $TEST_PATH (expected bundled|standalone)" >&2; exit 1 ;;
+    bundle|bootstrap) ;;
+    *) echo "Unknown AIRPLANES_TEST_PATH: $TEST_PATH (expected bundle|bootstrap)" >&2; exit 1 ;;
 esac
 
 export DEBIAN_FRONTEND=noninteractive
@@ -107,10 +107,10 @@ export APL_FEED_SERVER_URL="http://127.0.0.1:18080"
 export APL_FEED_MAX_RETRY_TIME=5
 export AIRPLANES_PACKAGE_MANAGER=apt
 
-if [[ "$TEST_PATH" == "standalone" ]]; then
-    mkdir -p /tmp/standalone
-    cp /workspace/install.sh /tmp/standalone/install.sh
-    bash /tmp/standalone/install.sh
+if [[ "$TEST_PATH" == "bootstrap" ]]; then
+    mkdir -p /tmp/bootstrap
+    cp /workspace/install.sh /tmp/bootstrap/install.sh
+    bash /tmp/bootstrap/install.sh
 else
     bash /workspace/install.sh
 fi

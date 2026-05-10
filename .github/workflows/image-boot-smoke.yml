@@ -1,4 +1,4 @@
-name: Image boot smoke
+name: Image boot
 
 on:
   push:
@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   image-boot-smoke:
-    name: image boot smoke (${{ matrix.image_contract }})
+    name: image boot (${{ matrix.image_contract }} contract)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -80,13 +80,13 @@ jobs:
             unzip \
             xz-utils
 
-      - name: Run booted image smoke
+      - name: Run image boot
         if: github.event_name == 'push' || github.event.inputs.image_contract == 'all' || matrix.image_contract == github.event.inputs.image_contract
         env:
           GH_TOKEN: ${{ github.token }}
           AIRPLANES_IMAGE_RELEASE_REPO: ${{ matrix.image_release_repo }}
           AIRPLANES_IMAGE_CONTRACT: ${{ matrix.image_contract }}
-          # Same channel-vs-event mapping as ci.yml's mounted-image-smoke-new:
+          # Same channel-vs-event mapping as ci.yml's mounted-image-upgrade-new:
           # main-bound runs use stable channel (looks for the stable-named
           # asset in stable releases); dev-bound runs use dev channel (looks
           # for the dev-named asset, picked up via the rolling dev-latest
@@ -99,7 +99,7 @@ jobs:
           # dev-latest prerelease published by airplanes-live/image's
           # build-image.yml).
           AIRPLANES_IMAGE_SOURCE_TIERS: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release-stable' || 'release-any' }}
-          AIRPLANES_BOOT_SMOKE_WORK_DIR: ${{ runner.temp }}/airplanes-image-boot-smoke
+          AIRPLANES_BOOT_SMOKE_WORK_DIR: ${{ runner.temp }}/airplanes-image-boot
           # KEEP_WORK_DIR=1 preserves $WORK_DIR/qemu-logs across the script's
           # cleanup trap so the failure-artifact upload step below can read
           # them. Without this, the cleanup wipes the directory before the
@@ -107,12 +107,12 @@ jobs:
           AIRPLANES_BOOT_SMOKE_KEEP_WORK_DIR: '1'
         run: |
           sudo --preserve-env=GH_TOKEN,AIRPLANES_IMAGE_RELEASE_REPO,AIRPLANES_IMAGE_CONTRACT,AIRPLANES_IMAGE_CHANNEL,AIRPLANES_IMAGE_ARCH,AIRPLANES_IMAGE_ASSET_REGEX,AIRPLANES_IMAGE_SOURCE_TIERS,AIRPLANES_BOOT_SMOKE_WORK_DIR,AIRPLANES_BOOT_SMOKE_KEEP_WORK_DIR \
-            bash test/image-boot-smoke.sh
+            bash test/image-boot.sh
 
       - name: Upload QEMU logs on failure
         if: failure() && (github.event_name == 'push' || github.event.inputs.image_contract == 'all' || matrix.image_contract == github.event.inputs.image_contract)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: image-boot-smoke-${{ matrix.image_contract }}-logs
-          path: ${{ runner.temp }}/airplanes-image-boot-smoke/qemu-logs
+          name: image-boot-${{ matrix.image_contract }}-logs
+          path: ${{ runner.temp }}/airplanes-image-boot/qemu-logs
           if-no-files-found: warn

@@ -4,7 +4,7 @@ set -euo pipefail
 : "${AIRPLANES_SOURCE_REPO:?AIRPLANES_SOURCE_REPO is required}"
 : "${AIRPLANES_CANDIDATE_REPO:?AIRPLANES_CANDIDATE_REPO is required}"
 
-DIAG_DIR=/tmp/upgrade-smoke-diag
+DIAG_DIR=/tmp/script-upgrade-diag
 mkdir -p "$DIAG_DIR"
 MOCK_PID=
 
