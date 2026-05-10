@@ -232,14 +232,38 @@ write_archive_fallback_stubs() {
     rm -rf "$fresh_root"
 }
 
-@test "missing release-channel falls back to main" {
+@test "missing release-channel falls back to stable sentinel" {
     local fresh_root
     fresh_root="$(mktemp -d)"
     mkdir -p "$fresh_root/etc"
     run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
         bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
     [ "$status" -eq 0 ]
-    [ "$output" = "main" ]
+    [ "$output" = "stable" ]
+    rm -rf "$fresh_root"
+}
+
+@test "release-channel file=stable sets AIRPLANES_FEED_BRANCH=stable sentinel" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'stable\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "stable" ]
+    rm -rf "$fresh_root"
+}
+
+@test "release-channel file=main treated as legacy alias for stable" {
+    local fresh_root
+    fresh_root="$(mktemp -d)"
+    mkdir -p "$fresh_root/etc/airplanes"
+    printf 'main\n' > "$fresh_root/etc/airplanes/release-channel"
+    run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
+        bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "stable" ]
     rm -rf "$fresh_root"
 }
 
@@ -259,11 +283,11 @@ write_archive_fallback_stubs() {
     local fresh_root
     fresh_root="$(mktemp -d)"
     mkdir -p "$fresh_root/etc/airplanes"
-    printf 'main\nbogus\n' > "$fresh_root/etc/airplanes/release-channel"
+    printf 'dev\nbogus\n' > "$fresh_root/etc/airplanes/release-channel"
     run env -u AIRPLANES_FEED_BRANCH AIRPLANES_ROOT="$fresh_root" \
         bash -c "source $HELPER; printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
     [ "$status" -eq 0 ]
-    [ "$output" = "main" ]
+    [ "$output" = "dev" ]
     rm -rf "$fresh_root"
 }
 
@@ -276,7 +300,7 @@ write_archive_fallback_stubs() {
         bash -c "source $HELPER"
     [ "$status" -ne 0 ]
     [[ "$output" == *"feature-x"* ]]
-    [[ "$output" == *"main, dev"* ]]
+    [[ "$output" == *"stable, dev, main"* ]]
     rm -rf "$fresh_root"
 }
 
@@ -325,4 +349,120 @@ write_archive_fallback_stubs() {
     [ "$status" -eq 0 ]
     [ "$output" = "feature-x" ]
     rm -rf "$fresh_root"
+}
+
+# Tag resolution: airplanes_resolve_latest_stable_tag picks the highest
+# semver-strict (vMAJOR.MINOR.PATCH, no leading zeroes, no prereleases) tag
+# from the configured feed remote. Tests use a local bare repo as the remote
+# so they don't depend on network or on the live feed repo's tag state.
+
+make_remote_with_tags() {
+    local remote_dir="$1"
+    shift
+    local work_dir
+    work_dir="$(mktemp -d)"
+    git -C "$work_dir" init -q -b main
+    git -C "$work_dir" config user.email test@example.invalid
+    git -C "$work_dir" config user.name "Test User"
+    echo "seed" > "$work_dir/seed"
+    git -C "$work_dir" add seed
+    git -C "$work_dir" commit -q -m "seed"
+    git init --bare -q "$remote_dir"
+    git -C "$work_dir" remote add origin "$remote_dir"
+    git -C "$work_dir" push -q origin main
+    local tag
+    for tag in "$@"; do
+        git -C "$work_dir" tag "$tag"
+    done
+    if (( $# > 0 )); then
+        git -C "$work_dir" push -q origin --tags
+    fi
+    rm -rf "$work_dir"
+}
+
+@test "airplanes_resolve_latest_stable_tag picks highest semver-strict tag" {
+    local remote
+    remote="$(mktemp -d)/remote.git"
+    make_remote_with_tags "$remote" v0.1.0 v0.1.1 v0.2.0 v1.0.0
+    run airplanes_resolve_latest_stable_tag "$remote"
+    [ "$status" -eq 0 ]
+    [ "$output" = "v1.0.0" ]
+}
+
+@test "airplanes_resolve_latest_stable_tag ignores prerelease tags" {
+    local remote
+    remote="$(mktemp -d)/remote.git"
+    make_remote_with_tags "$remote" v0.1.0 v0.2.0-rc.1 v0.2.0-rc.2
+    run airplanes_resolve_latest_stable_tag "$remote"
+    [ "$status" -eq 0 ]
+    [ "$output" = "v0.1.0" ]
+}
+
+@test "airplanes_resolve_latest_stable_tag rejects leading-zero versions" {
+    local remote
+    remote="$(mktemp -d)/remote.git"
+    make_remote_with_tags "$remote" v0.1.0 v01.02.03
+    run airplanes_resolve_latest_stable_tag "$remote"
+    [ "$status" -eq 0 ]
+    [ "$output" = "v0.1.0" ]
+}
+
+@test "airplanes_resolve_latest_stable_tag returns 1 when no matching tags" {
+    local remote
+    remote="$(mktemp -d)/remote.git"
+    make_remote_with_tags "$remote" v1.0 release-2024 some-feature
+    run airplanes_resolve_latest_stable_tag "$remote"
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+}
+
+@test "airplanes_resolve_latest_stable_tag returns 2 on remote-not-found" {
+    run airplanes_resolve_latest_stable_tag "/nonexistent/path/repo.git"
+    [ "$status" -eq 2 ]
+}
+
+@test "airplanes_resolve_feed_branch resolves stable sentinel via remote" {
+    local remote
+    remote="$(mktemp -d)/remote.git"
+    make_remote_with_tags "$remote" v0.1.0 v0.2.0
+    AIRPLANES_FEED_REPO="$remote"
+    AIRPLANES_FEED_BRANCH=stable
+    airplanes_resolve_feed_branch
+    [ "$AIRPLANES_FEED_BRANCH" = "v0.2.0" ]
+}
+
+@test "airplanes_resolve_feed_branch leaves dev alone" {
+    AIRPLANES_FEED_BRANCH=dev
+    airplanes_resolve_feed_branch
+    [ "$AIRPLANES_FEED_BRANCH" = "dev" ]
+}
+
+@test "airplanes_resolve_feed_branch leaves explicit tag alone" {
+    AIRPLANES_FEED_BRANCH=v0.1.0
+    airplanes_resolve_feed_branch
+    [ "$AIRPLANES_FEED_BRANCH" = "v0.1.0" ]
+}
+
+@test "airplanes_resolve_feed_branch leaves arbitrary ref alone" {
+    AIRPLANES_FEED_BRANCH=feature-x
+    airplanes_resolve_feed_branch
+    [ "$AIRPLANES_FEED_BRANCH" = "feature-x" ]
+}
+
+@test "airplanes_resolve_feed_branch aborts with no-tags-found on stable channel + empty repo" {
+    local remote
+    remote="$(mktemp -d)/remote.git"
+    make_remote_with_tags "$remote" some-feature
+    run env AIRPLANES_FEED_REPO="$remote" AIRPLANES_FEED_BRANCH=stable \
+        bash -c "source $HELPER; airplanes_resolve_feed_branch"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no v[MAJOR].[MINOR].[PATCH] tags exist"* ]]
+}
+
+@test "airplanes_resolve_feed_branch aborts with lookup-failed on stable channel + bad remote" {
+    run env AIRPLANES_FEED_REPO="/nonexistent/path/repo.git" AIRPLANES_FEED_BRANCH=stable \
+        bash -c "source $HELPER; airplanes_resolve_feed_branch"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"could not query release tags"* ]]
+    [[ "$output" == *"network/DNS/TLS"* ]]
 }

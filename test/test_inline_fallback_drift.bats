@@ -92,6 +92,8 @@ function_body() {
     lib="$(<"$LIB")"
 
     for fn in \
+        airplanes_resolve_latest_stable_tag \
+        airplanes_resolve_feed_branch \
         airplanes_path \
         airplanes_init_paths \
         airplanes_is_image_install \

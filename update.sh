@@ -40,20 +40,72 @@ else
     AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
     AIRPLANES_FEED_REPO="${AIRPLANES_FEED_REPO:-https://github.com/airplanes-live/feed.git}"
 
-    # Image-built feeders pin their runtime-update branch to the channel they
-    # were built from via /etc/airplanes/release-channel. Without this, a
-    # dev-channel image silently falls back to feed/main and self-replaces
-    # update.sh with the older main version on the first update — sticky
-    # regression. Manual non-image installs (no release-channel file) keep
-    # the historical "main" default. Allowlist matches install-update-common.sh.
+    airplanes_resolve_latest_stable_tag() {
+        local repo="${1:-$AIRPLANES_FEED_REPO}"
+        local refs latest=""
+        if ! refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote --tags --refs "$repo" 2>/dev/null)"; then
+            return 2
+        fi
+        if [[ -z "$refs" ]]; then
+            return 1
+        fi
+        local _sha _refname _tag
+        while IFS=$'\t' read -r _sha _refname; do
+            _tag="${_refname#refs/tags/}"
+            if [[ "$_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+                if [[ -z "$latest" ]]; then
+                    latest="$_tag"
+                else
+                    latest="$(printf '%s\n%s\n' "$latest" "$_tag" | sort -V | tail -n 1)"
+                fi
+            fi
+        done <<< "$refs"
+        if [[ -z "$latest" ]]; then
+            return 1
+        fi
+        printf '%s' "$latest"
+        return 0
+    }
+
+    airplanes_resolve_feed_branch() {
+        if [[ "${AIRPLANES_FEED_BRANCH:-}" != "stable" ]]; then
+            return 0
+        fi
+        local resolved rc=0
+        resolved="$(airplanes_resolve_latest_stable_tag "$AIRPLANES_FEED_REPO")" || rc=$?
+        case $rc in
+            0) AIRPLANES_FEED_BRANCH="$resolved" ;;
+            1)
+                echo "ERROR: stable release channel selected but no v[MAJOR].[MINOR].[PATCH] tags exist at $AIRPLANES_FEED_REPO." >&2
+                echo "       Keeping current install unchanged." >&2
+                exit 1
+                ;;
+            2)
+                echo "ERROR: could not query release tags from $AIRPLANES_FEED_REPO (network/DNS/TLS failure)." >&2
+                echo "       Keeping current install unchanged." >&2
+                exit 1
+                ;;
+        esac
+    }
+
+    # Image-built feeders pin their runtime-update channel via
+    # /etc/airplanes/release-channel. Allowlist: stable, dev, main. 'main'
+    # is accepted as a legacy alias for 'stable' so pre-stable images stay
+    # updatable without a re-flash. Manual installs without the file
+    # default to the stable channel.
+    #
+    # For the stable channel, AIRPLANES_FEED_BRANCH is set to the literal
+    # "stable" sentinel here; the actual tag is resolved later by
+    # airplanes_resolve_feed_branch (which calls git ls-remote).
     if [[ -z "${AIRPLANES_FEED_BRANCH:-}" ]]; then
         _release_channel_file="${AIRPLANES_ROOT%/}/etc/airplanes/release-channel"
         if [[ -r "$_release_channel_file" ]]; then
             _release_channel="$(head -n1 "$_release_channel_file" | tr -d '[:space:]')"
             case "$_release_channel" in
-                main|dev) AIRPLANES_FEED_BRANCH="$_release_channel" ;;
+                stable|main) AIRPLANES_FEED_BRANCH="stable" ;;
+                dev) AIRPLANES_FEED_BRANCH="dev" ;;
                 *)
-                    echo "ERROR: $_release_channel_file contains '$_release_channel' (expected one of: main, dev)" >&2
+                    echo "ERROR: $_release_channel_file contains '$_release_channel' (expected one of: stable, dev, main)" >&2
                     exit 1
                     ;;
             esac
@@ -61,7 +113,7 @@ else
         fi
         unset _release_channel_file
     fi
-    AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-main}"
+    AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-stable}"
 
     airplanes_path() {
         local path="$1"
@@ -245,6 +297,11 @@ touch "$LOGFILE"
 
 airplanes_install_update_deps
 hash -r
+
+# Resolve the "stable" channel sentinel into a concrete tag now that git is
+# guaranteed installed. No-op if AIRPLANES_FEED_BRANCH is already a concrete
+# ref (an explicit env override, "dev", or a tag the caller supplied).
+airplanes_resolve_feed_branch
 
 if [[ "$1" == "test" ]]; then
     TEST_GIT="${AIRPLANES_TEST_GIT:-/tmp/ax_test}"

@@ -6,27 +6,92 @@
 AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
 AIRPLANES_FEED_REPO="${AIRPLANES_FEED_REPO:-https://github.com/airplanes-live/feed.git}"
 
-# Image-built feeders pin their runtime-update branch to the channel they were
-# built from via /etc/airplanes/release-channel. Without this, a dev-channel
-# image falls back to feed/main on the first webconfig-triggered update and
-# self-replaces update.sh with the older main version (sticky regression: the
-# pin is never re-asserted because main's update.sh has no awareness of it).
-# Manual installs without the file get the historical "main" default.
+# Resolve the latest semver-strict release tag from the feed remote.
+# Strict format: vMAJOR.MINOR.PATCH with no leading zeroes, no prereleases.
+# Echoes the tag name on success.
+# Returns 0 = found, 1 = lookup OK but no matching tags, 2 = lookup itself failed.
+airplanes_resolve_latest_stable_tag() {
+    local repo="${1:-$AIRPLANES_FEED_REPO}"
+    local refs latest=""
+    if ! refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote --tags --refs "$repo" 2>/dev/null)"; then
+        return 2
+    fi
+    if [[ -z "$refs" ]]; then
+        return 1
+    fi
+    local _sha _refname _tag
+    while IFS=$'\t' read -r _sha _refname; do
+        _tag="${_refname#refs/tags/}"
+        if [[ "$_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            if [[ -z "$latest" ]]; then
+                latest="$_tag"
+            else
+                latest="$(printf '%s\n%s\n' "$latest" "$_tag" | sort -V | tail -n 1)"
+            fi
+        fi
+    done <<< "$refs"
+    if [[ -z "$latest" ]]; then
+        return 1
+    fi
+    printf '%s' "$latest"
+    return 0
+}
+
+# Resolve AIRPLANES_FEED_BRANCH from the channel sentinel "stable" to the
+# actual latest tag. No-op if AIRPLANES_FEED_BRANCH is already a concrete
+# ref (a tag name, branch, or SHA). Aborts loudly with distinct messages
+# for "lookup failed" (network/DNS/TLS) versus "no matching tags exist".
 #
-# Allowlist enforced: only {main, dev}. An existing file with a different
-# value is treated as operator error and aborts the update — silently
-# falling back to "main" would recreate the dev → main downgrade through
-# corruption instead of absence. Image build (image stage 06) applies the
-# same allowlist so a typoed AIRPLANES_FEED_BRANCH never reaches a flashed
-# rootfs.
+# Must be called AFTER bootstrap deps (git) are installed — the resolver
+# uses git ls-remote.
+airplanes_resolve_feed_branch() {
+    if [[ "${AIRPLANES_FEED_BRANCH:-}" != "stable" ]]; then
+        return 0
+    fi
+    local resolved rc=0
+    resolved="$(airplanes_resolve_latest_stable_tag "$AIRPLANES_FEED_REPO")" || rc=$?
+    case $rc in
+        0) AIRPLANES_FEED_BRANCH="$resolved" ;;
+        1)
+            echo "ERROR: stable release channel selected but no v[MAJOR].[MINOR].[PATCH] tags exist at $AIRPLANES_FEED_REPO." >&2
+            echo "       Keeping current install unchanged." >&2
+            exit 1
+            ;;
+        2)
+            echo "ERROR: could not query release tags from $AIRPLANES_FEED_REPO (network/DNS/TLS failure)." >&2
+            echo "       Keeping current install unchanged." >&2
+            exit 1
+            ;;
+    esac
+}
+
+# Image-built feeders pin their runtime-update channel via
+# /etc/airplanes/release-channel. Allowlist: stable, dev, main. Manual
+# installs without the file default to the stable channel.
+#
+# 'main' is accepted as a legacy alias for 'stable'. Pre-stable-release
+# images may have written 'main' to the file before this script learned
+# about stable-tag resolution; treating it as an alias keeps those
+# images updatable without forcing a re-flash.
+#
+# For the stable channel, AIRPLANES_FEED_BRANCH is set to the literal
+# string "stable" as a sentinel. The actual tag is resolved later by
+# airplanes_resolve_feed_branch (which calls git ls-remote, so it must
+# be invoked AFTER bootstrap deps install). This keeps the source-time
+# block cheap and lets curl-pipe-bash bootstrap reach deps install
+# before any network resolution.
+#
+# An explicit AIRPLANES_FEED_BRANCH env var bypasses this entire
+# mechanism so operators can pin to any ref for testing/recovery.
 if [[ -z "${AIRPLANES_FEED_BRANCH:-}" ]]; then
     _release_channel_file="${AIRPLANES_ROOT%/}/etc/airplanes/release-channel"
     if [[ -r "$_release_channel_file" ]]; then
         _release_channel="$(head -n1 "$_release_channel_file" | tr -d '[:space:]')"
         case "$_release_channel" in
-            main|dev) AIRPLANES_FEED_BRANCH="$_release_channel" ;;
+            stable|main) AIRPLANES_FEED_BRANCH="stable" ;;
+            dev) AIRPLANES_FEED_BRANCH="dev" ;;
             *)
-                echo "ERROR: $_release_channel_file contains '$_release_channel' (expected one of: main, dev)" >&2
+                echo "ERROR: $_release_channel_file contains '$_release_channel' (expected one of: stable, dev, main)" >&2
                 exit 1
                 ;;
         esac
@@ -34,7 +99,7 @@ if [[ -z "${AIRPLANES_FEED_BRANCH:-}" ]]; then
     fi
     unset _release_channel_file
 fi
-AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-main}"
+AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-stable}"
 
 airplanes_path() {
     local path="$1"
