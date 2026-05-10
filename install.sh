@@ -10,22 +10,24 @@ else
     AIRPLANES_ROOT="${AIRPLANES_ROOT:-/}"
     AIRPLANES_FEED_REPO="${AIRPLANES_FEED_REPO:-https://github.com/airplanes-live/feed.git}"
 
-    # Release CI renders this asset with __FEED_REF__ substituted for the
-    # tag being released, so a curl of releases/<tag>/download/install.sh
-    # installs that exact tag. The source-tree copy on feed/dev or feed/main
-    # leaves the placeholder literal; AIRPLANES_RELEASE_REF resets to empty
-    # in that case and the fallback chain lands on "main" — same behavior as
-    # before this template marker existed.
+    # The next line carries the release-CI template marker. CI replaces
+    # ONLY THE FIRST occurrence of the marker string in this file (via
+    # str.replace count=1), so this assignment is the substitution target.
+    # The unrendered sentinel below is split across shell concatenation
+    # so the substitution doesn't match it and the post-render comparison
+    # stays meaningful. See docs/RELEASE_CHECKLIST.md.
     #
     # An explicit AIRPLANES_FEED_BRANCH env var still wins (image-build use,
     # operator overrides). Source-clone use sources install-update-common.sh,
     # which defines airplanes_resolve_feed_branch for stable-channel tag
     # resolution; the inline fallback doesn't do channel resolution and
-    # provides a no-op stub so call sites work either way.
+    # provides a no-op stub so call sites work uniformly.
     AIRPLANES_RELEASE_REF='__FEED_REF__'
-    if [[ "$AIRPLANES_RELEASE_REF" == "__FEED_REF__" ]]; then
+    _airplanes_unrendered_marker='__''FEED_REF__'
+    if [[ "$AIRPLANES_RELEASE_REF" == "$_airplanes_unrendered_marker" ]]; then
         AIRPLANES_RELEASE_REF=""
     fi
+    unset _airplanes_unrendered_marker
     AIRPLANES_FEED_BRANCH="${AIRPLANES_FEED_BRANCH:-${AIRPLANES_RELEASE_REF:-main}}"
     unset AIRPLANES_RELEASE_REF
 

@@ -133,3 +133,66 @@ SH
     [ -f "$ROOT_DIR/root/standalone-setup-pwd" ]
     [ "$(cat "$ROOT_DIR/root/standalone-setup-pwd")" = "$ROOT_DIR/root/usr/local/share/airplanes/git" ]
 }
+
+# __FEED_REF__ template behavior: the source-tree install.sh leaves the
+# placeholder literal (release CI substitutes it before publishing as the
+# release asset). When literal, AIRPLANES_RELEASE_REF resets to empty and
+# the fallback chain lands on "main". When substituted (simulated here
+# via sed), AIRPLANES_RELEASE_REF holds the tag and AIRPLANES_FEED_BRANCH
+# resolves to it.
+
+extract_release_ref_eval() {
+    # Print the post-evaluation value of AIRPLANES_FEED_BRANCH when the
+    # script's inline fallback block runs in isolation. We extract only
+    # the marker handling + AIRPLANES_FEED_BRANCH assignment to avoid
+    # pulling in unrelated globals. Pattern matches the AIRPLANES_RELEASE_REF
+    # assignment line regardless of whether the placeholder has been
+    # substituted by release CI.
+    local script="$1"
+    awk '
+        /^[[:space:]]*AIRPLANES_RELEASE_REF=/ { in_block = 1 }
+        in_block { print }
+        in_block && /unset AIRPLANES_RELEASE_REF/ { exit }
+    ' "$script"
+}
+
+@test "inline fallback __FEED_REF__ literal falls through to main" {
+    local snippet
+    snippet="$(extract_release_ref_eval "$INSTALL")"
+    run env -u AIRPLANES_FEED_BRANCH bash -c "$snippet
+printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "main" ]
+}
+
+@test "inline fallback __FEED_REF__ substituted uses the tag value" {
+    local rendered="$ROOT_DIR/install-rendered.sh"
+    python3 -c '
+import sys
+src, dst, ref = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(src) as f: c = f.read()
+with open(dst, "w") as f: f.write(c.replace("__FEED_REF__", ref, 1))
+' "$INSTALL" "$rendered" "v0.1.0"
+    local snippet
+    snippet="$(extract_release_ref_eval "$rendered")"
+    run env -u AIRPLANES_FEED_BRANCH bash -c "$snippet
+printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "v0.1.0" ]
+}
+
+@test "inline fallback __FEED_REF__ substituted still respects explicit env override" {
+    local rendered="$ROOT_DIR/install-rendered.sh"
+    python3 -c '
+import sys
+src, dst, ref = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(src) as f: c = f.read()
+with open(dst, "w") as f: f.write(c.replace("__FEED_REF__", ref, 1))
+' "$INSTALL" "$rendered" "v0.1.0"
+    local snippet
+    snippet="$(extract_release_ref_eval "$rendered")"
+    run env AIRPLANES_FEED_BRANCH=v0.2.0-test bash -c "$snippet
+printf '%s' \"\$AIRPLANES_FEED_BRANCH\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "v0.2.0-test" ]
+}
