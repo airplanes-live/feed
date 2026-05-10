@@ -181,36 +181,6 @@ EOF
     [[ "$output" == *'/usr/local/share/airplanes/update.sh'* ]]
 }
 
-# --- status ---
-
-@test "status reports MLAT_ENABLED, MLAT_USER, and service state" {
-    write_feed_env "alice" "true"
-    ROOT="/"
-    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-
-    run apl_feed_mlat_status
-
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'MLAT_ENABLED=true'* ]]
-    [[ "$output" == *'MLAT_USER="alice"'* ]]
-    [[ "$output" == *'airplanes-mlat.service: active'* ]]
-}
-
-@test "status reports (unset) when feed.env lacks MLAT_ENABLED" {
-    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
-MLAT_USER="alice"
-EOF
-    ROOT="/"
-    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-
-    run apl_feed_mlat_status
-
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'MLAT_ENABLED=(unset)'* ]]
-}
-
 # --- restart-skip semantics ---
 
 @test "AIRPLANES_BUILD_MODE=1 skips the systemctl restart (file edits still happen)" {

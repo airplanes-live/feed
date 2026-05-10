@@ -133,43 +133,20 @@ apl_feed_mlat_enable() {
     fi
 }
 
-apl_feed_mlat_status() {
-    local opt_rc
-    while [[ $# -gt 0 ]]; do
-        if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
-        case "$opt_rc" in
-            1) shift ;;
-            2) shift 2 ;;
-            0) die "unknown flag for mlat status: $1" ;;
-        esac
-    done
-
-    local feed_env user enabled service_state
-    feed_env="$(feed_env_path)"
-    if [[ ! -f "$feed_env" ]]; then
-        echo "feed.env not found at $feed_env; run setup first" >&2
-        return 1
-    fi
-    user="$(feed_env_get MLAT_USER 2>/dev/null || true)"
-    enabled="$(feed_env_get MLAT_ENABLED 2>/dev/null || true)"
-
-    printf 'MLAT_ENABLED=%s\n' "${enabled:-(unset)}"
-    printf 'MLAT_USER="%s"\n' "$user"
-    if [[ "$ROOT" == "/" ]] && command -v systemctl >/dev/null 2>&1; then
-        service_state="$(systemctl is-active airplanes-mlat 2>/dev/null || true)"
-        printf 'airplanes-mlat.service: %s\n' "${service_state:-unknown}"
-    fi
-}
-
 dispatch_mlat() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "mlat requires a subcommand (enable|disable|status)"
+    [[ -n "$sub" ]] || die "mlat requires a subcommand (enable|disable)"
     shift || true
     case "$sub" in
         enable)  apl_feed_mlat_enable  "$@" ;;
         disable) apl_feed_mlat_disable "$@" ;;
-        status)  apl_feed_mlat_status  "$@" ;;
         -h|--help) usage ;;
         *) die "unknown mlat subcommand: $sub" ;;
     esac
 }
+
+# Status reporting lives in `apl-feed status`, which reads the daemon's
+# runtime state file via scripts/lib/state-reader.sh. A focused
+# `apl-feed mlat status` would either duplicate that logic or violate
+# the "CLI side does not re-derive predicates from feed.env" rule —
+# neither pays back vs. just running `apl-feed status`.

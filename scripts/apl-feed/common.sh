@@ -35,6 +35,8 @@ Usage:
   apl-feed claim rotate --abort
   apl-feed claim set [--force]
   apl-feed id set [--force]
+  apl-feed mlat enable
+  apl-feed mlat disable
   apl-feed backup <file>
   apl-feed restore <file>
   apl-feed restore --check <file>
