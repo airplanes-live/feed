@@ -114,7 +114,12 @@ jobs:
           if "__FEED_REF__" not in content:
               sys.stderr.write("ERROR: __FEED_REF__ marker not found in install.sh\n")
               sys.exit(1)
-          content = content.replace("__FEED_REF__", ref)
+          # Replace only the FIRST occurrence: the AIRPLANES_RELEASE_REF
+          # assignment line. The second occurrence is the comparison sentinel
+          # ("did substitution happen?") and must stay literal — otherwise
+          # the rendered installer's "if substituted, use the ref" check
+          # collapses into always-equal and we'd fall through to "main".
+          content = content.replace("__FEED_REF__", ref, 1)
           with open(dst, "w") as f:
               f.write(content)
           PY
