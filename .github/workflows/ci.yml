@@ -202,3 +202,59 @@ jobs:
         with:
           name: update-regression-artifacts
           path: ${{ runner.temp }}/update-regression
+
+  legacy-upgrade-smoke:
+    name: legacy script upgrade smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout legacy (origin/main HEAD)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          path: legacy
+          persist-credentials: false
+
+      - name: Pin legacy branch label to main
+        run: |
+          current="$(git -C legacy rev-parse --abbrev-ref HEAD)"
+          if [[ "$current" != "main" ]]; then
+            git -C legacy branch -f main HEAD
+          fi
+
+      - name: Checkout candidate (PR / branch HEAD)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: candidate
+          persist-credentials: false
+
+      - name: Pin candidate branch label to dev
+        run: |
+          # Force-label the candidate as "dev" so update.sh's release-channel
+          # allowlist accepts it without env-var bypass — same trick the
+          # update-regression job uses.
+          current="$(git -C candidate rev-parse --abbrev-ref HEAD)"
+          if [[ "$current" != "dev" ]]; then
+            git -C candidate branch -f dev HEAD
+          fi
+
+      - name: Prepare diagnostics directory
+        run: mkdir -p "${{ runner.temp }}/legacy-upgrade-smoke"
+
+      - name: Run legacy upgrade smoke
+        run: |
+          docker run --rm \
+            -e AIRPLANES_LEGACY_REPO=file:///legacy \
+            -e AIRPLANES_CANDIDATE_REPO=file:///candidate \
+            -v "$PWD/legacy:/legacy:ro" \
+            -v "$PWD/candidate:/candidate:ro" \
+            -v "${{ runner.temp }}/legacy-upgrade-smoke:/tmp/legacy-upgrade-diag" \
+            debian:13-slim \
+            bash /candidate/test/legacy-upgrade-smoke.sh
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-upgrade-smoke-diagnostics
+          path: ${{ runner.temp }}/legacy-upgrade-smoke
