@@ -28,6 +28,7 @@ FEED_BRANCH="${AIRPLANES_BOOT_SMOKE_FEED_BRANCH:-boot-smoke}"
 QEMU_TIMEOUT="${AIRPLANES_BOOT_SMOKE_QEMU_TIMEOUT:-15m}"
 MAX_BOOT_ATTEMPTS="${AIRPLANES_BOOT_SMOKE_MAX_BOOT_ATTEMPTS:-2}"
 QEMU_MACHINE_MODE="${AIRPLANES_BOOT_SMOKE_QEMU_MACHINE:-auto}"
+QEMU_ACCEL_MODE="${AIRPLANES_BOOT_SMOKE_QEMU_ACCEL:-auto}"
 WORK_DIR="${AIRPLANES_BOOT_SMOKE_WORK_DIR:-}"
 KEEP_WORK_DIR="${AIRPLANES_BOOT_SMOKE_KEEP_WORK_DIR:-0}"
 
@@ -284,6 +285,55 @@ can_use_host_virt_kernel() {
     [[ "$(uname -m)" == "aarch64" ]] || return 1
     [[ -r "/boot/vmlinuz-$(uname -r)" ]] || return 1
     [[ -r "/boot/initrd.img-$(uname -r)" ]] || return 1
+}
+
+can_use_host_virt_kvm() {
+    local qemu_bin="${1:?}"
+    local machine="${2:?}"
+    local pidfile="$WORK_DIR/qemu-kvm-probe.pid"
+    local err="$WORK_DIR/qemu-kvm-probe.err"
+    local pid
+
+    case "$QEMU_ACCEL_MODE" in
+        auto|kvm|tcg) ;;
+        *) fail "unsupported AIRPLANES_BOOT_SMOKE_QEMU_ACCEL: $QEMU_ACCEL_MODE" ;;
+    esac
+
+    [[ "$QEMU_ACCEL_MODE" != "tcg" ]] || return 1
+    if [[ ! -e /dev/kvm ]]; then
+        [[ "$QEMU_ACCEL_MODE" == "kvm" ]] && fail "KVM requested but /dev/kvm does not exist"
+        echo "QEMU KVM acceleration unavailable: /dev/kvm does not exist" >&2
+        return 1
+    fi
+    if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+        [[ "$QEMU_ACCEL_MODE" == "kvm" ]] && fail "KVM requested but /dev/kvm is not readable/writable"
+        echo "QEMU KVM acceleration unavailable: /dev/kvm is not readable/writable" >&2
+        return 1
+    fi
+
+    rm -f "$pidfile" "$err"
+    if "$qemu_bin" -M "$machine" -accel kvm -cpu host \
+        -display none -nodefaults -S -monitor none -serial none \
+        -daemonize -pidfile "$pidfile" 2>"$err"; then
+        if [[ -s "$pidfile" ]]; then
+            pid="$(cat "$pidfile")"
+            kill "$pid" 2>/dev/null || true
+        fi
+        rm -f "$pidfile" "$err"
+        echo "Using QEMU KVM acceleration for host-virt boot" >&2
+        return 0
+    fi
+
+    if [[ "$QEMU_ACCEL_MODE" == "kvm" ]]; then
+        [[ -s "$err" ]] && cat "$err" >&2
+        fail "KVM requested but qemu-system-aarch64 could not start with KVM"
+    fi
+    if [[ -s "$err" ]]; then
+        sed 's/^/QEMU KVM probe: /' "$err" >&2
+    fi
+    echo "QEMU KVM acceleration unavailable; falling back to TCG" >&2
+    rm -f "$pidfile" "$err"
+    return 1
 }
 
 prepare_host_virt_boot_files() {
@@ -627,7 +677,11 @@ prepare_boot_files() {
     fi
     cmdline="$(cmdline_add_flag "$cmdline" rootwait)"
     cmdline="$(cmdline_set_arg "$cmdline" rootfstype ext4)"
-    printf '%s systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        printf '%s systemd.show_status=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
+    else
+        printf '%s systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
+    fi
     if [[ "$boot_mode" != "host-virt" ]]; then
         printf '%s\n' "$qemu_kernel" > "$BOOT_FILES/kernel-name"
         printf '%s\n' "$qemu_dtb" > "$BOOT_FILES/dtb-name"
@@ -972,7 +1026,7 @@ UNIT
 }
 
 qemu_command() {
-    local kernel dtb cmdline boot_mode qemu_bin machine cpu smp initrd
+    local kernel dtb cmdline boot_mode qemu_bin machine cpu smp initrd accel
     local -a args
     kernel="$(cat "$BOOT_FILES/kernel-name")"
     dtb="$(cat "$BOOT_FILES/dtb-name")"
@@ -984,20 +1038,30 @@ qemu_command() {
         machine="virt"
         cpu="cortex-a53"
         smp="4"
+        accel=""
+        if [[ "$boot_mode" == "host-virt" ]] && can_use_host_virt_kvm "$qemu_bin" "$machine"; then
+            accel="kvm"
+            cpu="host"
+        fi
     elif [[ "$kernel" == "kernel8.img" || "$kernel" == "kernel8.uncompressed.img" ]]; then
         qemu_bin="qemu-system-aarch64"
         machine="raspi3b"
         cpu="cortex-a53"
         smp="4"
+        accel=""
     else
         qemu_bin="qemu-system-arm"
         machine="raspi2b"
         cpu=""
         smp="1"
+        accel=""
     fi
 
     require_command "$qemu_bin"
     args=("$qemu_bin" -M "$machine")
+    if [[ -n "$accel" ]]; then
+        args+=(-accel "$accel")
+    fi
     if [[ -n "$cpu" ]]; then
         args+=(-cpu "$cpu")
     fi
