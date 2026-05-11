@@ -414,11 +414,7 @@ prepare_virt_initrd() {
         -exec cp -a {} "$initrd_root/lib/modules/$kernel_version/" \;
 
     required_modules=(
-        virtio
-        virtio_ring
         virtio_pci
-        virtio_pci_modern_dev
-        virtio_pci_legacy_dev
         virtio_blk
         virtio_net
     )
