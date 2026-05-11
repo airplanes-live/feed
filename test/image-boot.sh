@@ -627,7 +627,7 @@ prepare_boot_files() {
     fi
     cmdline="$(cmdline_add_flag "$cmdline" rootwait)"
     cmdline="$(cmdline_set_arg "$cmdline" rootfstype ext4)"
-    printf '%s systemd.unit=multi-user.target systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
+    printf '%s systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
     if [[ "$boot_mode" != "host-virt" ]]; then
         printf '%s\n' "$qemu_kernel" > "$BOOT_FILES/kernel-name"
         printf '%s\n' "$qemu_dtb" > "$BOOT_FILES/dtb-name"
@@ -637,6 +637,7 @@ prepare_boot_files() {
 
 write_guest_probe() {
     install -d -m 0755 "$ROOT_MNT/opt/airplanes-boot-smoke"
+    install -d -m 0755 "$ROOT_MNT/etc/systemd/system/default.target.wants"
     install -d -m 0755 "$ROOT_MNT/etc/systemd/system/multi-user.target.wants"
     rsync -a --delete "$FEED_SOURCE/" "$ROOT_MNT/opt/airplanes-boot-smoke/feed-worktree/"
     rsync -a --delete "$FEED_BARE/" "$ROOT_MNT/opt/airplanes-boot-smoke/feed.git/"
@@ -936,8 +937,10 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 UNIT
+    ln -sfn ../airplanes-boot-smoke.service \
+        "$ROOT_MNT/etc/systemd/system/default.target.wants/airplanes-boot-smoke.service"
     ln -sfn ../airplanes-boot-smoke.service \
         "$ROOT_MNT/etc/systemd/system/multi-user.target.wants/airplanes-boot-smoke.service"
 }
