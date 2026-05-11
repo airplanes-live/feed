@@ -460,20 +460,86 @@ EOF
 }
 
 @test "new contract: explicit regex override bypasses the manifest path" {
-    # Release has a valid manifest pointing at the immutable asset, AND a
-    # rolling-name asset. Caller passes an explicit regex that only matches
-    # the rolling asset — the resolver must respect that and bypass the
-    # manifest path.
-    fixture_release_with_manifest dev-latest dev arm64 >/dev/null
-    # Add a rolling asset to the same release fixture.
-    jq '.assets += [{"name": "airplanes-feeder-dev-arm64.img.xz", "browser_download_url": "https://example.invalid/rolling.img.xz"}]' \
-        "$FIXTURE_DIR/releases-latest.json" > "$FIXTURE_DIR/releases-latest.json.tmp"
-    mv "$FIXTURE_DIR/releases-latest.json.tmp" "$FIXTURE_DIR/releases-latest.json"
+    # Release has a rolling-name asset and a manifest sidecar whose URL is
+    # set to fail when curl tries to fetch it (FAIL marker). If the resolver
+    # were attempting the manifest path it would error out — passing instead
+    # proves the explicit regex actually bypassed manifest resolution.
+    local manifest_name="airplanes-feeder-dev-arm64.rpi-imager-manifest.json"
+    cat > "$FIXTURE_DIR/releases-latest.json" <<EOF
+{
+  "tag_name": "dev-latest",
+  "body": "",
+  "assets": [
+    {"name": "airplanes-feeder-dev-arm64.img.xz", "browser_download_url": "https://example.invalid/rolling.img.xz"},
+    {"name": "$manifest_name", "browser_download_url": "https://example.invalid/FAIL-$manifest_name"}
+  ]
+}
+EOF
+    # Keep retries fast in case the bypass is broken and we accidentally
+    # exercise the retry loop.
+    export _IMAGE_SOURCE_MANIFEST_FETCH_ATTEMPTS=1
+    export _IMAGE_SOURCE_MANIFEST_FETCH_BACKOFF_S=0
     stdout_file="$ROOT_DIR/stdout.txt"
     image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR" \
         '^airplanes-feeder-dev-arm64\.img\.xz$' >"$stdout_file" 2>/dev/null
     [ "$?" -eq 0 ]
     grep -q "rolling.img.xz" "$(cat "$stdout_file")"
+}
+
+@test "new contract: immutable .img.xz without manifest is a hard error, no regex fallback" {
+    # Race / broken-publish scenario: a release contains the immutable
+    # SHA-tagged asset but the manifest upload step never completed (or
+    # raced). The strategy must NOT silently fall through to the regex
+    # picker — if it did, release-any would happily advance to an older
+    # release and we'd test the wrong image. Hard rc=2 instead.
+    local immutable_name="airplanes-feeder-dev-arm64-deadbeef0006-r1-a1.img.xz"
+    cat > "$FIXTURE_DIR/releases-latest.json" <<EOF
+{
+  "tag_name": "dev-latest",
+  "body": "",
+  "assets": [
+    {"name": "$immutable_name", "browser_download_url": "https://example.invalid/$immutable_name"},
+    {"name": "airplanes-feeder-dev-arm64.img.xz", "browser_download_url": "https://example.invalid/rolling.img.xz"}
+  ]
+}
+EOF
+    run image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR"
+    [ "$status" -eq 2 ]
+}
+
+@test "new contract: release-any does not silently advance past broken-publish release" {
+    # Newer release has an immutable asset but no manifest (broken publish);
+    # older release has a manifest + immutable. release-any must NOT skip
+    # the broken release and pick the older one — that would silently test
+    # a stale image.
+    local newer_immutable="airplanes-feeder-dev-arm64-cafebabe0001-r1-a1.img.xz"
+    local older_immutable="airplanes-feeder-dev-arm64-deadbeef0007-r1-a1.img.xz"
+    local older_manifest="airplanes-feeder-dev-arm64.rpi-imager-manifest.json"
+    fixture_releases_json '[
+        {
+            "tag_name": "dev-latest-broken",
+            "published_at": "2026-05-01T00:00:00Z",
+            "body": "",
+            "assets": [
+                {"name": "'"$newer_immutable"'", "browser_download_url": "https://example.invalid/'"$newer_immutable"'"}
+            ]
+        },
+        {
+            "tag_name": "dev-older",
+            "published_at": "2026-04-01T00:00:00Z",
+            "body": "",
+            "assets": [
+                {"name": "'"$older_immutable"'", "browser_download_url": "https://example.invalid/'"$older_immutable"'"},
+                {"name": "'"$older_manifest"'", "browser_download_url": "https://example.invalid/'"$older_manifest"'"}
+            ]
+        }
+    ]'
+    # The older release's manifest is well-formed; doesn't matter because
+    # we expect to hard-fail on the newer broken release before ever
+    # reaching the older one.
+    fixture_manifest_body "https://example.invalid/$older_immutable" "$older_manifest"
+    run image_source_resolve airplanes-live/image new dev arm64 release-any "$OUTPUT_DIR"
+    [ "$status" -eq 2 ]
 }
 
 @test "legacy contract: never reads the manifest, regex picker only" {
