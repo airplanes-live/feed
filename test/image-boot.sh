@@ -915,6 +915,7 @@ qemu_command() {
     args+=(-append "$cmdline")
     if [[ "$boot_mode" == "virt" ]]; then
         args+=(
+            -nic none
             -drive "file=$IMAGE_FILE,format=raw,if=none,id=hd0"
             -device "ich9-ahci,id=ahci"
             -device "ide-hd,drive=hd0,bus=ahci.0"
