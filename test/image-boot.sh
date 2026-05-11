@@ -343,11 +343,19 @@ kernel_module_version() {
 copy_module_dependency() {
     local initrd_root="$1"
     local source_path="$2"
-    local rel_path="${source_path#/}"
+    local source_file rel_path
 
-    [[ -f "$ROOT_MNT/$rel_path" ]] || fail "module dependency missing from rootfs: $source_path"
+    if [[ "$source_path" == "$ROOT_MNT/"* ]]; then
+        source_file="$source_path"
+        rel_path="${source_path#"$ROOT_MNT/"}"
+    else
+        rel_path="${source_path#/}"
+        source_file="$ROOT_MNT/$rel_path"
+    fi
+
+    [[ -f "$source_file" ]] || fail "module dependency missing from rootfs: $source_path"
     mkdir -p "$initrd_root/$(dirname "$rel_path")"
-    cp -a "$ROOT_MNT/$rel_path" "$initrd_root/$rel_path"
+    cp -a "$source_file" "$initrd_root/$rel_path"
 }
 
 copy_module_with_dependencies() {
