@@ -284,7 +284,19 @@ STUB
     [[ "$output" == *'disabled by config (MLAT_ENABLED=false)'* ]]
 }
 
-@test "mlat_status_line: ActiveState=active + disabled latitude_zero → 'disabled by config (LATITUDE=0)'" {
+@test "mlat_status_line: ActiveState=active + disabled geo_not_configured → 'disabled by config (location not set)'" {
+    write_mlat_state disabled geo_not_configured
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'disabled by config (location not set)'* ]]
+}
+
+@test "mlat_status_line: ActiveState=active + disabled latitude_zero → 'disabled by config (LATITUDE=0)' (legacy state file)" {
+    # Forward/backward compat: state files written by an older daemon
+    # (which used the LATITUDE==0 sentinel) still render with a
+    # recognizable detail when the operator looks at status after upgrade.
     write_mlat_state disabled latitude_zero
     stub_systemctl_active_state active
     status_init
@@ -293,7 +305,7 @@ STUB
     [[ "$output" == *'disabled by config (LATITUDE=0)'* ]]
 }
 
-@test "mlat_status_line: ActiveState=active + disabled longitude_zero → 'disabled by config (LONGITUDE=0)'" {
+@test "mlat_status_line: ActiveState=active + disabled longitude_zero → 'disabled by config (LONGITUDE=0)' (legacy state file)" {
     write_mlat_state disabled longitude_zero
     stub_systemctl_active_state active
     status_init

@@ -362,7 +362,7 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
     # MLAT_PRIVATE from the orchestrator's env) can't bleed into the
     # legacy-USER detection or the privacy resolution below. Same
     # precaution applies in the manual-install branch.
-    unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER
+    unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER GEO_CONFIGURED
     if [[ -f "$FEED_ENV" ]]; then
         # Canonicalise legacy values + schema-split (USER → MLAT_USER /
         # MLAT_ENABLED, PRIVACY → MLAT_PRIVATE, --uuid-file strip,
@@ -412,11 +412,22 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
         esac
     fi
     MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
+    # Legacy GEO_CONFIGURED fallback. feed.env predating the flag falls
+    # through this derivation: both coords non-empty and non-"0" → true,
+    # else false. Matches the prior LATITUDE==0/LONGITUDE==0 sentinel
+    # disable, so legacy feeders see no behavior change.
+    if [[ ! -v GEO_CONFIGURED ]]; then
+        if [[ -n "$LATITUDE" && "$LATITUDE" != 0 && -n "$LONGITUDE" && "$LONGITUDE" != 0 ]]; then
+            GEO_CONFIGURED="true"
+        else
+            GEO_CONFIGURED="false"
+        fi
+    fi
 else
     prepare_legacy_feed_env_migration "$LEGACY_FEED_ENV" "$FEED_ENV" "$ETC_AIRPLANES"
     run_config_file_migrations "$FEED_ENV"
 
-    unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER
+    unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER GEO_CONFIGURED
     if [[ -f "$FEED_ENV" ]]; then
         source "$FEED_ENV"
     elif [[ -f "$BOOT_ENV" ]]; then
@@ -431,6 +442,13 @@ else
         esac
     fi
     MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
+    if [[ ! -v GEO_CONFIGURED ]]; then
+        if [[ -n "${LATITUDE:-}" && "$LATITUDE" != 0 && -n "${LONGITUDE:-}" && "$LONGITUDE" != 0 ]]; then
+            GEO_CONFIGURED="true"
+        else
+            GEO_CONFIGURED="false"
+        fi
+    fi
 fi
 if [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]]; then
     if [[ "$IMAGE_INSTALL" == "1" ]]; then
@@ -445,7 +463,7 @@ fi
 # fallback at startup, so re-running setup.sh for an empty name would re-prompt
 # the operator for nothing actionable.
 
-if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$MLAT_ENABLED" != "true" ]]; then
+if [[ "$GEO_CONFIGURED" != "true" ]] || [[ "$MLAT_ENABLED" != "true" ]]; then
     MLAT_DISABLED=1
 else
     MLAT_DISABLED=0

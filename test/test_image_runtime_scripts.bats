@@ -621,7 +621,33 @@ write_feed_env() {
     grep -qx 'reason=mlat_enabled_false' "$root/run/airplanes-mlat/state"
 }
 
-@test "airplanes-mlat.sh writes state=disabled,reason=latitude_zero when LATITUDE=0" {
+@test "airplanes-mlat.sh writes state=disabled,reason=geo_not_configured when GEO_CONFIGURED=false" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'GEO_CONFIGURED=false' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
+    grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh derives GEO_CONFIGURED=false from legacy LATITUDE=0" {
+    # feed.env predating the GEO_CONFIGURED schema addition: in-shell
+    # fallback in airplanes-mlat.sh sees LATITUDE=0 and derives false,
+    # matching the previous latitude_zero sentinel behavior.
     local root="$ROOT_DIR/root"
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
@@ -638,11 +664,11 @@ write_feed_env() {
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=latitude_zero' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
+    grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
 }
 
-@test "airplanes-mlat.sh writes state=disabled,reason=longitude_zero when LONGITUDE=0" {
+@test "airplanes-mlat.sh derives GEO_CONFIGURED=false from legacy LONGITUDE=0" {
     local root="$ROOT_DIR/root"
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
@@ -659,7 +685,50 @@ write_feed_env() {
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'reason=longitude_zero' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh derives GEO_CONFIGURED=true from non-zero coords (legacy feed.env)" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh: explicit GEO_CONFIGURED wins over legacy coord derivation" {
+    # Equator user (lat=0, lon!=0) with explicit GEO_CONFIGURED=true must
+    # not trip the legacy LATITUDE==0 fallback path. The explicit flag is
+    # authoritative.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'GEO_CONFIGURED=true' \
+        'LATITUDE=0' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
 }
 
 @test "airplanes-mlat.sh: empty MLAT_USER + canonical feeder-id → state=enabled, MLAT_USER=Anonymous-<short>, mlat-client gets --user" {

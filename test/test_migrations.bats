@@ -557,3 +557,120 @@ EOF
     ! grep -q '^PRIVACY=' "$FEED_ENV"
 }
 
+# ---------------------------------------------------------------------------
+# migrate_geo_to_configured_flag
+# ---------------------------------------------------------------------------
+
+@test "migrate_geo_to_configured_flag: both coords non-zero → GEO_CONFIGURED=true" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="52.5"
+LONGITUDE="13.4"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
+    grep -qx 'LATITUDE="52.5"' "$FEED_ENV"
+    grep -qx 'LONGITUDE="13.4"' "$FEED_ENV"
+}
+
+@test "migrate_geo_to_configured_flag: legacy LATITUDE=0/LONGITUDE=0 → GEO_CONFIGURED=false" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="0"
+LONGITUDE="0"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    grep -qx 'GEO_CONFIGURED=false' "$FEED_ENV"
+}
+
+@test "migrate_geo_to_configured_flag: LATITUDE=0 alone → GEO_CONFIGURED=false" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="0"
+LONGITUDE="13.4"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    grep -qx 'GEO_CONFIGURED=false' "$FEED_ENV"
+}
+
+@test "migrate_geo_to_configured_flag: LATITUDE empty → GEO_CONFIGURED=false" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE=""
+LONGITUDE="13.4"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    grep -qx 'GEO_CONFIGURED=false' "$FEED_ENV"
+}
+
+@test "migrate_geo_to_configured_flag: GEO_CONFIGURED already present → no-op" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="0"
+LONGITUDE="0"
+GEO_CONFIGURED=true
+EOF
+    local snapshot
+    snapshot="$(cat "$FEED_ENV")"
+
+    migrate_geo_to_configured_flag "$FEED_ENV"
+    [ "$(cat "$FEED_ENV")" = "$snapshot" ]
+}
+
+@test "migrate_geo_to_configured_flag: idempotent — second call is a no-op" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="52.5"
+LONGITUDE="13.4"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+    local snapshot
+    snapshot="$(cat "$FEED_ENV")"
+
+    migrate_geo_to_configured_flag "$FEED_ENV"
+    [ "$(cat "$FEED_ENV")" = "$snapshot" ]
+}
+
+@test "migrate_geo_to_configured_flag: feed.env missing → no-op (no error)" {
+    [ ! -f "$FEED_ENV" ]
+    migrate_geo_to_configured_flag "$FEED_ENV"
+    [ ! -f "$FEED_ENV" ]
+}
+
+@test "migrate_geo_to_configured_flag: preserves all other keys verbatim" {
+    cat > "$FEED_ENV" <<'EOF'
+INPUT="127.0.0.1:30005"
+MLAT_USER="alice"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+LATITUDE="52.5"
+LONGITUDE="13.4"
+ALTITUDE="35m"
+NET_OPTIONS="--net-heartbeat 60"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    for line in \
+        'INPUT="127.0.0.1:30005"' \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'MLAT_PRIVATE=false' \
+        'LATITUDE="52.5"' \
+        'LONGITUDE="13.4"' \
+        'ALTITUDE="35m"' \
+        'NET_OPTIONS="--net-heartbeat 60"' \
+    ; do
+        grep -qF "$line" "$FEED_ENV"
+    done
+}
+
+@test "run_config_file_migrations: chains migrate_geo_to_configured_flag last in the pipeline" {
+    cat > "$FEED_ENV" <<'EOF'
+USER="alice"
+LATITUDE="52.5"
+LONGITUDE="13.4"
+EOF
+    run_config_file_migrations "$FEED_ENV"
+
+    grep -qx 'MLAT_USER="alice"' "$FEED_ENV"
+    grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
+}
+

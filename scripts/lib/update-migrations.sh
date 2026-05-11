@@ -315,6 +315,48 @@ migrate_privacy_to_mlat_private() {
     fi
 }
 
+# Add an explicit GEO_CONFIGURED=true|false flag to feed.env, retiring
+# the legacy LATITUDE=0/LONGITUDE=0 sentinel pattern. Idempotent.
+#
+#   GEO_CONFIGURED already present       →  no-op
+#   LATITUDE and LONGITUDE both non-zero →  GEO_CONFIGURED=true
+#   anything else (zero, missing, blank) →  GEO_CONFIGURED=false
+#
+# Heuristic note: (0, 0) is the legacy/placeholder sentinel pair (image
+# freeze writes both as 0). A single zero axis is a legitimate coordinate
+# (equator at lon!=0, or prime meridian at lat!=0); the rule preserves it
+# as configured. The Atlantic (0,0) point is uninhabited so the false-
+# negative blast radius is empty in practice. Configs written by the
+# webconfig UI will include an explicit GEO_CONFIGURED and this function
+# becomes a no-op for them.
+migrate_geo_to_configured_flag() {
+    local feed_env="$1"
+    [[ -f "$feed_env" ]] || return 0
+
+    if grep -qE '^GEO_CONFIGURED=' "$feed_env"; then
+        return 0
+    fi
+
+    local latitude longitude
+    latitude="$(_extract_env_value "$feed_env" LATITUDE)"
+    longitude="$(_extract_env_value "$feed_env" LONGITUDE)"
+
+    local geo_configured
+    if [[ -n "$latitude" && "$latitude" != "0" && -n "$longitude" && "$longitude" != "0" ]]; then
+        geo_configured="true"
+    else
+        geo_configured="false"
+    fi
+
+    local tmp
+    tmp="$(mktemp "${feed_env}.XXXXXX")"
+    cp -fp "$feed_env" "$tmp" || { rm -f "$tmp"; return 1; }
+    printf 'GEO_CONFIGURED=%s\n' "$geo_configured" >> "$tmp"
+    chmod --reference="$feed_env" "$tmp" 2>/dev/null || true
+    chown --reference="$feed_env" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$feed_env"
+}
+
 run_config_file_migrations() {
     local feed_env="$1"
     migrate_net_options_beast_reduce_plus "$feed_env"
@@ -322,6 +364,7 @@ run_config_file_migrations() {
     migrate_strip_uuid_file_arg "$feed_env"
     migrate_user_to_mlat_split "$feed_env"
     migrate_privacy_to_mlat_private "$feed_env"
+    migrate_geo_to_configured_flag "$feed_env"
 }
 
 # ---------------------------------------------------------------------------

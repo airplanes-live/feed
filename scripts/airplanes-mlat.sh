@@ -15,12 +15,12 @@ BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
 FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
 FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
 
-# Unset USER (and the privacy keys) before sourcing so the process env
-# can't bleed into the legacy-USER, legacy-PRIVACY, or legacy-MLAT_MARKER
-# fallbacks below. systemd's User= sets $USER for airplanes-mlat.service;
-# an env-supplied MLAT_PRIVATE / PRIVACY / MLAT_MARKER (e.g. from a
-# Drop-In) would otherwise mask the on-disk value.
-unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER
+# Unset USER (and the privacy / geo keys) before sourcing so the process
+# env can't bleed into any of the legacy fallbacks below. systemd's User=
+# sets $USER for airplanes-mlat.service; an env-supplied MLAT_PRIVATE /
+# PRIVACY / MLAT_MARKER / GEO_CONFIGURED (e.g. from a Drop-In) would
+# otherwise mask the on-disk value.
+unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER GEO_CONFIGURED
 if [[ -f "$FEED_ENV" ]]; then
     source "$FEED_ENV"
 elif [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && -f "$BOOT_CONFIG" ]]; then
@@ -95,6 +95,23 @@ if [[ ! -v MLAT_PRIVATE && -v MLAT_MARKER ]]; then
 fi
 MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 
+# Legacy GEO_CONFIGURED read fallback. A feed.env predating the explicit
+# flag won't have GEO_CONFIGURED set. update.sh's migrate_geo_to_configured_flag
+# adds it on every update; this in-memory derivation handles a daemon
+# restart that races ahead. Heuristic: both LATITUDE and LONGITUDE non-
+# empty and non-"0" → true; else false. Conservative — matches the prior
+# (LATITUDE==0 || LONGITUDE==0) sentinel disable so legacy feeders see no
+# behavior change. The Atlantic (0,0) point is uninhabited; legitimate
+# equator-or-prime-meridian feeders have at most one axis at zero and
+# pass this check.
+if [[ ! -v GEO_CONFIGURED ]]; then
+    if [[ -n "${LATITUDE:-}" && "$LATITUDE" != 0 && -n "${LONGITUDE:-}" && "$LONGITUDE" != 0 ]]; then
+        GEO_CONFIGURED="true"
+    else
+        GEO_CONFIGURED="false"
+    fi
+fi
+
 # Product-side defaults. feed.env holds operator data; brand endpoints
 # and the local result-output bundle default here so a slim feed.env
 # still produces a working daemon, and an airplanes.live-side endpoint
@@ -130,19 +147,19 @@ fi
 # Classify the daemon's config decision. Order matters: invalid
 # MLAT_PRIVATE is checked first (fail-loud rather than silently
 # defaulting), then explicit MLAT_ENABLED disable (so a user who turns
-# MLAT off on a fresh feeder with lat/lon still 0 sees reason=
-# mlat_enabled_false rather than reason=latitude_zero), then geo
-# sentinels. MLAT_USER is no longer a classifier input — empty values are
-# substituted with a per-device fallback above, so the only "misconfigured"
-# branch left is the strict MLAT_PRIVATE shape.
+# MLAT off on a fresh feeder before configuring geo sees reason=
+# mlat_enabled_false rather than reason=geo_not_configured), then the
+# explicit geo flag. MLAT_USER is no longer a classifier input — empty
+# values are substituted with a per-device Anonymous-<short-id> fallback
+# above, so the only "misconfigured" branch left is the strict
+# MLAT_PRIVATE shape.
 _mlat_classify() {
     case "$MLAT_PRIVATE" in
         true|false) ;;
         *) printf 'misconfigured mlat_private_invalid\n'; return ;;
     esac
     if [[ "$MLAT_ENABLED" != "true" ]]; then printf 'disabled mlat_enabled_false\n'; return; fi
-    if [[ "$LATITUDE" == 0 ]]; then printf 'disabled latitude_zero\n'; return; fi
-    if [[ "$LONGITUDE" == 0 ]]; then printf 'disabled longitude_zero\n'; return; fi
+    if [[ "$GEO_CONFIGURED" != "true" ]]; then printf 'disabled geo_not_configured\n'; return; fi
     printf 'enabled ok\n'
 }
 
@@ -157,6 +174,7 @@ airplanes_write_state "$STATE_FILE" \
     "mlat_enabled=${MLAT_ENABLED:-}" \
     "mlat_user=${MLAT_USER:-}" \
     "mlat_private=${MLAT_PRIVATE:-}" \
+    "geo_configured=${GEO_CONFIGURED:-}" \
     "latitude=${LATITUDE:-}" \
     "longitude=${LONGITUDE:-}" || true
 

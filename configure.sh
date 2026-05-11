@@ -81,8 +81,22 @@ derive_mlat_keys() {
     fi
 }
 
+# Heuristic: treat (0, 0) as the legacy/placeholder sentinel pair (image
+# freeze writes both as 0). A single zero axis is a legitimate coordinate
+# (equator at lon!=0, or prime meridian at lat!=0) and counts as
+# configured. The Atlantic (0,0) point is uninhabited so the false-negative
+# blast radius is empty in practice.
+derive_geo_configured() {
+    if [[ "$RECEIVERLATITUDE" == "0" && "$RECEIVERLONGITUDE" == "0" ]]; then
+        GEO_CONFIGURED="false"
+    else
+        GEO_CONFIGURED="true"
+    fi
+}
+
 write_feed_env() {
     derive_mlat_keys
+    derive_geo_configured
     mkdir -p "$ETC_AIRPLANES"
     tee "$FEED_ENV" >/dev/null <<EOF
 # /etc/airplanes/feed.env — operator-supplied configuration for the
@@ -94,6 +108,12 @@ write_feed_env() {
 LATITUDE="$RECEIVERLATITUDE"
 LONGITUDE="$RECEIVERLONGITUDE"
 ALTITUDE="$RECEIVERALTITUDE"
+# Explicit "user has provided real coordinates" flag. The daemon refuses
+# to start MLAT until this is true; the legacy "LATITUDE=0 means unset"
+# sentinel is retired. Image freeze writes false; configure.sh writes
+# true when both coords are non-zero (Atlantic 0,0 placeholders stay
+# false). The webconfig UI writes this explicitly when the user saves.
+GEO_CONFIGURED=$GEO_CONFIGURED
 
 # Display name shown on the MLAT map. Used as mlat-client's --user.
 MLAT_USER="$MLAT_USER"
