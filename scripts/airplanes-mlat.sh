@@ -43,6 +43,32 @@ fi
 MLAT_ENABLED="${MLAT_ENABLED:-true}"
 MLAT_USER="${MLAT_USER-}"
 
+# MLAT display name is optional. When unset or empty, derive a per-device
+# fallback from the canonical feeder-id so each feeder still gets a distinct
+# map identity instead of every blank-name feeder aggregating under a shared
+# anonymous pin. webconfig writes a user-supplied MLAT_USER directly when
+# the operator provides one. Falls back to plain "Anonymous" when the
+# feeder-id file is missing, a symlink, or doesn't contain a canonical UUID
+# — guards against a symlink-swap that would otherwise let the first 8 bytes
+# of an unrelated file leak into the public state file as MLAT_USER, and
+# against malformed content (control bytes, BOM) reaching mlat-client.
+if [[ -z "$MLAT_USER" ]]; then
+    _mlat_user_short_id=""
+    if [[ -f "$FEEDER_ID_FILE" && ! -L "$FEEDER_ID_FILE" && -r "$FEEDER_ID_FILE" ]]; then
+        _mlat_user_candidate="$(tr -d '\r\n' < "$FEEDER_ID_FILE" 2>/dev/null || true)"
+        if [[ "$_mlat_user_candidate" =~ ^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$ ]]; then
+            _mlat_user_short_id="${_mlat_user_candidate:0:8}"
+        fi
+        unset _mlat_user_candidate
+    fi
+    if [[ -n "$_mlat_user_short_id" ]]; then
+        MLAT_USER="Anonymous-$_mlat_user_short_id"
+    else
+        MLAT_USER="Anonymous"
+    fi
+    unset _mlat_user_short_id
+fi
+
 # Legacy PRIVACY read fallback. update.sh's migrate_privacy_to_mlat_private
 # converts PRIVACY=--privacy to MLAT_PRIVATE=true on every run; this in-
 # memory derivation handles a daemon restart that races ahead of the next
@@ -106,8 +132,9 @@ fi
 # defaulting), then explicit MLAT_ENABLED disable (so a user who turns
 # MLAT off on a fresh feeder with lat/lon still 0 sees reason=
 # mlat_enabled_false rather than reason=latitude_zero), then geo
-# sentinels, then the empty-MLAT_USER check. The misconfigured branch
-# is the strict-fail-with-exit-64 shape.
+# sentinels. MLAT_USER is no longer a classifier input — empty values are
+# substituted with a per-device fallback above, so the only "misconfigured"
+# branch left is the strict MLAT_PRIVATE shape.
 _mlat_classify() {
     case "$MLAT_PRIVATE" in
         true|false) ;;
@@ -116,7 +143,6 @@ _mlat_classify() {
     if [[ "$MLAT_ENABLED" != "true" ]]; then printf 'disabled mlat_enabled_false\n'; return; fi
     if [[ "$LATITUDE" == 0 ]]; then printf 'disabled latitude_zero\n'; return; fi
     if [[ "$LONGITUDE" == 0 ]]; then printf 'disabled longitude_zero\n'; return; fi
-    if [[ -z "$MLAT_USER" ]]; then printf 'misconfigured mlat_user_empty\n'; return; fi
     printf 'enabled ok\n'
 }
 
@@ -146,9 +172,6 @@ case "$STATE" in
         case "$REASON" in
             mlat_private_invalid)
                 echo "MLAT_PRIVATE must be 'true' or 'false' (got: '${MLAT_PRIVATE:-}'); refusing to start mlat-client." >&2
-                ;;
-            mlat_user_empty)
-                echo "MLAT_ENABLED=true but MLAT_USER is empty; refusing to start mlat-client." >&2
                 ;;
             *)
                 echo "Misconfigured ($REASON); refusing to start mlat-client." >&2

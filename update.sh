@@ -432,8 +432,7 @@ else
     fi
     MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 fi
-if [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]] \
-    || { [[ "$MLAT_ENABLED" == "true" ]] && [[ -z $MLAT_USER ]]; }; then
+if [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]]; then
     if [[ "$IMAGE_INSTALL" == "1" ]]; then
         echo "Image configuration is incomplete; refusing to run interactive setup on an image." >&2
         exit 1
@@ -441,6 +440,10 @@ if [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]] \
     bash "$GIT/setup.sh"
     exit 0
 fi
+# Empty MLAT_USER is intentionally not part of the "incomplete config" guard
+# above: the daemon (airplanes-mlat.sh) substitutes an Anonymous-<short>
+# fallback at startup, so re-running setup.sh for an empty name would re-prompt
+# the operator for nothing actionable.
 
 if [[ "$LATITUDE" == 0 ]] || [[ "$LONGITUDE" == 0 ]] || [[ "$MLAT_ENABLED" != "true" ]]; then
     MLAT_DISABLED=1
