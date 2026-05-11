@@ -757,14 +757,42 @@ assert_image_contracts() {
     fi
 }
 
+set_shell_var() {
+    local path="$1"
+    local key="$2"
+    local value="$3"
+    if grep -qE "^${key}=" "$path"; then
+        sed -i -E "s|^${key}=.*|${key}=${value}|" "$path"
+    else
+        printf '%s=%s\n' "$key" "$value" >> "$path"
+    fi
+}
+
+disable_mlat_for_boot_smoke() {
+    local path
+    if [[ -f /etc/airplanes/feed.env ]]; then
+        set_shell_var /etc/airplanes/feed.env MLAT_ENABLED false
+        set_shell_var /etc/airplanes/feed.env MLAT_USER ""
+    fi
+    for path in /boot/airplanes-config.txt /boot/airplanes-env; do
+        [[ -f "$path" ]] || continue
+        set_shell_var "$path" USER 0
+        set_shell_var "$path" MLAT_ENABLED false
+        set_shell_var "$path" MLAT_USER ""
+    done
+}
+
 prepare_mlat_fixture() {
     local mlat_version
+    disable_mlat_for_boot_smoke
     install -d -m 0755 /usr/local/share/airplanes/venv/bin
-    cat > /usr/local/share/airplanes/venv/bin/mlat-client <<'SH'
+    if [[ ! -x /usr/local/share/airplanes/venv/bin/mlat-client ]]; then
+        cat > /usr/local/share/airplanes/venv/bin/mlat-client <<'SH'
 #!/usr/bin/env bash
 sleep 3600
 SH
-    chmod 0755 /usr/local/share/airplanes/venv/bin/mlat-client
+        chmod 0755 /usr/local/share/airplanes/venv/bin/mlat-client
+    fi
     mlat_version="$(git --git-dir=/opt/airplanes-boot-smoke/mlat.git rev-parse refs/heads/master)"
     printf '%s\n' "$mlat_version" > /usr/local/share/airplanes/mlat_version
 }
