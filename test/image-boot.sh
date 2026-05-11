@@ -542,7 +542,7 @@ prepare_boot_files() {
         fail "no supported Raspberry Pi kernel found in boot partition"
     fi
 
-    if [[ "$kernel" == "kernel8.img" && "$QEMU_MACHINE_MODE" != "raspi" ]]; then
+    if [[ "$kernel" == "kernel8.img" && "$QEMU_MACHINE_MODE" == "virt" ]]; then
         boot_mode="virt"
     else
         boot_mode="raspi"
