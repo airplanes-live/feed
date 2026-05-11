@@ -388,6 +388,7 @@ copy_module_with_dependencies() {
     while IFS= read -r line; do
         [[ "$line" == insmod\ * ]] || continue
         source_path="${line#insmod }"
+        source_path="${source_path%%[[:space:]]*}"
         copy_module_dependency "$initrd_root" "$source_path"
     done < "$dep_file"
     rm -f "$dep_file" "$err_file"
