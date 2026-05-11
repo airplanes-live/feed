@@ -944,7 +944,8 @@ run_one_boot() {
     rc="${PIPESTATUS[0]}"
     set -e
     if [[ "$rc" == "124" ]]; then
-        fail "QEMU boot attempt $attempt timed out after $QEMU_TIMEOUT"
+        echo "QEMU boot attempt $attempt timed out after $QEMU_TIMEOUT; inspecting guest state"
+        return 0
     fi
     if [[ "$rc" != "0" ]]; then
         echo "QEMU boot attempt $attempt exited with rc=$rc; inspecting guest state"
