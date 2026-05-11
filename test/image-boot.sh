@@ -413,11 +413,7 @@ prepare_virt_initrd() {
     find "$ROOT_MNT/lib/modules/$kernel_version" -maxdepth 1 -type f -name 'modules.*' \
         -exec cp -a {} "$initrd_root/lib/modules/$kernel_version/" \;
 
-    required_modules=(
-        virtio_pci
-        virtio_blk
-        virtio_net
-    )
+    required_modules=(ahci sd_mod)
     for module in "${required_modules[@]}"; do
         copy_module_with_dependencies "$initrd_root" "$kernel_version" "$module"
     done
@@ -425,7 +421,7 @@ prepare_virt_initrd() {
     mkdir -p "$initrd_root/conf"
     {
         [[ -f "$initrd_root/conf/modules" ]] && cat "$initrd_root/conf/modules"
-        printf '%s\n' virtio_pci virtio_blk virtio_net
+        printf '%s\n' ahci sd_mod
     } | awk 'NF && !seen[$0]++' > "$initrd_root/conf/modules.qemu"
     mv "$initrd_root/conf/modules.qemu" "$initrd_root/conf/modules"
 
@@ -434,7 +430,7 @@ prepare_virt_initrd() {
         find . -print0 | cpio --null --quiet -o -H newc | gzip -1 > "$BOOT_FILES/$out"
     )
 
-    echo "Prepared QEMU virt initramfs with virtio storage modules: $out (kernel modules: $kernel_version)" >&2
+    echo "Prepared QEMU virt initramfs with AHCI storage modules: $out (kernel modules: $kernel_version)" >&2
     printf '%s\n' "$out"
 }
 
@@ -571,7 +567,7 @@ prepare_boot_files() {
     cmdline="$(printf '%s\n' "$cmdline" \
         | sed -E 's/(^| )init=[^ ]+//g; s/(^| )quiet( |$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
     if [[ "$boot_mode" == "virt" ]]; then
-        cmdline="$(cmdline_set_arg "$cmdline" root "/dev/vda2")"
+        cmdline="$(cmdline_set_arg "$cmdline" root "/dev/sda2")"
     elif root_partuuid="$(partition_uuid 2)"; then
         cmdline="$(cmdline_set_arg "$cmdline" root "PARTUUID=$root_partuuid")"
     fi
@@ -911,9 +907,8 @@ qemu_command() {
     if [[ "$boot_mode" == "virt" ]]; then
         args+=(
             -drive "file=$IMAGE_FILE,format=raw,if=none,id=hd0"
-            -device "virtio-blk-pci,drive=hd0"
-            -netdev "user,id=net0"
-            -device "virtio-net-pci,netdev=net0"
+            -device "ich9-ahci,id=ahci"
+            -device "ide-hd,drive=hd0,bus=ahci.0"
         )
     else
         args+=(
