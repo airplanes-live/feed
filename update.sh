@@ -364,11 +364,12 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
     # precaution applies in the manual-install branch.
     unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER
     if [[ -f "$FEED_ENV" ]]; then
-        # Migrate legacy keys before sourcing so the shell sees the new
-        # schema directly. No-op when feed.env was written by a post-split
-        # writer (configure.sh, image first-run, new webconfig).
-        migrate_user_to_mlat_split "$FEED_ENV"
-        migrate_privacy_to_mlat_private "$FEED_ENV"
+        # Canonicalise legacy values + schema-split (USER → MLAT_USER /
+        # MLAT_ENABLED, PRIVACY → MLAT_PRIVATE, --uuid-file strip,
+        # TARGET feed→feed2 fallback rewrite, NET_OPTIONS beast_reduce_
+        # plus rewrite). No-op on canonical files written by configure.sh
+        # or first-run.
+        run_config_file_migrations "$FEED_ENV"
         source "$FEED_ENV"
     else
         source "$BOOT_CONFIG"
@@ -418,7 +419,6 @@ else
     unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER
     if [[ -f "$FEED_ENV" ]]; then
         source "$FEED_ENV"
-        migrate_add_uat_input_default "$FEED_ENV"
     elif [[ -f "$BOOT_ENV" ]]; then
         source "$BOOT_ENV"
     fi
@@ -432,11 +432,8 @@ else
     fi
     MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 fi
-if [[ -z $INPUT ]] || [[ -z $INPUT_TYPE ]] \
-    || [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]] \
-    || [[ -z $MLATSERVER ]] || [[ -z $TARGET ]] \
-    || { [[ "$MLAT_ENABLED" == "true" ]] && [[ -z $MLAT_USER ]]; } \
-    || { [[ "$IMAGE_INSTALL" != "1" ]] && [[ -z $NET_OPTIONS ]]; }; then
+if [[ -z $LATITUDE ]] || [[ -z $LONGITUDE ]] || [[ -z $ALTITUDE ]] \
+    || { [[ "$MLAT_ENABLED" == "true" ]] && [[ -z $MLAT_USER ]]; }; then
     if [[ "$IMAGE_INSTALL" == "1" ]]; then
         echo "Image configuration is incomplete; refusing to run interactive setup on an image." >&2
         exit 1
@@ -555,6 +552,7 @@ echo 50
 mkdir -p "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-mlat.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-feed.service "$SYSTEMD_DIR"
+
 if ! airplanes_is_build_mode; then
     systemctl daemon-reload >> "$LOGFILE" || true
 fi
@@ -693,8 +691,8 @@ Want a local web map? Install wiedehopf/tar1090 directly:
 https://github.com/wiedehopf/tar1090
 "
 
-INPUT_IP=$(echo "$INPUT" | cut -d: -f1)
-INPUT_PORT=$(echo "$INPUT" | cut -d: -f2)
+INPUT_IP=$(echo "${INPUT:-127.0.0.1:30005}" | cut -d: -f1)
+INPUT_PORT=$(echo "${INPUT:-127.0.0.1:30005}" | cut -d: -f2)
 
 ENDTEXT2="
 ---------------------

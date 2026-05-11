@@ -69,6 +69,26 @@ if [[ ! -v MLAT_PRIVATE && -v MLAT_MARKER ]]; then
 fi
 MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 
+# Product-side defaults. feed.env holds operator data; brand endpoints
+# and the local result-output bundle default here so a slim feed.env
+# still produces a working daemon, and an airplanes.live-side endpoint
+# change ships with the next feed update rather than requiring an
+# in-field config rewrite.
+MLATSERVER="${MLATSERVER:-feed.airplanes.live:31090}"
+INPUT="${INPUT:-127.0.0.1:30005}"
+INPUT_TYPE="${INPUT_TYPE:-dump1090}"
+
+# RESULTS bundle: only apply the default outputs when none of the
+# RESULTS* slots are set on disk. Legacy single-line feed.env may carry
+# a combined `RESULTS="--results ... --results ..."` and we must not
+# duplicate outputs by stacking individual defaults on top.
+if [[ ! -v RESULTS && ! -v RESULTS1 && ! -v RESULTS2 && ! -v RESULTS3 && ! -v RESULTS4 ]]; then
+    RESULTS="--results beast,connect,127.0.0.1:30104"
+    RESULTS2="--results basestation,listen,31015"
+    RESULTS3="--results beast,listen,30157"
+    RESULTS4="--results beast,connect,127.0.0.1:30187"
+fi
+
 UUID_FILE="--uuid-file $FEEDER_ID_FILE"
 
 # State writer (defensive: a partial install where this script is in

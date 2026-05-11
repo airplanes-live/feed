@@ -315,16 +315,21 @@ SH
     [ -f "$root/etc/airplanes/feeder-id" ]
     [ -L "$ipath/airplanes-uuid" ]
     [ "$(readlink "$ipath/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
-    grep -q 'UAT_INPUT="127.0.0.1:30978"' "$root/etc/airplanes/feed.env"
+    # Canonicalisers rewrote the legacy fixture: TARGET bumped to feed2
+    # failover, NET_OPTIONS lost its --uuid-file arg. Brand endpoints are
+    # also available as daemon defaults in the installed wrappers — `[ ...
+    # -eq 0 ]` form below because `! grep` is a tested context under bats
+    # and would silently pass on match.
     grep -q 'beast_reduce_plus_out,feed2.airplanes.live,64004' "$root/etc/airplanes/feed.env"
-    ! grep -q -- '--uuid-file' "$root/etc/airplanes/feed.env"
+    [ "$(grep -c -- '--uuid-file' "$root/etc/airplanes/feed.env")" -eq 0 ]
+    grep -q 'feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004' "$ipath/airplanes-feed.sh"
+    grep -q 'feed.airplanes.live:31090' "$ipath/airplanes-mlat.sh"
     [ -L "$root/etc/default/airplanes" ]
     [ "$(readlink "$root/etc/default/airplanes")" = "$root/etc/airplanes/feed.env" ]
     grep -q 'claim register' "$ROOT_DIR/claim.log"
     grep -q -- '--max-retry-time 15' "$ROOT_DIR/claim.log"
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
     [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
-    grep -q 'target-at-restart=TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"' "$ROOT_DIR/commands.log"
     # Lifecycle handover: even when MLAT is disabled by config, update.sh
     # no longer disables/stops the unit — the daemon self-disables via
     # sleep+exit. The state-file pattern depends on the daemon being
@@ -616,6 +621,9 @@ SH
     [ ! -e "$root/etc/airplanes/feed.env" ]
     [ -L "$root/etc/default/airplanes" ]
     [ "$(readlink "$root/etc/default/airplanes")" = "/boot/airplanes-config.txt" ]
+    # Brand endpoint reachable via daemon defaults in the installed
+    # wrapper (configure.sh / first-run-written feed.env stops carrying
+    # these; legacy /boot/airplanes-env values still source untouched).
     grep -q 'feed2.airplanes.live,64004' "$ipath/airplanes-feed.sh"
     grep -q 'claim register' "$ROOT_DIR/claim.log"
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"

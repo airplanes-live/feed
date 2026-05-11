@@ -556,3 +556,4 @@ EOF
     ! grep -q '^USER=' "$FEED_ENV"
     ! grep -q '^PRIVACY=' "$FEED_ENV"
 }
+
