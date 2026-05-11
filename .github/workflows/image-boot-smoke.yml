@@ -33,7 +33,7 @@ concurrency:
 jobs:
   image-boot-smoke:
     name: image boot (${{ matrix.image_contract }} contract)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -42,8 +42,10 @@ jobs:
         include:
           - image_contract: legacy
             image_release_repo: airplanes-live/image-releases
+            runner: ubuntu-24.04-arm
           - image_contract: new
             image_release_repo: airplanes-live/image
+            runner: ubuntu-24.04-arm
     # Per-cell gating happens at step level: actionlint correctly rejects
     # `matrix` context in job-level `if:` (matrix is expanded later in the
     # evaluation pipeline). Every step below references this guard so the

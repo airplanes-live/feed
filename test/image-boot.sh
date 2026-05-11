@@ -271,6 +271,34 @@ copy_optional_boot_file() {
     return 1
 }
 
+host_kernel_name() {
+    printf '%s\n' "host-vmlinuz-$(uname -r)"
+}
+
+host_initrd_name() {
+    printf '%s\n' "host-initrd.img-$(uname -r)"
+}
+
+can_use_host_virt_kernel() {
+    [[ "$IMAGE_ARCH" == "arm64" ]] || return 1
+    [[ "$(uname -m)" == "aarch64" ]] || return 1
+    [[ -r "/boot/vmlinuz-$(uname -r)" ]] || return 1
+    [[ -r "/boot/initrd.img-$(uname -r)" ]] || return 1
+}
+
+prepare_host_virt_boot_files() {
+    local kernel initrd
+    kernel="$(host_kernel_name)"
+    initrd="$(host_initrd_name)"
+    cp "/boot/vmlinuz-$(uname -r)" "$BOOT_FILES/$kernel"
+    cp "/boot/initrd.img-$(uname -r)" "$BOOT_FILES/$initrd"
+    printf '%s\n' "$kernel" > "$BOOT_FILES/kernel-name"
+    printf '%s\n' "" > "$BOOT_FILES/dtb-name"
+    printf '%s\n' "$initrd" > "$BOOT_FILES/initrd-name"
+    printf '%s\n' "host-virt" > "$BOOT_FILES/boot-mode"
+    echo "Using host arm64 kernel for QEMU virt boot: /boot/vmlinuz-$(uname -r)"
+}
+
 prepare_qemu_kernel() {
     local source="$1"
     local qemu_kernel="$source"
@@ -542,21 +570,36 @@ prepare_boot_files() {
         fail "no supported Raspberry Pi kernel found in boot partition"
     fi
 
-    if [[ "$kernel" == "kernel8.img" && "$QEMU_MACHINE_MODE" == "virt" ]]; then
+    if [[ "$QEMU_MACHINE_MODE" == "host" ]]; then
+        boot_mode="host-virt"
+    elif [[ "$QEMU_MACHINE_MODE" == "auto" && "$kernel" == "kernel8.img" ]] \
+        && can_use_host_virt_kernel; then
+        boot_mode="host-virt"
+    elif [[ "$kernel" == "kernel8.img" && "$QEMU_MACHINE_MODE" == "virt" ]]; then
         boot_mode="virt"
     else
         boot_mode="raspi"
     fi
 
-    qemu_kernel="$(prepare_qemu_kernel "$kernel")"
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        can_use_host_virt_kernel || fail "host QEMU boot requires an arm64 runner with readable /boot/vmlinuz-$(uname -r) and /boot/initrd.img-$(uname -r)"
+        prepare_host_virt_boot_files
+        qemu_kernel="$(cat "$BOOT_FILES/kernel-name")"
+        qemu_dtb=""
+    else
+        qemu_kernel="$(prepare_qemu_kernel "$kernel")"
+    fi
+
     if [[ "$boot_mode" == "raspi" ]]; then
         copy_boot_file "$dtb"
         qemu_dtb="$(prepare_qemu_dtb "$dtb")"
-    else
+    elif [[ "$boot_mode" != "host-virt" ]]; then
         qemu_dtb=""
     fi
 
-    if initrd="$(select_initrd "$kernel")"; then
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        echo "Using host initramfs for direct QEMU boot: /boot/initrd.img-$(uname -r)"
+    elif initrd="$(select_initrd "$kernel")"; then
         copy_optional_boot_file "$initrd"
         if [[ "$boot_mode" == "virt" ]]; then
             qemu_initrd="$(prepare_virt_initrd "$initrd" "$kernel" "$qemu_kernel")"
@@ -575,7 +618,9 @@ prepare_boot_files() {
     cmdline="${cmdline//console=serial0/console=ttyAMA0,115200}"
     cmdline="$(printf '%s\n' "$cmdline" \
         | sed -E 's/(^| )init=[^ ]+//g; s/(^| )quiet( |$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
-    if [[ "$boot_mode" == "virt" ]]; then
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        cmdline="$(cmdline_set_arg "$cmdline" root "/dev/vda2")"
+    elif [[ "$boot_mode" == "virt" ]]; then
         cmdline="$(cmdline_set_arg "$cmdline" root "/dev/sda2")"
     elif root_partuuid="$(partition_uuid 2)"; then
         cmdline="$(cmdline_set_arg "$cmdline" root "PARTUUID=$root_partuuid")"
@@ -583,9 +628,11 @@ prepare_boot_files() {
     cmdline="$(cmdline_add_flag "$cmdline" rootwait)"
     cmdline="$(cmdline_set_arg "$cmdline" rootfstype ext4)"
     printf '%s systemd.unit=multi-user.target systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
-    printf '%s\n' "$qemu_kernel" > "$BOOT_FILES/kernel-name"
-    printf '%s\n' "$qemu_dtb" > "$BOOT_FILES/dtb-name"
-    printf '%s\n' "$boot_mode" > "$BOOT_FILES/boot-mode"
+    if [[ "$boot_mode" != "host-virt" ]]; then
+        printf '%s\n' "$qemu_kernel" > "$BOOT_FILES/kernel-name"
+        printf '%s\n' "$qemu_dtb" > "$BOOT_FILES/dtb-name"
+        printf '%s\n' "$boot_mode" > "$BOOT_FILES/boot-mode"
+    fi
 }
 
 write_guest_probe() {
@@ -878,7 +925,7 @@ qemu_command() {
     cmdline="$(cat "$BOOT_FILES/cmdline.txt")"
     boot_mode="$(cat "$BOOT_FILES/boot-mode")"
 
-    if [[ "$boot_mode" == "virt" ]]; then
+    if [[ "$boot_mode" == "virt" || "$boot_mode" == "host-virt" ]]; then
         qemu_bin="qemu-system-aarch64"
         machine="virt"
         cpu="cortex-a53"
@@ -913,7 +960,13 @@ qemu_command() {
         args+=(-initrd "$BOOT_FILES/$initrd")
     fi
     args+=(-append "$cmdline")
-    if [[ "$boot_mode" == "virt" ]]; then
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        args+=(
+            -nic none
+            -drive "file=$IMAGE_FILE,format=raw,if=none,id=hd0"
+            -device "virtio-blk-device,drive=hd0"
+        )
+    elif [[ "$boot_mode" == "virt" ]]; then
         args+=(
             -nic none
             -drive "file=$IMAGE_FILE,format=raw,if=none,id=hd0"
