@@ -340,6 +340,51 @@ SH
     fi
 }
 
+# Boot-config sourcing path: legacy image's /boot/airplanes-config.txt has
+# MLAT_MARKER from PHP webconfig and no feed.env yet. Daemon falls back to
+# sourcing boot config; in-shell MLAT_MARKER fallback derives MLAT_PRIVATE.
+# This is the production legacy path that motivated the fallback.
+@test "airplanes-mlat.sh: legacy boot-config sourcing with MLAT_MARKER=no → fallback derives true" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/boot" "$root/usr/bin" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/usr/bin/airplanes-feeder"
+    cat > "$root/boot/airplanes-config.txt" <<'EOF'
+LATITUDE="52"
+LONGITUDE="13"
+ALTITUDE="35m"
+MLAT_USER="legacy-feeder"
+MLAT_ENABLED=true
+MLAT_MARKER="no"
+EOF
+    cat > "$root/boot/airplanes-env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+MLATSERVER="feed.airplanes.live:31090"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--privacy' "$arg_log"
+}
+
 # Conflict rule: canonical MLAT_PRIVATE always wins over legacy MLAT_MARKER.
 @test "airplanes-mlat.sh: MLAT_PRIVATE=false beats legacy MLAT_MARKER=no" {
     local root="$ROOT_DIR/root"

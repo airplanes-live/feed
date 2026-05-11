@@ -252,17 +252,23 @@ _extract_env_value() {
     printf '%s' "$raw"
 }
 
-# Convert legacy PRIVACY (CLI-flag-as-storage from the upstream ADS-B
-# Exchange installer) into MLAT_PRIVATE=true|false. Idempotent.
+# Convert legacy PRIVACY / MLAT_MARKER into canonical MLAT_PRIVATE=true|false.
+# Idempotent.
 #
 #   PRIVACY=--privacy   →  MLAT_PRIVATE=true
 #   PRIVACY=""          →  MLAT_PRIVATE=false
-#   PRIVACY absent      →  MLAT_PRIVATE=false (defaulted, no PRIVACY to strip)
+#   MLAT_MARKER=no      →  MLAT_PRIVATE=true   (inverted polarity: "no" = privacy ON)
+#   MLAT_MARKER=<else>  →  MLAT_PRIVATE=false
+#   all three absent    →  MLAT_PRIVATE=false (defaulted, no legacy keys to strip)
 #
-# Conflict rule: when both PRIVACY and MLAT_PRIVATE are present, canonical
-# MLAT_PRIVATE wins and PRIVACY is stripped. (Diverges from migrate_user_to_mlat_split's
-# legacy-reappearance re-derivation: there's no observed legacy PRIVACY
-# writer outside this repo today, so we don't loop a webconfig race.)
+# Precedence when multiple sources are present:
+#   1. canonical MLAT_PRIVATE wins
+#   2. then PRIVACY (manual-install legacy CLI fragment, the more deliberate
+#      hand-edit signal)
+#   3. then MLAT_MARKER (PHP webconfig's still-shipping yes/no dropdown)
+#
+# Both PRIVACY and MLAT_MARKER are stripped on write so the canonical form
+# is the only privacy key on disk after migration.
 #
 # Backup at $feed_env.pre-privacy-split is the rollback path; written
 # exactly once and never overwritten.
@@ -270,11 +276,13 @@ migrate_privacy_to_mlat_private() {
     local feed_env="$1"
     [[ -f "$feed_env" ]] || return 0
 
-    local has_privacy=0 has_mlat_private=0
+    local has_privacy=0 has_mlat_private=0 has_marker=0
     grep -qE '^PRIVACY=' "$feed_env" && has_privacy=1
     grep -qE '^MLAT_PRIVATE=' "$feed_env" && has_mlat_private=1
+    grep -qE '^MLAT_MARKER=' "$feed_env" && has_marker=1
 
-    if [[ "$has_privacy" == "0" && "$has_mlat_private" == "1" ]]; then
+    # No-op when only canonical MLAT_PRIVATE is present (no stripping needed).
+    if [[ "$has_privacy" == "0" && "$has_marker" == "0" && "$has_mlat_private" == "1" ]]; then
         return 0
     fi
 
@@ -292,11 +300,20 @@ migrate_privacy_to_mlat_private() {
             --privacy) mlat_private="true" ;;
             *)         mlat_private="false" ;;
         esac
+    elif [[ "$has_marker" == "1" ]]; then
+        local marker_value
+        marker_value="$(_extract_env_value "$feed_env" MLAT_MARKER)"
+        marker_value="${marker_value#"${marker_value%%[![:space:]]*}"}"
+        marker_value="${marker_value%"${marker_value##*[![:space:]]}"}"
+        case "$marker_value" in
+            no) mlat_private="true" ;;
+            *)  mlat_private="false" ;;
+        esac
     else
         mlat_private="false"
     fi
 
-    if [[ "$has_privacy" == "1" || "$has_mlat_private" == "0" ]]; then
+    if [[ "$has_privacy" == "1" || "$has_marker" == "1" || "$has_mlat_private" == "0" ]]; then
         local backup="${feed_env}.pre-privacy-split"
         if [[ ! -f "$backup" ]]; then
             cp -fp "$feed_env" "$backup"
@@ -305,7 +322,7 @@ migrate_privacy_to_mlat_private() {
         local tmp
         tmp="$(mktemp "${feed_env}.XXXXXX")"
         # Same `grep -v` exit-1 handling as migrate_user_to_mlat_split.
-        grep -vE '^(PRIVACY|MLAT_PRIVATE)=' "$feed_env" > "$tmp" || true
+        grep -vE '^(PRIVACY|MLAT_PRIVATE|MLAT_MARKER)=' "$feed_env" > "$tmp" || true
         printf 'MLAT_PRIVATE=%s\n' "$mlat_private" >> "$tmp"
         chmod --reference="$feed_env" "$tmp" 2>/dev/null || true
         chown --reference="$feed_env" "$tmp" 2>/dev/null || true

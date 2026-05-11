@@ -498,6 +498,50 @@ EOF
     ! grep -q '^PRIVACY=' "$FEED_ENV"
 }
 
+@test "migrate_privacy_to_mlat_private: MLAT_MARKER=no → MLAT_PRIVATE=true, stripped" {
+    # PHP webconfig writes MLAT_MARKER via its yes/no dropdown with
+    # inverted polarity: "no" means privacy ON.
+    printf 'MLAT_MARKER="no"\n' > "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=true' "$FEED_ENV"
+    ! grep -q '^MLAT_MARKER=' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: MLAT_MARKER=yes → MLAT_PRIVATE=false, stripped" {
+    printf 'MLAT_MARKER="yes"\n' > "$FEED_ENV"
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=false' "$FEED_ENV"
+    ! grep -q '^MLAT_MARKER=' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: PRIVACY wins over MLAT_MARKER when both present" {
+    # PRIVACY is the more deliberate hand-edit signal (CLI fragment);
+    # MLAT_MARKER is the still-shipping PHP webconfig form. If a config
+    # carries both, prefer PRIVACY.
+    cat > "$FEED_ENV" <<'EOF'
+PRIVACY="--privacy"
+MLAT_MARKER="yes"
+EOF
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=true' "$FEED_ENV"
+    ! grep -q '^PRIVACY=' "$FEED_ENV"
+    ! grep -q '^MLAT_MARKER=' "$FEED_ENV"
+}
+
+@test "migrate_privacy_to_mlat_private: canonical MLAT_PRIVATE wins over MLAT_MARKER" {
+    cat > "$FEED_ENV" <<'EOF'
+MLAT_PRIVATE=false
+MLAT_MARKER="no"
+EOF
+    migrate_privacy_to_mlat_private "$FEED_ENV"
+
+    grep -qx 'MLAT_PRIVATE=false' "$FEED_ENV"
+    ! grep -q '^MLAT_MARKER=' "$FEED_ENV"
+}
+
 @test "run_config_file_migrations: chains migrate_privacy_to_mlat_private after migrate_user_to_mlat_split" {
     cat > "$FEED_ENV" <<'EOF'
 USER="alice"
