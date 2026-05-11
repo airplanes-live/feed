@@ -76,7 +76,7 @@ Don't blanket-ignore. Default mental model: if a failing test on macOS doesn't f
 
 ## CI workflows
 
-All run on `ubuntu-24.04` host. Names below are the status-check display names.
+`ci.yml` jobs run on `ubuntu-24.04`. `image-boot-smoke.yml` runs on `ubuntu-24.04-arm` so the QEMU smoke can use the hosted runner's arm64 kernel/initrd while still exercising the downloaded image rootfs. Names below are the status-check display names.
 
 PR + push (workflow `ci.yml`):
 
@@ -94,7 +94,7 @@ Push to main/dev + manual dispatch (workflow `image-boot-smoke.yml`, top-level n
 
 - `image boot (legacy contract)` / `(new contract)` — full QEMU boot + update + reboot + idempotency assertions across both image contracts. Manual `workflow_dispatch` supports `image_contract={all,legacy,new}`.
 
-The arm64 boot path uses QEMU's generic `virt` machine with emulated AHCI storage. Modern Raspberry Pi OS kernels no longer boot reliably under QEMU's `raspi3b` board model, and the image initramfs does not autoload generic PCI storage during early root discovery. `test/image-boot.sh` therefore builds a QEMU-only initramfs copy from the image's own initramfs plus AHCI/SCSI modules from the image rootfs. Set `AIRPLANES_BOOT_SMOKE_QEMU_MACHINE=raspi` only for debugging the old board-emulation path.
+The arm64 boot path intentionally does not emulate Raspberry Pi hardware in CI. QEMU's `raspi3b` board model is unreliable for current Raspberry Pi OS kernels on hosted runners, and Raspberry Pi kernels under generic QEMU `virt` do not reliably discover generic block devices early enough for root discovery. On GitHub `ubuntu-24.04-arm` runners, `test/image-boot.sh` auto-selects `host-virt`: it direct-boots QEMU's generic `virt` machine with the runner's `/boot/vmlinuz-$(uname -r)` and `/boot/initrd.img-$(uname -r)`, attaches the image as a `virtio-blk-device`, and mounts the image rootfs as `/dev/vda2`. That still tests the image's root filesystem, systemd units, update logic, reboot persistence, state-file contracts, feeder-id stability, and update idempotency while avoiding Raspberry Pi board emulation. Do not force `systemd.unit=multi-user.target`; the project services are enabled under `default.target`, and the smoke probe is installed there so CI follows the same target graph as a normal image boot. The default QEMU timeout is `15m` per boot attempt for hosted-runner slowness. `AIRPLANES_BOOT_SMOKE_QEMU_MACHINE=raspi` and `AIRPLANES_BOOT_SMOKE_QEMU_MACHINE=virt` are debug-only overrides for the old Pi-kernel paths.
 
 ## Asset-source library
 
