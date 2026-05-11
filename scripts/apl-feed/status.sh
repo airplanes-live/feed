@@ -181,8 +181,9 @@ _render_systemd_state() {
 # published decision from /run/airplanes-mlat/state when the unit is
 # active or transitioning; falls through to systemd-derived rendering
 # otherwise. Special-cases failed-with-exit-64 (the strict misconfig
-# fail from airplanes-mlat.sh) to surface the MLAT_USER-empty actionable
-# message via the state file's reason key.
+# fail from airplanes-mlat.sh — today only fires for an invalid
+# MLAT_PRIVATE value) to surface the actionable message via the state
+# file's reason key.
 mlat_status_line() {
     local label="MLAT service"
     local unit="airplanes-mlat.service"
@@ -270,7 +271,6 @@ _render_mlat_misconfig_reason() {
     local reason="$1"
     local label="MLAT service"
     case "$reason" in
-        mlat_user_empty)      status_line fail "$label" "MLAT_USER is empty (set MLAT_USER, or set MLAT_ENABLED=false)" ;;
         mlat_private_invalid) status_line fail "$label" "MLAT_PRIVATE must be 'true' or 'false' in feed.env" ;;
         *)                    status_line fail "$label" "misconfigured ($reason)" ;;
     esac

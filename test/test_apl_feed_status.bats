@@ -302,17 +302,6 @@ STUB
     [[ "$output" == *'disabled by config (LONGITUDE=0)'* ]]
 }
 
-@test "mlat_status_line: ActiveState=active + misconfigured mlat_user_empty → FIX with actionable message" {
-    write_mlat_state misconfigured mlat_user_empty
-    stub_systemctl_active_state active
-    status_init
-    STATUS_OUTPUT_JSON=0
-    run mlat_status_line
-    [[ "$output" == *'FIX'* ]]
-    [[ "$output" == *'MLAT_USER is empty'* ]]
-    [[ "$output" == *'set MLAT_ENABLED=false'* ]]
-}
-
 @test "mlat_status_line: ActiveState=failed + exit 64 + misconfigured mlat_private_invalid → actionable" {
     write_mlat_state misconfigured mlat_private_invalid
     stub_systemctl_active_state failed 64
@@ -336,23 +325,23 @@ STUB
 # Load-bearing case: misconfig surface is visible continuously across the
 # Restart=always cycle, not just during the microsecond active window.
 @test "mlat_status_line: ActiveState=activating + misconfigured → still surfaces the actionable message" {
-    write_mlat_state misconfigured mlat_user_empty
+    write_mlat_state misconfigured mlat_private_invalid
     stub_systemctl_active_state activating
     status_init
     STATUS_OUTPUT_JSON=0
     run mlat_status_line
     [[ "$output" == *'FIX'* ]]
-    [[ "$output" == *'MLAT_USER is empty'* ]]
+    [[ "$output" == *"MLAT_PRIVATE must be 'true' or 'false'"* ]]
 }
 
 @test "mlat_status_line: ActiveState=failed + exit 64 + state file present → surfaces misconfig reason" {
-    write_mlat_state misconfigured mlat_user_empty
+    write_mlat_state misconfigured mlat_private_invalid
     stub_systemctl_active_state failed 64
     status_init
     STATUS_OUTPUT_JSON=0
     run mlat_status_line
     [[ "$output" == *'FIX'* ]]
-    [[ "$output" == *'MLAT_USER is empty'* ]]
+    [[ "$output" == *"MLAT_PRIVATE must be 'true' or 'false'"* ]]
 }
 
 @test "mlat_status_line: ActiveState=failed + exit 64 + no state file → generic 'check feed.env MLAT config'" {

@@ -269,6 +269,53 @@ SH
     [ "$(cat "$root/setup-marker")" = "setup-ran" ]
 }
 
+@test "update.sh does NOT run setup.sh when MLAT_USER is empty but geo is complete" {
+    # Regression: empty MLAT_USER + MLAT_ENABLED=true used to trip the
+    # "incomplete config" guard and launch setup.sh. With the daemon-side
+    # Anonymous fallback this state is valid and setup.sh must NOT run.
+    local root="$ROOT_DIR/root"
+    local feed_repo="$ROOT_DIR/feed-source"
+    local ipath="$root/usr/local/share/airplanes"
+    mkdir -p "$ipath" "$root/etc/airplanes"
+    echo 'VERSION_ID="13"' > "$root/etc/os-release"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52"
+LONGITUDE="13"
+ALTITUDE="35m"
+MLAT_USER=""
+MLAT_ENABLED="true"
+MLATSERVER="feed.airplanes.live:31090"
+TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out"
+EOF
+    copy_feed_fixture_repo "$feed_repo"
+    cat > "$feed_repo/setup.sh" <<'SH'
+#!/usr/bin/env bash
+mkdir -p "$AIRPLANES_ROOT"
+printf 'setup-ran-unexpectedly\n' > "$AIRPLANES_ROOT/setup-marker"
+exit 0
+SH
+    chmod +x "$feed_repo/setup.sh"
+    commit_all "$feed_repo"
+    cp "$feed_repo/update.sh" "$ipath/update.sh"
+    install_command_stubs
+
+    run env PATH="$STUB_DIR:/usr/bin:/bin" \
+        COMMAND_LOG="$ROOT_DIR/commands.log" \
+        AIRPLANES_ROOT="$root" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        AIRPLANES_PACKAGE_MANAGER=none \
+        AIRPLANES_FEED_REPO="$feed_repo" \
+        AIRPLANES_FEED_BRANCH=main \
+        bash "$UPDATE"
+
+    # update.sh may fail later in the pipeline (no mlat/readsb repos
+    # configured) but the regression we care about is that setup.sh never
+    # ran. Status intentionally not asserted.
+    [ ! -f "$root/setup-marker" ]
+}
+
 @test "update.sh runs configured update path without touching host root" {
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"

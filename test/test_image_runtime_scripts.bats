@@ -662,8 +662,9 @@ write_feed_env() {
     grep -qx 'reason=longitude_zero' "$root/run/airplanes-mlat/state"
 }
 
-@test "airplanes-mlat.sh exits 64 with state=misconfigured when MLAT_USER empty + MLAT_ENABLED=true" {
+@test "airplanes-mlat.sh: empty MLAT_USER + canonical feeder-id → state=enabled, MLAT_USER=Anonymous-<short>, mlat-client gets --user" {
     local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
     write_feed_env "$root" \
@@ -675,19 +676,120 @@ write_feed_env() {
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
+    # Seed a known feeder-id; first 8 chars form the per-device suffix.
+    printf '0a1b2c3d-4567-89ab-cdef-0123456789ab\n' > "$root/etc/airplanes/feeder-id"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=ok' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_user=Anonymous-0a1b2c3d' "$root/run/airplanes-mlat/state"
+    # mlat-client must receive the substituted value, not an empty --user.
+    grep -q -- '--user Anonymous-0a1b2c3d' "$arg_log"
+}
+
+@test "airplanes-mlat.sh: empty MLAT_USER + no feeder-id → state=enabled, MLAT_USER=Anonymous" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER=""' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+    # Deliberately no $root/etc/airplanes/feeder-id — the daemon falls back
+    # to plain "Anonymous" when the file is missing.
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=ok' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes-mlat/state"
+    grep -q -- '--user Anonymous' "$arg_log"
+}
+
+@test "airplanes-mlat.sh: empty MLAT_USER + empty feeder-id file → MLAT_USER=Anonymous (not Anonymous-)" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' 'INPUT_TYPE="dump1090"' 'MLATSERVER="feed.airplanes.live:31090"'
+    : > "$root/etc/airplanes/feeder-id"
 
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
-    [ "$status" -eq 64 ]
-    grep -qx 'state=misconfigured' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=mlat_user_empty' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_user=' "$root/run/airplanes-mlat/state"
+    [ "$status" -eq 0 ]
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh: empty MLAT_USER + truncated feeder-id (not a UUID) → MLAT_USER=Anonymous" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' 'INPUT_TYPE="dump1090"' 'MLATSERVER="feed.airplanes.live:31090"'
+    # Three printable bytes — would have made a "Anonymous-abc" identity if
+    # we used raw head -c 8 without UUID validation.
+    printf 'abc' > "$root/etc/airplanes/feeder-id"
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh: empty MLAT_USER + feeder-id is a symlink → MLAT_USER=Anonymous (refuses to follow)" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' 'INPUT_TYPE="dump1090"' 'MLATSERVER="feed.airplanes.live:31090"'
+    # Target file with a canonical-looking UUID; the daemon must still refuse
+    # to follow the symlink and fall back to plain Anonymous.
+    printf 'ffffffff-1234-5678-9abc-def012345678\n' > "$root/etc/airplanes/feeder-id.target"
+    ln -s "$root/etc/airplanes/feeder-id.target" "$root/etc/airplanes/feeder-id"
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh: empty MLAT_USER + feeder-id with CR/LF in canonical UUID → strips CR/LF, MLAT_USER=Anonymous-<short>" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' 'INPUT_TYPE="dump1090"' 'MLATSERVER="feed.airplanes.live:31090"'
+    # CRLF line ending (Windows-edited feeder-id file) — must be stripped
+    # before the UUID regex check so the validation succeeds.
+    printf '0a1b2c3d-4567-89ab-cdef-0123456789ab\r\n' > "$root/etc/airplanes/feeder-id"
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'mlat_user=Anonymous-0a1b2c3d' "$root/run/airplanes-mlat/state"
 }
 
 @test "airplanes-mlat.sh exits 64 with schema-strict guard when boot config has legacy USER but no MLAT_USER" {
     # Simulates a feeder where airplanes-update or webconfig migration
     # did not run before the daemon started. The schema guard catches it
-    # early (before mlat_user_empty classifier) and points at the fix.
+    # early (before any MLAT_USER fallback) and points at the fix — the
+    # legacy USER= must be migrated explicitly rather than silently aliased.
     local root="$ROOT_DIR/root"
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
