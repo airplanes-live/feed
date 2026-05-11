@@ -174,6 +174,14 @@ migrate_user_to_mlat_split() {
             mlat_user=""
             mlat_enabled="false"
             ;;
+        '')
+            # Empty USER → "Anonymous" so the daemon's strict-fail on
+            # empty MLAT_USER never fires. Mirrors the writer-side
+            # defaults in configure.sh, apl-feed/mlat.sh, and
+            # airplanes-webconfig's migrate-config.sh.
+            mlat_user="Anonymous"
+            mlat_enabled="true"
+            ;;
         *)
             mlat_user="$user_value"
             mlat_enabled="true"
