@@ -644,10 +644,34 @@ write_feed_env() {
     grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
 }
 
-@test "airplanes-mlat.sh derives GEO_CONFIGURED=false from legacy LATITUDE=0" {
+@test "airplanes-mlat.sh derives GEO_CONFIGURED=false from legacy LATITUDE=0/LONGITUDE=0 pair" {
     # feed.env predating the GEO_CONFIGURED schema addition: in-shell
-    # fallback in airplanes-mlat.sh sees LATITUDE=0 and derives false,
-    # matching the previous latitude_zero sentinel behavior.
+    # fallback sees the (0,0) placeholder pair and derives false. This is
+    # the image-freeze / uninitialized state.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=0' \
+        'LONGITUDE=0' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
+    grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh fallback heals legacy equator user (LATITUDE=0, LONGITUDE!=0) → GEO_CONFIGURED=true" {
+    # Real geographic case the old LATITUDE==0 sentinel falsely disabled.
+    # The fallback heuristic recognizes single-axis zero as a legitimate
+    # coordinate and classifies as configured.
     local root="$ROOT_DIR/root"
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
@@ -663,12 +687,11 @@ write_feed_env() {
 
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
-    [ "$status" -eq 0 ]
-    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
-    grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
 }
 
-@test "airplanes-mlat.sh derives GEO_CONFIGURED=false from legacy LONGITUDE=0" {
+@test "airplanes-mlat.sh fallback heals legacy prime-meridian user (LATITUDE!=0, LONGITUDE=0)" {
     local root="$ROOT_DIR/root"
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
@@ -684,8 +707,8 @@ write_feed_env() {
 
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
-    [ "$status" -eq 0 ]
-    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
 }
 
 @test "airplanes-mlat.sh derives GEO_CONFIGURED=true from non-zero coords (legacy feed.env)" {
@@ -705,6 +728,28 @@ write_feed_env() {
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh derives GEO_CONFIGURED=false from decimal-zero pair (0.00000/0.00000)" {
+    # Hand-edits or older configure.sh writers may use decimal-zero forms.
+    # The helper recognizes them as numerically zero so the placeholder pair
+    # isn't misclassified as configured.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE="0.00000"' \
+        'LONGITUDE="0.00000"' \
+        'ALTITUDE=35m' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
 }
 
 @test "airplanes-mlat.sh: explicit GEO_CONFIGURED wins over legacy coord derivation" {
