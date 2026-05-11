@@ -94,6 +94,8 @@ Push to main/dev + manual dispatch (workflow `image-boot-smoke.yml`, top-level n
 
 - `image boot (legacy contract)` / `(new contract)` — full QEMU boot + update + reboot + idempotency assertions across both image contracts. Manual `workflow_dispatch` supports `image_contract={all,legacy,new}`.
 
+The arm64 boot path uses QEMU's generic `virt` machine with virtio block/net. Modern Raspberry Pi OS kernels no longer boot reliably under QEMU's `raspi3b` board model, and current Pi initramfs images do not include virtio storage modules by default. `test/image-boot.sh` therefore builds a QEMU-only initramfs copy from the image's own initramfs plus virtio modules from the image rootfs. Set `AIRPLANES_BOOT_SMOKE_QEMU_MACHINE=raspi` only for debugging the old board-emulation path.
+
 ## Asset-source library
 
 The mounted-image smokes and the QEMU boot smoke share `test/lib/image-source.sh`, which resolves an image archive from a tiered source list. Tiers today: `release-stable` (excludes prereleases) and `release-any` (newest by `published_at`, prerelease-friendly). Library exits 64 on tier exhaustion — callers MUST handle this as skip-with-notice, not hard failure, so a long-dormant upstream image repo doesn't break feed CI.

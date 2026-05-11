@@ -67,10 +67,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ca-certificates \
+            binutils \
+            cpio \
             curl \
             gh \
+            initramfs-tools-core \
             git \
             jq \
+            kmod \
             parted \
             p7zip-full \
             qemu-system-arm \
@@ -78,7 +82,8 @@ jobs:
             rsync \
             file \
             unzip \
-            xz-utils
+            xz-utils \
+            zstd
 
       - name: Run image boot
         if: github.event_name == 'push' || github.event.inputs.image_contract == 'all' || matrix.image_contract == github.event.inputs.image_contract
