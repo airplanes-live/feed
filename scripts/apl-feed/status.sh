@@ -250,6 +250,7 @@ _render_mlat_decision() {
             local detail
             case "$reason" in
                 mlat_enabled_false) detail="disabled by config (MLAT_ENABLED=false)" ;;
+                geo_not_configured) detail="disabled by config (location not set)" ;;
                 latitude_zero)      detail="disabled by config (LATITUDE=0)" ;;
                 longitude_zero)     detail="disabled by config (LONGITUDE=0)" ;;
                 *)                  detail="disabled by config ($reason)" ;;

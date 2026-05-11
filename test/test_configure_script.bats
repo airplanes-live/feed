@@ -64,9 +64,34 @@ run_configure_env() {
     [ "$status" -eq 0 ]
     grep -q 'LATITUDE="52.52000"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'GEO_CONFIGURED=true' "$ROOT_DIR/etc/airplanes/feed.env"
     ! grep -q '\-\-uuid-file' "$ROOT_DIR/etc/airplanes/feed.env"
     ! grep -q 'Invalid latitude' "$WHIPTAIL_LOG"
     ! grep -q 'Invalid longitude' "$WHIPTAIL_LOG"
+}
+
+@test "configure.sh emits GEO_CONFIGURED=false when both lat and lon are 0 (image-freeze placeholder)" {
+    run_configure_env \
+        AIRPLANES_MLAT_USER="image" \
+        AIRPLANES_LATITUDE="0" \
+        AIRPLANES_LONGITUDE="0" \
+        AIRPLANES_ALTITUDE="0m"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh emits GEO_CONFIGURED=true when only one axis is 0 (legitimate equator/prime-meridian)" {
+    # Equator user (lat=0, lon!=0) is a real geographic case; configure.sh
+    # must NOT mistake them for an image-freeze placeholder.
+    run_configure_env \
+        AIRPLANES_MLAT_USER="equator" \
+        AIRPLANES_LATITUDE="0" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'GEO_CONFIGURED=true' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "configure.sh rejects non-numeric latitude with Invalid msgbox" {
