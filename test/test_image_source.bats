@@ -45,7 +45,12 @@ esac
 SH
     chmod +x "$STUB_DIR/gh"
 
-    # Stub `curl`: write a known byte stream to whatever --output target is given.
+    # Stub `curl`: two modes.
+    #   1. If $FIXTURE_DIR/curl-stub-by-name/<basename-of-url> exists, emit
+    #      its contents — used by manifest-fetch tests, where the picker
+    #      curls the manifest URL and reads JSON from stdout (no --output).
+    #   2. Otherwise, write `STUB-IMAGE-BYTES-FOR:<url>` to --output (default
+    #      behavior for image-archive downloads).
     cat > "$STUB_DIR/curl" <<'SH'
 #!/usr/bin/env bash
 output=""
@@ -58,8 +63,29 @@ while [[ $# -gt 0 ]]; do
         *) url="$1"; shift ;;
     esac
 done
-if [[ -z "$output" || -z "$url" ]]; then
-    echo "curl stub: missing output ($output) or url ($url)" >&2
+if [[ -z "$url" ]]; then
+    echo "curl stub: missing url" >&2
+    exit 1
+fi
+basename="${url##*/}"
+fixture_path="$FIXTURE_DIR/curl-stub-by-name/$basename"
+if [[ -f "$fixture_path" ]]; then
+    if [[ -n "$output" ]]; then
+        mkdir -p "$(dirname "$output")"
+        cp -- "$fixture_path" "$output"
+    else
+        cat -- "$fixture_path"
+    fi
+    exit 0
+fi
+# Sentinel for "fetch this URL should fail" — tests pre-create an empty file
+# and rely on the absent fixture to take this branch.
+if [[ "$basename" == *FAIL* ]]; then
+    echo "curl stub: simulated fetch failure for $url" >&2
+    exit 22
+fi
+if [[ -z "$output" ]]; then
+    echo "curl stub: stdout-mode fetch with no fixture and no FAIL marker: $url" >&2
     exit 1
 fi
 mkdir -p "$(dirname "$output")"
@@ -104,6 +130,34 @@ EOF
 fixture_releases_json() {
     local jq_expr="$1"
     jq -n "$jq_expr" > "$FIXTURE_DIR/releases.json"
+}
+
+# Drops a manifest JSON file at the path the curl stub will lookup by basename.
+# Args: manifest_basename body_json (a JSON string written verbatim)
+fixture_curl_body() {
+    local name="$1" body="$2"
+    mkdir -p "$FIXTURE_DIR/curl-stub-by-name"
+    printf '%s' "$body" > "$FIXTURE_DIR/curl-stub-by-name/$name"
+}
+
+# Writes a minimal valid rpi-imager Custom Repository manifest body.
+# Args: image_url manifest_basename
+fixture_manifest_body() {
+    local image_url="$1" manifest_basename="$2"
+    fixture_curl_body "$manifest_basename" "$(jq -n --arg url "$image_url" '{
+        os_list: [{
+            name: "test feeder image",
+            description: "test",
+            url: $url,
+            extract_size: 1024,
+            extract_sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+            image_download_size: 512,
+            release_date: "2026-01-01",
+            init_format: "cloudinit-rpi",
+            devices: ["pi3-64bit"],
+            capabilities: []
+        }]
+    }')"
 }
 
 # ---------- tests ----------
@@ -269,4 +323,172 @@ fixture_releases_json() {
     rc=0
     ( PATH="$STUB_DIR"; image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR" ) >/dev/null 2>&1 || rc=$?
     [ "$rc" -eq 1 ]
+}
+
+# ---------- manifest-following path (new contract, no explicit regex) ----------
+
+# Writes a /releases/latest fixture for a `new`-contract release carrying both
+# the immutable .img.xz and the manifest sidecar. Returns the manifest's
+# image_url so tests can match it against the downloaded content.
+fixture_release_with_manifest() {
+    local tag="$1" channel="$2" arch="$3"
+    local immutable_name="airplanes-feeder-${channel}-${arch}-deadbeef0001-r99-a1.img.xz"
+    local immutable_url="https://example.invalid/${immutable_name}"
+    local manifest_name="airplanes-feeder-${channel}-${arch}.rpi-imager-manifest.json"
+    local manifest_url="https://example.invalid/${manifest_name}"
+    cat > "$FIXTURE_DIR/releases-latest.json" <<EOF
+{
+  "tag_name": "$tag",
+  "body": "",
+  "assets": [
+    {"name": "$immutable_name", "browser_download_url": "$immutable_url"},
+    {"name": "$manifest_name", "browser_download_url": "$manifest_url"}
+  ]
+}
+EOF
+    fixture_manifest_body "$immutable_url" "$manifest_name"
+    printf '%s\n' "$immutable_url"
+}
+
+@test "new contract: manifest path resolves to immutable url" {
+    image_url="$(fixture_release_with_manifest dev-latest dev arm64)"
+    stdout_file="$ROOT_DIR/stdout.txt"
+    image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR" >"$stdout_file" 2>/dev/null
+    [ "$?" -eq 0 ]
+    path="$(cat "$stdout_file")"
+    [[ "$path" == /*-deadbeef0001-r99-a1.img.xz ]]
+    # Stub curl wrote `STUB-IMAGE-BYTES-FOR:<url>` into the download target.
+    # Assert the URL came from the manifest's url field, not from regex
+    # matching a different asset.
+    grep -qF "$image_url" "$path"
+}
+
+@test "new contract: manifest absent falls back to legacy regex picker" {
+    # Release has the rolling .img.xz but NO manifest sidecar. Manifest
+    # picker returns rc 1, strategy falls through to regex, which matches
+    # the rolling asset.
+    fixture_releases_latest_one_asset dev-latest "airplanes-feeder-dev-arm64.img.xz" ""
+    stdout_file="$ROOT_DIR/stdout.txt"
+    image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR" >"$stdout_file" 2>/dev/null
+    [ "$?" -eq 0 ]
+    grep -q "airplanes-feeder-dev-arm64.img.xz" "$(cat "$stdout_file")"
+}
+
+@test "new contract: malformed manifest (no url) is a hard error, no regex fallback" {
+    # Manifest present but `os_list[0].url` empty. Even though a regex-
+    # matchable asset exists, the malformed manifest must surface, not get
+    # papered over by the regex fallback.
+    local immutable_name="airplanes-feeder-dev-arm64-deadbeef0002-r1-a1.img.xz"
+    local manifest_name="airplanes-feeder-dev-arm64.rpi-imager-manifest.json"
+    cat > "$FIXTURE_DIR/releases-latest.json" <<EOF
+{
+  "tag_name": "dev-latest",
+  "body": "",
+  "assets": [
+    {"name": "$immutable_name", "browser_download_url": "https://example.invalid/$immutable_name"},
+    {"name": "airplanes-feeder-dev-arm64.img.xz", "browser_download_url": "https://example.invalid/rolling.img.xz"},
+    {"name": "$manifest_name", "browser_download_url": "https://example.invalid/$manifest_name"}
+  ]
+}
+EOF
+    # url is empty string
+    fixture_curl_body "$manifest_name" '{"os_list":[{"name":"x","description":"x","url":"","extract_size":1,"extract_sha256":"00","image_download_size":1,"release_date":"2026-01-01","init_format":"cloudinit-rpi","devices":[],"capabilities":[]}]}'
+    run image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR"
+    [ "$status" -eq 2 ]
+}
+
+@test "new contract: manifest url pointing outside the release is rejected" {
+    local immutable_name="airplanes-feeder-dev-arm64-deadbeef0003-r1-a1.img.xz"
+    local manifest_name="airplanes-feeder-dev-arm64.rpi-imager-manifest.json"
+    cat > "$FIXTURE_DIR/releases-latest.json" <<EOF
+{
+  "tag_name": "dev-latest",
+  "body": "",
+  "assets": [
+    {"name": "$immutable_name", "browser_download_url": "https://example.invalid/$immutable_name"},
+    {"name": "$manifest_name", "browser_download_url": "https://example.invalid/$manifest_name"}
+  ]
+}
+EOF
+    # Manifest points at a URL that is NOT among the release's assets.
+    fixture_manifest_body "https://example.invalid/some-other-release/airplanes-feeder-dev-arm64-FAKE.img.xz" "$manifest_name"
+    run image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR"
+    [ "$status" -eq 2 ]
+}
+
+@test "new contract: manifest url pointing at asset with wrong-pattern name is rejected" {
+    local manifest_name="airplanes-feeder-dev-arm64.rpi-imager-manifest.json"
+    local notes_url="https://example.invalid/release-notes.txt"
+    cat > "$FIXTURE_DIR/releases-latest.json" <<EOF
+{
+  "tag_name": "dev-latest",
+  "body": "",
+  "assets": [
+    {"name": "release-notes.txt", "browser_download_url": "$notes_url"},
+    {"name": "$manifest_name", "browser_download_url": "https://example.invalid/$manifest_name"}
+  ]
+}
+EOF
+    # Manifest's url is in the release but points at the wrong asset
+    # (release-notes.txt rather than an .img.xz).
+    fixture_manifest_body "$notes_url" "$manifest_name"
+    run image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR"
+    [ "$status" -eq 2 ]
+}
+
+@test "new contract: manifest fetch failure is a hard error after retries" {
+    # Manifest sidecar listed in the release but the curl stub is asked to
+    # fail (FAIL marker in the basename). Library retries; each retry hits
+    # the same failure and the resolver exits rc 2.
+    local immutable_name="airplanes-feeder-dev-arm64-deadbeef0005-r1-a1.img.xz"
+    local manifest_name="airplanes-feeder-dev-arm64.rpi-imager-manifest.json"
+    cat > "$FIXTURE_DIR/releases-latest.json" <<EOF
+{
+  "tag_name": "dev-latest",
+  "body": "",
+  "assets": [
+    {"name": "$immutable_name", "browser_download_url": "https://example.invalid/$immutable_name"},
+    {"name": "$manifest_name", "browser_download_url": "https://example.invalid/FAIL-$manifest_name"}
+  ]
+}
+EOF
+    # Shorten the backoff to keep the test fast.
+    export _IMAGE_SOURCE_MANIFEST_FETCH_ATTEMPTS=2
+    export _IMAGE_SOURCE_MANIFEST_FETCH_BACKOFF_S=0
+    run image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR"
+    [ "$status" -eq 2 ]
+}
+
+@test "new contract: explicit regex override bypasses the manifest path" {
+    # Release has a valid manifest pointing at the immutable asset, AND a
+    # rolling-name asset. Caller passes an explicit regex that only matches
+    # the rolling asset — the resolver must respect that and bypass the
+    # manifest path.
+    fixture_release_with_manifest dev-latest dev arm64 >/dev/null
+    # Add a rolling asset to the same release fixture.
+    jq '.assets += [{"name": "airplanes-feeder-dev-arm64.img.xz", "browser_download_url": "https://example.invalid/rolling.img.xz"}]' \
+        "$FIXTURE_DIR/releases-latest.json" > "$FIXTURE_DIR/releases-latest.json.tmp"
+    mv "$FIXTURE_DIR/releases-latest.json.tmp" "$FIXTURE_DIR/releases-latest.json"
+    stdout_file="$ROOT_DIR/stdout.txt"
+    image_source_resolve airplanes-live/image new dev arm64 release-stable "$OUTPUT_DIR" \
+        '^airplanes-feeder-dev-arm64\.img\.xz$' >"$stdout_file" 2>/dev/null
+    [ "$?" -eq 0 ]
+    grep -q "rolling.img.xz" "$(cat "$stdout_file")"
+}
+
+@test "legacy contract: never reads the manifest, regex picker only" {
+    # Legacy contract releases have a single asset under historical naming
+    # and no manifest sidecar. Should resolve via regex, no manifest fetch.
+    fixture_releases_json '[
+        {"tag_name": "bookworm", "published_at": "2025-02-26T18:02:20Z", "body": "", "assets": [
+            {"name": "image_2025-02-24-airplanes-live-full.zip", "browser_download_url": "https://example.invalid/plain.zip"}
+        ]}
+    ]'
+    run image_source_resolve airplanes-live/image-releases legacy stable arm64 release-any "$OUTPUT_DIR"
+    [ "$status" -eq 0 ]
+    # `$output` (bats) merges stdout+stderr; downloaded path is on stdout,
+    # selected-* observability lines are on stderr. Match the stdout-path
+    # token specifically, anchored to the start of a line so an "asset"
+    # mention elsewhere can't satisfy this.
+    echo "$output" | grep -qE '^/.+/image_2025-02-24-airplanes-live-full\.zip$'
 }
