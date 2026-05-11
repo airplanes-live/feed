@@ -68,12 +68,18 @@ sed -i \
     -e 's/^ALTITUDE=.*/ALTITUDE="35m"/' \
     -e 's/^USER=.*/USER="image-rootfs-smoke"/' \
     "$ROOT_DIR/boot/airplanes-config.txt"
-# Run the airplanes-update vendored migrator on the boot config, mirroring
-# update-airplanes.sh's pre-feed-update step in production. After this,
-# feed/update.sh sees a post-split config (MLAT_USER + MLAT_ENABLED) and
-# its strict guard for legacy USER= is satisfied.
-bash "$UPDATE_DIR/skeleton/usr/local/lib/airplanes-update/migrate-config.sh" \
-    "$ROOT_DIR/boot/airplanes-config.txt"
+# Pre-seed the post-migration shape (MLAT_USER + MLAT_ENABLED) so
+# feed/update.sh's strict guard for legacy USER= is satisfied. In
+# production these keys are added by airplanes-update's migrate-config.sh
+# before update.sh runs; the migration itself is covered by airplanes-
+# webconfig's migrate-config-test.sh and airplanes-update's rootfs smokes.
+# Reading the migrator out of airplanes-update's default branch here is
+# brittle — the migrator landed on dev only, while actions/checkout picks
+# main when no ref is specified — so the test stays decoupled.
+{
+    printf 'MLAT_USER="image-rootfs-smoke"\n'
+    printf 'MLAT_ENABLED=true\n'
+} >> "$ROOT_DIR/boot/airplanes-config.txt"
 printf '%s\n' 'VERSION_ID="13"' > "$ROOT_DIR/etc/os-release"
 ln -sfn /boot/airplanes-config.txt "$ROOT_DIR/etc/default/airplanes"
 
