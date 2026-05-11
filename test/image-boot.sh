@@ -760,13 +760,11 @@ assert_image_contracts() {
 prepare_mlat_fixture() {
     local mlat_version
     install -d -m 0755 /usr/local/share/airplanes/venv/bin
-    if [[ ! -x /usr/local/share/airplanes/venv/bin/mlat-client ]]; then
-        cat > /usr/local/share/airplanes/venv/bin/mlat-client <<'SH'
+    cat > /usr/local/share/airplanes/venv/bin/mlat-client <<'SH'
 #!/usr/bin/env bash
 sleep 3600
 SH
-        chmod 0755 /usr/local/share/airplanes/venv/bin/mlat-client
-    fi
+    chmod 0755 /usr/local/share/airplanes/venv/bin/mlat-client
     mlat_version="$(git --git-dir=/opt/airplanes-boot-smoke/mlat.git rev-parse refs/heads/master)"
     printf '%s\n' "$mlat_version" > /usr/local/share/airplanes/mlat_version
 }
