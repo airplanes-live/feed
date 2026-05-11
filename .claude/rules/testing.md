@@ -90,9 +90,23 @@ PR + push (workflow `ci.yml`):
 - `script upgrade (stable main)` — installs `origin/main` HEAD, seeds legacy `USER=`, runs candidate `update.sh`, asserts MLAT migration + wire endpoints + state files.
 - `script upgrade (pre-schema-split pin)` — same with a pinned pre-schema-split source SHA (historical regression coverage).
 
-Push to main/dev + manual dispatch (workflow `image-boot-smoke.yml`, top-level name `Image boot`):
+Manual dispatch only (workflow `image-boot-smoke.yml`, top-level name `Image boot`):
 
-- `image boot (legacy contract)` / `(new contract)` — full QEMU boot + update + reboot + idempotency assertions across both image contracts. Manual `workflow_dispatch` supports `image_contract={all,legacy,new}`.
+- `image boot (legacy contract)` / `(new contract)` — full QEMU boot + update + reboot + idempotency assertions. **Currently broken end-to-end** — see "QEMU boot smoke" below. The workflow stays `workflow_dispatch`-only until the boot harness is rebuilt; the push trigger was tried and reverted.
+
+## QEMU boot smoke
+
+`test/image-boot-smoke.sh` does not currently produce a working QEMU boot. Every CI run since the workflow gained a push trigger timed out at the 8-minute `QEMU_TIMEOUT` with zero kernel console output. The script-vs-current-Pi-OS incompatibility was investigated locally on Apple Silicon with QEMU 11.0 and the rolling `dev-latest` image. Findings:
+
+1. **kernel8.img is gzip-compressed** in modern Pi OS (Bookworm onwards). `file kernel8.img` → `gzip compressed data`. QEMU's `-kernel` flag expects an uncompressed ARM64 boot executable image; passing the gzip blob makes QEMU boot silently with no console output. Fix: `gunzip -c kernel8.img > kernel8.uncompressed` before passing it to QEMU.
+
+2. **`-M raspi3b` boots silently even with a decompressed kernel.** Same kernel that boots fine under `-M virt` produces zero output on `raspi3b`. QEMU's Pi 3B machine emulation drifts from what current Pi OS kernels expect. No `-d guest_errors` output reveals the cause; only the platform's SD-host peripheral throws `bcm2835_sdhost_read: Bad offset c` long after the kernel should have printed early messages. The script's strategy of "load the kernel and DTB the Pi firmware would" is no longer viable.
+
+3. **`-M virt` boots but exposes storage as virtio, which the Pi initramfs cannot drive.** The Pi OS initramfs (`initramfs8` in `/boot`) bundles modules for Pi-specific hardware (mmc, ahci, ata) but **no virtio drivers**. Booting with virtio-blk reaches the `local-block` retry loop and times out with `ALERT! /dev/vda2 does not exist`. AHCI is the same — modules exist in the initramfs but the udev rules don't autoload them on a generic PCI vendor-id match.
+
+Any real fix needs one of: (a) rebuild the initramfs with virtio modules added; (b) build a generic Debian-based initramfs that just chroots into the rootfs; (c) attach storage on a bus the Pi initramfs already drives via its existing autoload rules. None of these are a small change — they refactor `qemu_command` and `prepare_boot_files` substantially.
+
+The deepened guest probe (UUID-stability, state-file schema, idempotency rerun, mlat is-active) is on disk and ready to run as soon as the boot harness is rebuilt.
 
 ## Asset-source library
 

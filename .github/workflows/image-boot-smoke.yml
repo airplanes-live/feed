@@ -1,8 +1,20 @@
 name: Image boot
 
+# This workflow is `workflow_dispatch`-only while the QEMU boot harness is
+# being rebuilt. The push trigger was tried briefly (commit fa9e4c7) and
+# reverted: every push-event run timed out at 8m with zero kernel console
+# output. Root cause is a combination of (a) modern Pi OS shipping kernel8.img
+# as a gzip-compressed kernel image which QEMU's `-kernel` does not handle,
+# and (b) `qemu-system-aarch64 -M raspi3b` failing to drive a modern Pi OS
+# kernel even with the kernel decompressed — boot is silent. Switching to
+# `-M virt` boots cleanly but exposes storage as virtio, and the Pi OS
+# initramfs ships no virtio-blk drivers. See rules/testing.md "QEMU boot
+# smoke" for details. Until the boot harness is rebuilt around a generic
+# initramfs (or a different storage bus the Pi initramfs supports), the
+# smoke runs only on manual dispatch — and it will fail there too, but at
+# least it does not noise up every dev/main push.
+
 on:
-  push:
-    branches: [main, dev]
   workflow_dispatch:
     inputs:
       image_contract:
