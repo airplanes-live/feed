@@ -84,10 +84,18 @@ derive_mlat_keys() {
 # Heuristic: treat (0, 0) as the legacy/placeholder sentinel pair (image
 # freeze writes both as 0). A single zero axis is a legitimate coordinate
 # (equator at lon!=0, or prime meridian at lat!=0) and counts as
-# configured. The Atlantic (0,0) point is uninhabited so the false-negative
-# blast radius is empty in practice.
+# configured. The Atlantic (0,0) point is uninhabited so the false-
+# negative blast radius is empty in practice. Recognizes decimal/signed
+# zero forms (0.00000, +0, -0) so a noninteractive AIRPLANES_LATITUDE that
+# uses a decimal-zero placeholder isn't misclassified as configured.
+_geo_axis_unset_or_zero() {
+    [[ -z "$1" ]] && return 0
+    [[ "$1" =~ ^[+-]?0+(\.0+)?$ ]] && return 0
+    return 1
+}
 derive_geo_configured() {
-    if [[ "$RECEIVERLATITUDE" == "0" && "$RECEIVERLONGITUDE" == "0" ]]; then
+    if _geo_axis_unset_or_zero "$RECEIVERLATITUDE" \
+        && _geo_axis_unset_or_zero "$RECEIVERLONGITUDE"; then
         GEO_CONFIGURED="false"
     else
         GEO_CONFIGURED="true"

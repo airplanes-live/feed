@@ -412,15 +412,16 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
         esac
     fi
     MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
-    # Legacy GEO_CONFIGURED fallback. feed.env predating the flag falls
-    # through this derivation: both coords non-empty and non-"0" → true,
-    # else false. Matches the prior LATITUDE==0/LONGITUDE==0 sentinel
-    # disable, so legacy feeders see no behavior change.
+    # Legacy GEO_CONFIGURED fallback. Both coords numerically zero (or
+    # empty) → false; anything else → true. Matches configure.sh's writer-
+    # side heuristic so a real equator or prime-meridian operator with a
+    # legacy feed.env doesn't get false-classified as unconfigured.
     if [[ ! -v GEO_CONFIGURED ]]; then
-        if [[ -n "$LATITUDE" && "$LATITUDE" != 0 && -n "$LONGITUDE" && "$LONGITUDE" != 0 ]]; then
-            GEO_CONFIGURED="true"
-        else
+        if _airplanes_geo_axis_unset_or_zero "$LATITUDE" \
+            && _airplanes_geo_axis_unset_or_zero "$LONGITUDE"; then
             GEO_CONFIGURED="false"
+        else
+            GEO_CONFIGURED="true"
         fi
     fi
 else
@@ -443,10 +444,11 @@ else
     fi
     MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
     if [[ ! -v GEO_CONFIGURED ]]; then
-        if [[ -n "${LATITUDE:-}" && "$LATITUDE" != 0 && -n "${LONGITUDE:-}" && "$LONGITUDE" != 0 ]]; then
-            GEO_CONFIGURED="true"
-        else
+        if _airplanes_geo_axis_unset_or_zero "${LATITUDE:-}" \
+            && _airplanes_geo_axis_unset_or_zero "${LONGITUDE:-}"; then
             GEO_CONFIGURED="false"
+        else
+            GEO_CONFIGURED="true"
         fi
     fi
 fi

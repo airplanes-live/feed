@@ -94,6 +94,20 @@ run_configure_env() {
     grep -qx 'GEO_CONFIGURED=true' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
+@test "configure.sh emits GEO_CONFIGURED=false for decimal-zero pair (0.00000/0.00000)" {
+    # Defensive against decimal-zero hand-edits or older callers; the
+    # writer-side heuristic recognizes signed/decimal zero forms as
+    # numerically zero so the pair is still treated as a placeholder.
+    run_configure_env \
+        AIRPLANES_MLAT_USER="image" \
+        AIRPLANES_LATITUDE="0.00000" \
+        AIRPLANES_LONGITUDE="0.00000" \
+        AIRPLANES_ALTITUDE="0m"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
 @test "configure.sh rejects non-numeric latitude with Invalid msgbox" {
     run_configure $'ci-feeder\nabc\n52.52000\n13.40500\n35m'
 

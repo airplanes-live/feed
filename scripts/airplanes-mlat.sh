@@ -98,17 +98,21 @@ MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 # Legacy GEO_CONFIGURED read fallback. A feed.env predating the explicit
 # flag won't have GEO_CONFIGURED set. update.sh's migrate_geo_to_configured_flag
 # adds it on every update; this in-memory derivation handles a daemon
-# restart that races ahead. Heuristic: both LATITUDE and LONGITUDE non-
-# empty and non-"0" → true; else false. Conservative — matches the prior
-# (LATITUDE==0 || LONGITUDE==0) sentinel disable so legacy feeders see no
-# behavior change. The Atlantic (0,0) point is uninhabited; legitimate
-# equator-or-prime-meridian feeders have at most one axis at zero and
-# pass this check.
+# restart that races ahead. Heuristic: BOTH coords numerically zero (or
+# empty) → false; anything else → true. The (0,0) point is uninhabited so
+# the placeholder pair is unambiguous; a single zero axis is a legitimate
+# coordinate (equator at lon!=0, or prime meridian at lat!=0) and counts
+# as configured. Matches configure.sh's writer-side heuristic exactly.
+_geo_axis_unset_or_zero() {
+    [[ -z "$1" ]] && return 0
+    [[ "$1" =~ ^[+-]?0+(\.0+)?$ ]] && return 0
+    return 1
+}
 if [[ ! -v GEO_CONFIGURED ]]; then
-    if [[ -n "${LATITUDE:-}" && "$LATITUDE" != 0 && -n "${LONGITUDE:-}" && "$LONGITUDE" != 0 ]]; then
-        GEO_CONFIGURED="true"
-    else
+    if _geo_axis_unset_or_zero "${LATITUDE:-}" && _geo_axis_unset_or_zero "${LONGITUDE:-}"; then
         GEO_CONFIGURED="false"
+    else
+        GEO_CONFIGURED="true"
     fi
 fi
 

@@ -583,20 +583,65 @@ EOF
     grep -qx 'GEO_CONFIGURED=false' "$FEED_ENV"
 }
 
-@test "migrate_geo_to_configured_flag: LATITUDE=0 alone → GEO_CONFIGURED=false" {
+@test "migrate_geo_to_configured_flag: equator user (LATITUDE=0, LONGITUDE non-zero) → GEO_CONFIGURED=true" {
+    # The previous LATITUDE==0 sentinel falsely disabled equator users.
+    # The migration heuristic recognizes single-axis zero as a legitimate
+    # coordinate and heals their config.
     cat > "$FEED_ENV" <<'EOF'
 LATITUDE="0"
 LONGITUDE="13.4"
 EOF
     migrate_geo_to_configured_flag "$FEED_ENV"
 
-    grep -qx 'GEO_CONFIGURED=false' "$FEED_ENV"
+    grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
 }
 
-@test "migrate_geo_to_configured_flag: LATITUDE empty → GEO_CONFIGURED=false" {
+@test "migrate_geo_to_configured_flag: prime-meridian user (LATITUDE non-zero, LONGITUDE=0) → GEO_CONFIGURED=true" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="51.5"
+LONGITUDE="0"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
+}
+
+@test "migrate_geo_to_configured_flag: LATITUDE empty (LONGITUDE non-zero) → GEO_CONFIGURED=true" {
+    # Empty axis is treated as numerically zero; the other axis is real, so
+    # this is still a legitimate single-axis-zero coordinate.
     cat > "$FEED_ENV" <<'EOF'
 LATITUDE=""
 LONGITUDE="13.4"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
+}
+
+@test "migrate_geo_to_configured_flag: both axes empty → GEO_CONFIGURED=false" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE=""
+LONGITUDE=""
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    grep -qx 'GEO_CONFIGURED=false' "$FEED_ENV"
+}
+
+@test "migrate_geo_to_configured_flag: decimal-zero pair (0.00000/0.00000) → GEO_CONFIGURED=false" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="0.00000"
+LONGITUDE="0.00000"
+EOF
+    migrate_geo_to_configured_flag "$FEED_ENV"
+
+    grep -qx 'GEO_CONFIGURED=false' "$FEED_ENV"
+}
+
+@test "migrate_geo_to_configured_flag: signed-zero pair (+0/-0) → GEO_CONFIGURED=false" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="+0"
+LONGITUDE="-0"
 EOF
     migrate_geo_to_configured_flag "$FEED_ENV"
 

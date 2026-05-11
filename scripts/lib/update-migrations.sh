@@ -315,20 +315,36 @@ migrate_privacy_to_mlat_private() {
     fi
 }
 
+# Shared helper: true when val is empty, "0", "-0", "+0", "0.0",
+# "0.00000", etc. — i.e., the legacy unset/zero forms an image freeze or
+# hand-edit might leave. Used by the GEO_CONFIGURED derivation in both
+# the migration here and the in-shell fallbacks in airplanes-mlat.sh and
+# update.sh. Bash regex: optional sign, one-or-more zeros, optional
+# decimal-point-plus-zeros tail.
+_airplanes_geo_axis_unset_or_zero() {
+    [[ -z "$1" ]] && return 0
+    [[ "$1" =~ ^[+-]?0+(\.0+)?$ ]] && return 0
+    return 1
+}
+
 # Add an explicit GEO_CONFIGURED=true|false flag to feed.env, retiring
 # the legacy LATITUDE=0/LONGITUDE=0 sentinel pattern. Idempotent.
 #
-#   GEO_CONFIGURED already present       →  no-op
-#   LATITUDE and LONGITUDE both non-zero →  GEO_CONFIGURED=true
-#   anything else (zero, missing, blank) →  GEO_CONFIGURED=false
+#   GEO_CONFIGURED already present                   →  no-op
+#   BOTH LATITUDE and LONGITUDE numerically zero     →  GEO_CONFIGURED=false
+#   anything else (incl. single-zero axis)           →  GEO_CONFIGURED=true
 #
 # Heuristic note: (0, 0) is the legacy/placeholder sentinel pair (image
 # freeze writes both as 0). A single zero axis is a legitimate coordinate
-# (equator at lon!=0, or prime meridian at lat!=0); the rule preserves it
-# as configured. The Atlantic (0,0) point is uninhabited so the false-
-# negative blast radius is empty in practice. Configs written by the
-# webconfig UI will include an explicit GEO_CONFIGURED and this function
-# becomes a no-op for them.
+# (equator at lon!=0, or prime meridian at lat!=0) and counts as
+# configured — under the previous LATITUDE==0/LONGITUDE==0 sentinel
+# checks those feeders were silently disabled; this migration heals them.
+# The (0,0) point is uninhabited so the false-negative blast radius is
+# empty in practice. Configs written by the webconfig UI include an
+# explicit GEO_CONFIGURED and this function becomes a no-op for them.
+# Numerically-zero forms recognized: empty, "0", "-0", "+0", "0.0",
+# "0.00000", etc. — so hand-edits that use decimal zeros aren't classified
+# as configured.
 migrate_geo_to_configured_flag() {
     local feed_env="$1"
     [[ -f "$feed_env" ]] || return 0
@@ -342,10 +358,11 @@ migrate_geo_to_configured_flag() {
     longitude="$(_extract_env_value "$feed_env" LONGITUDE)"
 
     local geo_configured
-    if [[ -n "$latitude" && "$latitude" != "0" && -n "$longitude" && "$longitude" != "0" ]]; then
-        geo_configured="true"
-    else
+    if _airplanes_geo_axis_unset_or_zero "$latitude" \
+        && _airplanes_geo_axis_unset_or_zero "$longitude"; then
         geo_configured="false"
+    else
+        geo_configured="true"
     fi
 
     local tmp
