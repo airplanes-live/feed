@@ -58,6 +58,18 @@ EOF
     grep -q '^MLAT_ENABLED=false$' "$FEED_ENV"
 }
 
+@test "migrate_user_to_mlat_split: empty USER → MLAT_USER=Anonymous, MLAT_ENABLED=true" {
+    # Mirrors airplanes-webconfig's migrate-config.sh and configure.sh's
+    # DEFAULT_MLAT_NAME — empty user becomes Anonymous so the daemon's
+    # strict-fail on empty MLAT_USER never fires.
+    printf 'USER=""\n' > "$FEED_ENV"
+    migrate_user_to_mlat_split "$FEED_ENV"
+
+    grep -q '^MLAT_USER="Anonymous"$' "$FEED_ENV"
+    grep -q '^MLAT_ENABLED=true$' "$FEED_ENV"
+    ! grep -q '^USER=' "$FEED_ENV"
+}
+
 @test "migrate_user_to_mlat_split: USER=changeme → MLAT_USER=changeme, MLAT_ENABLED=true (changeme isn't a sentinel)" {
     printf 'USER="changeme"\n' > "$FEED_ENV"
     migrate_user_to_mlat_split "$FEED_ENV"
