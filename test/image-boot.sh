@@ -653,6 +653,20 @@ exit 0
 GUEST
     chmod 0755 "$ROOT_MNT/opt/airplanes-boot-smoke/apl-feed-stub"
 
+cat > "$ROOT_MNT/opt/airplanes-boot-smoke/feed-daemon-stub" <<'GUEST'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'feed-daemon %s\n' "$*" >> /run/airplanes-feed/boot-smoke-feed-daemon.log 2>/dev/null || true
+exec sleep infinity
+GUEST
+    chmod 0755 "$ROOT_MNT/opt/airplanes-boot-smoke/feed-daemon-stub"
+
+    install -d -m 0755 "$ROOT_MNT/etc/systemd/system/airplanes-feed.service.d"
+    cat > "$ROOT_MNT/etc/systemd/system/airplanes-feed.service.d/boot-smoke.conf" <<'UNIT'
+[Service]
+Environment=AIRPLANES_FEED_BIN=/opt/airplanes-boot-smoke/feed-daemon-stub
+UNIT
+
     cat > "$ROOT_MNT/opt/airplanes-boot-smoke/run.sh" <<'GUEST'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -818,12 +832,17 @@ assert_state_file_schema_v1() {
 assert_service_healthy() {
     local unit="$1"
     # is-active is the load-bearing check: catches inactive, dead, never-started.
-    systemctl is-active --quiet "$unit" \
-        || fail "$unit is not active"
+    if ! systemctl is-active --quiet "$unit"; then
+        systemctl status --no-pager --full "$unit" || true
+        journalctl -u "$unit" -n 80 --no-pager || true
+        fail "$unit is not active"
+    fi
     # is-failed is an additional diagnostic: catches the explicit failed state
     # that is-active alone would already cover, but surfaces it loudly with a
     # distinct message.
     if systemctl is-failed --quiet "$unit"; then
+        systemctl status --no-pager --full "$unit" || true
+        journalctl -u "$unit" -n 80 --no-pager || true
         fail "$unit reports failed state"
     fi
 }
