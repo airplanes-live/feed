@@ -831,8 +831,14 @@ assert_state_file_schema_v1() {
 
 assert_service_healthy() {
     local unit="$1"
+    local attempt
     # is-active is the load-bearing check: catches inactive, dead, never-started.
+    for attempt in {1..24}; do
+        systemctl is-active --quiet "$unit" && break
+        sleep 5
+    done
     if ! systemctl is-active --quiet "$unit"; then
+        systemctl list-jobs --no-pager || true
         systemctl status --no-pager --full "$unit" || true
         journalctl -u "$unit" -n 80 --no-pager || true
         fail "$unit is not active"
