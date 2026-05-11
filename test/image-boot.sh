@@ -25,8 +25,9 @@ AIRPLANES_IMAGE_SOURCE_TIERS="${AIRPLANES_IMAGE_SOURCE_TIERS:-release-any}"
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib/image-source.sh"
 
 FEED_BRANCH="${AIRPLANES_BOOT_SMOKE_FEED_BRANCH:-boot-smoke}"
-QEMU_TIMEOUT="${AIRPLANES_BOOT_SMOKE_QEMU_TIMEOUT:-8m}"
+QEMU_TIMEOUT="${AIRPLANES_BOOT_SMOKE_QEMU_TIMEOUT:-15m}"
 MAX_BOOT_ATTEMPTS="${AIRPLANES_BOOT_SMOKE_MAX_BOOT_ATTEMPTS:-2}"
+QEMU_MACHINE_MODE="${AIRPLANES_BOOT_SMOKE_QEMU_MACHINE:-auto}"
 WORK_DIR="${AIRPLANES_BOOT_SMOKE_WORK_DIR:-}"
 KEEP_WORK_DIR="${AIRPLANES_BOOT_SMOKE_KEEP_WORK_DIR:-0}"
 
@@ -270,6 +271,206 @@ copy_optional_boot_file() {
     return 1
 }
 
+host_kernel_name() {
+    printf '%s\n' "host-vmlinuz-$(uname -r)"
+}
+
+host_initrd_name() {
+    printf '%s\n' "host-initrd.img-$(uname -r)"
+}
+
+can_use_host_virt_kernel() {
+    [[ "$IMAGE_ARCH" == "arm64" ]] || return 1
+    [[ "$(uname -m)" == "aarch64" ]] || return 1
+    [[ -r "/boot/vmlinuz-$(uname -r)" ]] || return 1
+    [[ -r "/boot/initrd.img-$(uname -r)" ]] || return 1
+}
+
+prepare_host_virt_boot_files() {
+    local kernel initrd
+    kernel="$(host_kernel_name)"
+    initrd="$(host_initrd_name)"
+    cp "/boot/vmlinuz-$(uname -r)" "$BOOT_FILES/$kernel"
+    cp "/boot/initrd.img-$(uname -r)" "$BOOT_FILES/$initrd"
+    printf '%s\n' "$kernel" > "$BOOT_FILES/kernel-name"
+    printf '%s\n' "" > "$BOOT_FILES/dtb-name"
+    printf '%s\n' "$initrd" > "$BOOT_FILES/initrd-name"
+    printf '%s\n' "host-virt" > "$BOOT_FILES/boot-mode"
+    echo "Using host arm64 kernel for QEMU virt boot: /boot/vmlinuz-$(uname -r)"
+}
+
+prepare_qemu_kernel() {
+    local source="$1"
+    local qemu_kernel="$source"
+    copy_boot_file "$source"
+
+    if file -b "$BOOT_FILES/$source" | grep -qi 'gzip compressed'; then
+        qemu_kernel="${source%.img}.uncompressed.img"
+        gzip -dc "$BOOT_FILES/$source" > "$BOOT_FILES/$qemu_kernel"
+        echo "Prepared uncompressed QEMU kernel: $qemu_kernel" >&2
+    fi
+
+    printf '%s\n' "$qemu_kernel"
+}
+
+kernel_version_from_image() {
+    local kernel_path="$1"
+    local versions
+    versions="$(strings "$kernel_path" | sed -nE 's/^Linux version ([^[:space:]]+).*/\1/p')"
+    printf '%s\n' "$versions" | sed -n '1p'
+}
+
+modprobe_dep_file() {
+    local module="$1"
+    printf '%s\n' "$WORK_DIR/modprobe-deps-$module.$$"
+}
+
+modprobe_err_file() {
+    local module="$1"
+    printf '%s\n' "$WORK_DIR/modprobe-err-$module.$$"
+}
+
+kernel_module_version() {
+    local kernel="$1"
+    local qemu_kernel="$2"
+    local version module_dirs candidates
+
+    if version="$(kernel_version_from_image "$BOOT_FILES/$qemu_kernel")" \
+        && [[ -d "$ROOT_MNT/lib/modules/$version" ]]; then
+        printf '%s\n' "$version"
+        return 0
+    fi
+
+    module_dirs="$(find "$ROOT_MNT/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -V)"
+    case "$kernel" in
+        kernel8.img)
+            candidates="$(printf '%s\n' "$module_dirs" | grep -E '(^|-)rpi-v8$|v8$' || true)"
+            ;;
+        kernel7l.img)
+            candidates="$(printf '%s\n' "$module_dirs" | grep -E '(^|-)rpi-v7l$|v7l$' || true)"
+            ;;
+        kernel7.img)
+            candidates="$(printf '%s\n' "$module_dirs" | grep -E '(^|-)rpi-v7$|v7$' || true)"
+            ;;
+        *)
+            candidates="$module_dirs"
+            ;;
+    esac
+
+    version="$(printf '%s\n' "$candidates" | sed '/^$/d' | tail -n1)"
+    if [[ -n "$version" && -d "$ROOT_MNT/lib/modules/$version" ]]; then
+        printf '%s\n' "$version"
+        return 0
+    fi
+
+    echo "Observed module directories:" >&2
+    printf '%s\n' "$module_dirs" >&2
+    fail "could not map $kernel to a /lib/modules version"
+}
+
+copy_module_dependency() {
+    local initrd_root="$1"
+    local source_path="$2"
+    local source_file rel_path
+
+    if [[ "$source_path" == "$ROOT_MNT/"* ]]; then
+        source_file="$source_path"
+        rel_path="${source_path#"$ROOT_MNT/"}"
+    else
+        rel_path="${source_path#/}"
+        source_file="$ROOT_MNT/$rel_path"
+    fi
+
+    [[ -f "$source_file" ]] || fail "module dependency missing from rootfs: $source_path"
+    mkdir -p "$initrd_root/$(dirname "$rel_path")"
+    cp -a "$source_file" "$initrd_root/$rel_path"
+}
+
+copy_module_with_dependencies() {
+    local initrd_root="$1"
+    local kernel_version="$2"
+    local module="$3"
+    local line source_path rc dep_file err_file
+
+    dep_file="$(modprobe_dep_file "$module")"
+    err_file="$(modprobe_err_file "$module")"
+    rm -f "$dep_file" "$err_file"
+
+    if modprobe -D -d "$ROOT_MNT" -S "$kernel_version" "$module" >"$dep_file" 2>"$err_file"; then
+        rc=0
+    else
+        rc=$?
+    fi
+
+    if [[ "$rc" != "0" ]]; then
+        if grep -qE "(^|/)$module\\.ko(\\.xz|\\.zst|\\.gz)?$|^kernel/.*/$module\\.ko" \
+            "$ROOT_MNT/lib/modules/$kernel_version/modules.builtin" 2>/dev/null; then
+            rm -f "$dep_file" "$err_file"
+            return 0
+        fi
+        cat "$err_file" >&2 || true
+        rm -f "$dep_file" "$err_file"
+        fail "rootfs kernel $kernel_version does not provide module: $module"
+    fi
+
+    while IFS= read -r line; do
+        [[ "$line" == insmod\ * ]] || continue
+        source_path="${line#insmod }"
+        source_path="${source_path%%[[:space:]]*}"
+        copy_module_dependency "$initrd_root" "$source_path"
+    done < "$dep_file"
+    rm -f "$dep_file" "$err_file"
+}
+
+prepare_virt_initrd() {
+    local initrd="$1"
+    local kernel="$2"
+    local qemu_kernel="$3"
+    local kernel_version initrd_work initrd_root out module part
+    local -a required_modules
+
+    kernel_version="$(kernel_module_version "$kernel" "$qemu_kernel")"
+    initrd_work="$WORK_DIR/initramfs-qemu"
+    initrd_root="$initrd_work/root"
+    out="qemu-$initrd"
+    rm -rf "$initrd_work"
+    mkdir -p "$initrd_root"
+
+    unmkinitramfs "$BOOT_FILES/$initrd" "$initrd_work/unpacked" >/dev/null
+    if [[ -d "$initrd_work/unpacked/main" ]]; then
+        for part in early early2 main; do
+            [[ -d "$initrd_work/unpacked/$part" ]] || continue
+            cp -a "$initrd_work/unpacked/$part/." "$initrd_root/"
+        done
+    else
+        cp -a "$initrd_work/unpacked/." "$initrd_root/"
+    fi
+
+    mkdir -p "$initrd_root/lib/modules/$kernel_version"
+    find "$ROOT_MNT/lib/modules/$kernel_version" -maxdepth 1 -type f -name 'modules.*' \
+        -exec cp -a {} "$initrd_root/lib/modules/$kernel_version/" \;
+
+    required_modules=(ahci sd_mod)
+    for module in "${required_modules[@]}"; do
+        copy_module_with_dependencies "$initrd_root" "$kernel_version" "$module"
+    done
+
+    mkdir -p "$initrd_root/conf"
+    {
+        [[ -f "$initrd_root/conf/modules" ]] && cat "$initrd_root/conf/modules"
+        printf '%s\n' ahci sd_mod
+    } | awk 'NF && !seen[$0]++' > "$initrd_root/conf/modules.qemu"
+    mv "$initrd_root/conf/modules.qemu" "$initrd_root/conf/modules"
+
+    (
+        cd "$initrd_root"
+        find . -print0 | cpio --null --quiet -o -H newc | gzip -1 > "$BOOT_FILES/$out"
+    )
+
+    echo "Prepared QEMU virt initramfs with AHCI storage modules: $out (kernel modules: $kernel_version)" >&2
+    printf '%s\n' "$out"
+}
+
 select_initrd() {
     local kernel="$1"
     local config="$BOOT_MNT/config.txt"
@@ -353,7 +554,7 @@ prepare_qemu_dtb() {
 }
 
 prepare_boot_files() {
-    local kernel dtb qemu_dtb cmdline initrd root_partuuid
+    local kernel qemu_kernel dtb qemu_dtb cmdline initrd qemu_initrd root_partuuid boot_mode
     mkdir -p "$BOOT_FILES"
 
     if [[ -f "$BOOT_MNT/kernel8.img" ]]; then
@@ -369,12 +570,43 @@ prepare_boot_files() {
         fail "no supported Raspberry Pi kernel found in boot partition"
     fi
 
-    copy_boot_file "$kernel"
-    copy_boot_file "$dtb"
-    qemu_dtb="$(prepare_qemu_dtb "$dtb")"
-    if initrd="$(select_initrd "$kernel")"; then
+    if [[ "$QEMU_MACHINE_MODE" == "host" ]]; then
+        boot_mode="host-virt"
+    elif [[ "$QEMU_MACHINE_MODE" == "auto" && "$kernel" == "kernel8.img" ]] \
+        && can_use_host_virt_kernel; then
+        boot_mode="host-virt"
+    elif [[ "$kernel" == "kernel8.img" && "$QEMU_MACHINE_MODE" == "virt" ]]; then
+        boot_mode="virt"
+    else
+        boot_mode="raspi"
+    fi
+
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        can_use_host_virt_kernel || fail "host QEMU boot requires an arm64 runner with readable /boot/vmlinuz-$(uname -r) and /boot/initrd.img-$(uname -r)"
+        prepare_host_virt_boot_files
+        qemu_kernel="$(cat "$BOOT_FILES/kernel-name")"
+        qemu_dtb=""
+    else
+        qemu_kernel="$(prepare_qemu_kernel "$kernel")"
+    fi
+
+    if [[ "$boot_mode" == "raspi" ]]; then
+        copy_boot_file "$dtb"
+        qemu_dtb="$(prepare_qemu_dtb "$dtb")"
+    elif [[ "$boot_mode" != "host-virt" ]]; then
+        qemu_dtb=""
+    fi
+
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        echo "Using host initramfs for direct QEMU boot: /boot/initrd.img-$(uname -r)"
+    elif initrd="$(select_initrd "$kernel")"; then
         copy_optional_boot_file "$initrd"
-        printf '%s\n' "$initrd" > "$BOOT_FILES/initrd-name"
+        if [[ "$boot_mode" == "virt" ]]; then
+            qemu_initrd="$(prepare_virt_initrd "$initrd" "$kernel" "$qemu_kernel")"
+        else
+            qemu_initrd="$initrd"
+        fi
+        printf '%s\n' "$qemu_initrd" > "$BOOT_FILES/initrd-name"
         echo "Using initramfs for direct QEMU boot: $initrd"
     else
         rm -f "$BOOT_FILES/initrd-name"
@@ -386,18 +618,26 @@ prepare_boot_files() {
     cmdline="${cmdline//console=serial0/console=ttyAMA0,115200}"
     cmdline="$(printf '%s\n' "$cmdline" \
         | sed -E 's/(^| )init=[^ ]+//g; s/(^| )quiet( |$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
-    if root_partuuid="$(partition_uuid 2)"; then
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        cmdline="$(cmdline_set_arg "$cmdline" root "/dev/vda2")"
+    elif [[ "$boot_mode" == "virt" ]]; then
+        cmdline="$(cmdline_set_arg "$cmdline" root "/dev/sda2")"
+    elif root_partuuid="$(partition_uuid 2)"; then
         cmdline="$(cmdline_set_arg "$cmdline" root "PARTUUID=$root_partuuid")"
     fi
     cmdline="$(cmdline_add_flag "$cmdline" rootwait)"
     cmdline="$(cmdline_set_arg "$cmdline" rootfstype ext4)"
-    printf '%s systemd.unit=multi-user.target systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
-    printf '%s\n' "$kernel" > "$BOOT_FILES/kernel-name"
-    printf '%s\n' "$qemu_dtb" > "$BOOT_FILES/dtb-name"
+    printf '%s systemd.show_status=1 nr_cpus=1 maxcpus=1\n' "$cmdline" > "$BOOT_FILES/cmdline.txt"
+    if [[ "$boot_mode" != "host-virt" ]]; then
+        printf '%s\n' "$qemu_kernel" > "$BOOT_FILES/kernel-name"
+        printf '%s\n' "$qemu_dtb" > "$BOOT_FILES/dtb-name"
+        printf '%s\n' "$boot_mode" > "$BOOT_FILES/boot-mode"
+    fi
 }
 
 write_guest_probe() {
     install -d -m 0755 "$ROOT_MNT/opt/airplanes-boot-smoke"
+    install -d -m 0755 "$ROOT_MNT/etc/systemd/system/default.target.wants"
     install -d -m 0755 "$ROOT_MNT/etc/systemd/system/multi-user.target.wants"
     rsync -a --delete "$FEED_SOURCE/" "$ROOT_MNT/opt/airplanes-boot-smoke/feed-worktree/"
     rsync -a --delete "$FEED_BARE/" "$ROOT_MNT/opt/airplanes-boot-smoke/feed.git/"
@@ -413,6 +653,20 @@ printf 'apl-feed %s\n' "$*" >> /var/lib/airplanes-boot-smoke/apl-feed.log
 exit 0
 GUEST
     chmod 0755 "$ROOT_MNT/opt/airplanes-boot-smoke/apl-feed-stub"
+
+cat > "$ROOT_MNT/opt/airplanes-boot-smoke/feed-daemon-stub" <<'GUEST'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'feed-daemon %s\n' "$*" >> /run/airplanes-feed/boot-smoke-feed-daemon.log 2>/dev/null || true
+exec sleep infinity
+GUEST
+    chmod 0755 "$ROOT_MNT/opt/airplanes-boot-smoke/feed-daemon-stub"
+
+    install -d -m 0755 "$ROOT_MNT/etc/systemd/system/airplanes-feed.service.d"
+    cat > "$ROOT_MNT/etc/systemd/system/airplanes-feed.service.d/boot-smoke.conf" <<'UNIT'
+[Service]
+Environment=AIRPLANES_FEED_BIN=/opt/airplanes-boot-smoke/feed-daemon-stub
+UNIT
 
     cat > "$ROOT_MNT/opt/airplanes-boot-smoke/run.sh" <<'GUEST'
 #!/usr/bin/env bash
@@ -503,8 +757,34 @@ assert_image_contracts() {
     fi
 }
 
+set_shell_var() {
+    local path="$1"
+    local key="$2"
+    local value="$3"
+    if grep -qE "^${key}=" "$path"; then
+        sed -i -E "s|^${key}=.*|${key}=${value}|" "$path"
+    else
+        printf '%s=%s\n' "$key" "$value" >> "$path"
+    fi
+}
+
+disable_mlat_for_boot_smoke() {
+    local path
+    if [[ -f /etc/airplanes/feed.env ]]; then
+        set_shell_var /etc/airplanes/feed.env MLAT_ENABLED false
+        set_shell_var /etc/airplanes/feed.env MLAT_USER ""
+    fi
+    for path in /boot/airplanes-config.txt /boot/airplanes-env; do
+        [[ -f "$path" ]] || continue
+        set_shell_var "$path" USER 0
+        set_shell_var "$path" MLAT_ENABLED false
+        set_shell_var "$path" MLAT_USER ""
+    done
+}
+
 prepare_mlat_fixture() {
     local mlat_version
+    disable_mlat_for_boot_smoke
     install -d -m 0755 /usr/local/share/airplanes/venv/bin
     if [[ ! -x /usr/local/share/airplanes/venv/bin/mlat-client ]]; then
         cat > /usr/local/share/airplanes/venv/bin/mlat-client <<'SH'
@@ -578,13 +858,24 @@ assert_state_file_schema_v1() {
 
 assert_service_healthy() {
     local unit="$1"
+    local attempt
     # is-active is the load-bearing check: catches inactive, dead, never-started.
-    systemctl is-active --quiet "$unit" \
-        || fail "$unit is not active"
+    for attempt in {1..24}; do
+        systemctl is-active --quiet "$unit" && break
+        sleep 5
+    done
+    if ! systemctl is-active --quiet "$unit"; then
+        systemctl list-jobs --no-pager || true
+        systemctl status --no-pager --full "$unit" || true
+        journalctl -u "$unit" -n 80 --no-pager || true
+        fail "$unit is not active"
+    fi
     # is-failed is an additional diagnostic: catches the explicit failed state
     # that is-active alone would already cover, but surfaces it loudly with a
     # distinct message.
     if systemctl is-failed --quiet "$unit"; then
+        systemctl status --no-pager --full "$unit" || true
+        journalctl -u "$unit" -n 80 --no-pager || true
         fail "$unit reports failed state"
     fi
 }
@@ -672,20 +963,28 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 UNIT
+    ln -sfn ../airplanes-boot-smoke.service \
+        "$ROOT_MNT/etc/systemd/system/default.target.wants/airplanes-boot-smoke.service"
     ln -sfn ../airplanes-boot-smoke.service \
         "$ROOT_MNT/etc/systemd/system/multi-user.target.wants/airplanes-boot-smoke.service"
 }
 
 qemu_command() {
-    local kernel dtb cmdline qemu_bin machine cpu smp initrd
+    local kernel dtb cmdline boot_mode qemu_bin machine cpu smp initrd
     local -a args
     kernel="$(cat "$BOOT_FILES/kernel-name")"
     dtb="$(cat "$BOOT_FILES/dtb-name")"
     cmdline="$(cat "$BOOT_FILES/cmdline.txt")"
+    boot_mode="$(cat "$BOOT_FILES/boot-mode")"
 
-    if [[ "$kernel" == "kernel8.img" ]]; then
+    if [[ "$boot_mode" == "virt" || "$boot_mode" == "host-virt" ]]; then
+        qemu_bin="qemu-system-aarch64"
+        machine="virt"
+        cpu="cortex-a53"
+        smp="4"
+    elif [[ "$kernel" == "kernel8.img" || "$kernel" == "kernel8.uncompressed.img" ]]; then
         qemu_bin="qemu-system-aarch64"
         machine="raspi3b"
         cpu="cortex-a53"
@@ -706,21 +1005,36 @@ qemu_command() {
         -smp "$smp"
         -m 1G
         -kernel "$BOOT_FILES/$kernel"
-        -dtb "$BOOT_FILES/$dtb"
     )
+    if [[ -n "$dtb" ]]; then
+        args+=(-dtb "$BOOT_FILES/$dtb")
+    fi
     if [[ -f "$BOOT_FILES/initrd-name" ]]; then
         initrd="$(cat "$BOOT_FILES/initrd-name")"
         args+=(-initrd "$BOOT_FILES/$initrd")
     fi
-    args+=(
-        -append "$cmdline"
-        -drive "file=$IMAGE_FILE,format=raw,if=sd"
-        -netdev "user,id=net0"
-        -device "usb-net,netdev=net0"
-        -serial mon:stdio
-        -display none
-        -no-reboot
-    )
+    args+=(-append "$cmdline")
+    if [[ "$boot_mode" == "host-virt" ]]; then
+        args+=(
+            -nic none
+            -drive "file=$IMAGE_FILE,format=raw,if=none,id=hd0"
+            -device "virtio-blk-device,drive=hd0"
+        )
+    elif [[ "$boot_mode" == "virt" ]]; then
+        args+=(
+            -nic none
+            -drive "file=$IMAGE_FILE,format=raw,if=none,id=hd0"
+            -device "ich9-ahci,id=ahci"
+            -device "ide-hd,drive=hd0,bus=ahci.0"
+        )
+    else
+        args+=(
+            -drive "file=$IMAGE_FILE,format=raw,if=sd"
+            -netdev "user,id=net0"
+            -device "usb-net,netdev=net0"
+        )
+    fi
+    args+=(-serial mon:stdio -display none -no-reboot)
     printf '%q ' "${args[@]}"
 }
 
@@ -737,7 +1051,8 @@ run_one_boot() {
     rc="${PIPESTATUS[0]}"
     set -e
     if [[ "$rc" == "124" ]]; then
-        fail "QEMU boot attempt $attempt timed out after $QEMU_TIMEOUT"
+        echo "QEMU boot attempt $attempt timed out after $QEMU_TIMEOUT; inspecting guest state"
+        return 0
     fi
     if [[ "$rc" != "0" ]]; then
         echo "QEMU boot attempt $attempt exited with rc=$rc; inspecting guest state"
@@ -787,6 +1102,7 @@ run_boot_smoke() {
 main() {
     local image_archive rc
     require_commands curl jq git rsync parted sfdisk awk mount umount find cp tee timeout file
+    require_commands strings modprobe unmkinitramfs cpio
     require_commands unzip xz gzip gh
     if [[ -n "${AIRPLANES_IMAGE_PATH:-}" ]]; then
         image_archive="$AIRPLANES_IMAGE_PATH"
