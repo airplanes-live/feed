@@ -68,6 +68,12 @@ sed -i \
     -e 's/^ALTITUDE=.*/ALTITUDE="35m"/' \
     -e 's/^USER=.*/USER="image-rootfs-smoke"/' \
     "$ROOT_DIR/boot/airplanes-config.txt"
+# Run the airplanes-update vendored migrator on the boot config, mirroring
+# update-airplanes.sh's pre-feed-update step in production. After this,
+# feed/update.sh sees a post-split config (MLAT_USER + MLAT_ENABLED) and
+# its strict guard for legacy USER= is satisfied.
+bash "$UPDATE_DIR/skeleton/usr/local/lib/airplanes-update/migrate-config.sh" \
+    "$ROOT_DIR/boot/airplanes-config.txt"
 printf '%s\n' 'VERSION_ID="13"' > "$ROOT_DIR/etc/os-release"
 ln -sfn /boot/airplanes-config.txt "$ROOT_DIR/etc/default/airplanes"
 

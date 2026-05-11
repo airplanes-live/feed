@@ -95,11 +95,18 @@ write_image_boot_config() {
     ln -s /boot/airplanes-config.txt "$root/etc/default/airplanes"
     printf 'ExecStart=/usr/local/bin/airplanes-feed.sh\n' > "$root/etc/systemd/system/airplanes-feed.service"
     printf 'ExecStart=/usr/local/bin/mlat.sh\n' > "$root/etc/systemd/system/airplanes-mlat.service"
+    # Post-migration shape — feed/update.sh's strict guard requires the
+    # split keys. airplanes-update's migrate-config.sh produces this from
+    # legacy USER= on every image update; the migration itself is covered
+    # by airplanes-webconfig's migrate-config-test.sh and airplanes-update's
+    # rootfs smokes. Here we treat the migrated state as the starting point.
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="52.52000"
 LONGITUDE="13.40500"
 ALTITUDE="35m"
 USER="image-feeder"
+MLAT_USER="image-feeder"
+MLAT_ENABLED=true
 MODEAC="yes"
 MLAT_MARKER="no"
 EOF
