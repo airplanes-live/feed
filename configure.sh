@@ -85,39 +85,39 @@ write_feed_env() {
     derive_mlat_keys
     mkdir -p "$ETC_AIRPLANES"
     tee "$FEED_ENV" >/dev/null <<EOF
-INPUT="$INPUT"
-REDUCE_INTERVAL="0.5"
-
-# Display name on the MLAT map. Used as the --user argument to mlat-client.
-MLAT_USER="$MLAT_USER"
-# Explicit on/off toggle for MLAT. When false, airplanes-mlat exits early.
-MLAT_ENABLED="$MLAT_ENABLED"
-# Hide the feed name on the public MLAT map. true|false. Position is
-# never shown accurately no matter the setting. Toggle after setup with:
-#   sudo apl-feed mlat private enable
-#   sudo apl-feed mlat private disable
-MLAT_PRIVATE=$MLAT_PRIVATE
+# /etc/airplanes/feed.env — operator-supplied configuration for the
+# airplanes.live feeder daemons. Product-side defaults (brand endpoints,
+# readsb tuning, the local RESULTS output bundle, REDUCE_INTERVAL) live
+# in the daemon scripts; add overrides here only if you run a custom
+# airplanes.live backend or non-default decoder hardware.
 
 LATITUDE="$RECEIVERLATITUDE"
 LONGITUDE="$RECEIVERLONGITUDE"
-
 ALTITUDE="$RECEIVERALTITUDE"
 
-# this is the source for 978 data, use port 30978 from dump978 --raw-port
-# if you're not receiving 978, don't worry about it, not doing any harm!
-UAT_INPUT="127.0.0.1:30978"
-
-RESULTS="--results beast,connect,127.0.0.1:30104"
-RESULTS2="--results basestation,listen,31015"
-RESULTS3="--results beast,listen,30157"
-RESULTS4="--results beast,connect,127.0.0.1:30187"
-INPUT_TYPE="$INPUT_TYPE"
-
-MLATSERVER="feed.airplanes.live:31090"
-TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"
-NET_OPTIONS="--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0"
-JSON_OPTIONS="--max-range 450 --json-location-accuracy 2 --range-outline-hours 24"
+# Display name shown on the MLAT map. Used as mlat-client's --user.
+MLAT_USER="$MLAT_USER"
+# Explicit on/off toggle. When false, airplanes-mlat exits early.
+MLAT_ENABLED="$MLAT_ENABLED"
+# Hide the feed name on the public MLAT map. true|false. Position is
+# never shown accurately no matter the setting. Toggle with:
+#   sudo apl-feed mlat private enable
+#   sudo apl-feed mlat private disable
+MLAT_PRIVATE=$MLAT_PRIVATE
 EOF
+
+    # Write INPUT + INPUT_TYPE only when they differ from the daemon
+    # defaults (127.0.0.1:30005 / dump1090). detect_receiver_input sets
+    # both together (Radarcape uses 127.0.0.1:10003 / radarcape_gps),
+    # so emit them as a pair to keep the override consistent.
+    if [[ "$INPUT" != "127.0.0.1:30005" ]] || [[ "$INPUT_TYPE" != "dump1090" ]]; then
+        tee -a "$FEED_ENV" >/dev/null <<EOF
+
+# Non-default receiver decoder. Defaults are 127.0.0.1:30005 / dump1090.
+INPUT="$INPUT"
+INPUT_TYPE="$INPUT_TYPE"
+EOF
+    fi
 }
 
 has_noninteractive_config_env() {

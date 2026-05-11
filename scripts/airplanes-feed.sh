@@ -48,7 +48,7 @@ UAT_PORT=$(echo $UAT_INPUT | cut -d: -f2)
 UAT_SOURCE="--net-connector $UAT_IP,$UAT_PORT,uat_in,silent_fail"
 
 REDUCE_INTERVAL="${REDUCE_INTERVAL:-0.5}"
-JSON_OPTIONS="${JSON_OPTIONS:-"--json-location-accuracy 2"}"
+JSON_OPTIONS="${JSON_OPTIONS:-"--max-range 450 --json-location-accuracy 2 --range-outline-hours 24"}"
 MODEAC_OPTION=""
 if [[ "${MODEAC:-}" == "yes" ]]; then
     MODEAC_OPTION="--modeac"
@@ -61,8 +61,15 @@ else
 fi
 FEED_BIN="${AIRPLANES_FEED_BIN:-$DEFAULT_FEED_BIN}"
 
+# Brand endpoint + readsb tuning defaults. Apply outside the image
+# branch so fresh non-image installs (which no longer have these keys
+# in feed.env after configure.sh slimming) still produce a working
+# daemon. The image branch keeps its leaner FEED_NET_OPTIONS override
+# and adds FEED_IMAGE_OPTIONS for the baked-decoder case.
+TARGET="${TARGET:-"--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"}"
+NET_OPTIONS="${NET_OPTIONS:-"--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0"}"
+
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
-    TARGET="${TARGET:-"--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"}"
     FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-"--net-ro-interval 0.2"}"
     FEED_IMAGE_OPTIONS="${FEED_IMAGE_OPTIONS:-"--db-file=none --max-range 450"}"
 else

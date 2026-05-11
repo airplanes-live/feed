@@ -131,4 +131,7 @@ test -f /lib/systemd/system/airplanes-mlat.service
 test -f /etc/airplanes/feeder-claim-secret
 test "$(readlink /etc/default/airplanes)" = "/etc/airplanes/feed.env"
 grep -q 'systemctl restart airplanes-feed' /tmp/systemctl.log
-grep -q 'UAT_INPUT="127.0.0.1:30978"' /etc/airplanes/feed.env
+# UAT_INPUT default lives in the installed daemon wrapper now (was in
+# feed.env). airplanes-feed silent_fails on the UAT connector so the
+# default is harmless on feeders without 978 hardware.
+grep -q 'UAT_INPUT="127.0.0.1:30978"' /usr/local/share/airplanes/airplanes-feed.sh

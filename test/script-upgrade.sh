@@ -227,20 +227,28 @@ if [[ -e /etc/default/airplanes ]]; then
         || { echo "FAIL: /etc/default/airplanes is not a symlink to feed.env" >&2; exit 1; }
 fi
 
-# 4B. Wire-protocol contract
+# 4B. Wire-protocol contract — after update.sh's default-prune migrator
+# strips canonical brand-endpoint values from feed.env, the daemon-effective
+# TARGET/MLATSERVER come from the wrapper defaults. Source feed.env, apply
+# the same `${VAR:-default}` shape the wrappers use, and assert the result.
 env -i bash -c '
     set -euo pipefail
     # shellcheck disable=SC1091
     source /etc/airplanes/feed.env
-    [[ "${TARGET:-}"     == *"feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"* ]] \
+    TARGET="${TARGET:-"--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"}"
+    MLATSERVER="${MLATSERVER:-feed.airplanes.live:31090}"
+    [[ "${TARGET}"     == *"feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"* ]] \
         || { echo "FAIL: TARGET=${TARGET:-<unset>}" >&2; exit 1; }
-    [[ "${MLATSERVER:-}" == "feed.airplanes.live:31090" ]] \
+    [[ "${MLATSERVER}" == "feed.airplanes.live:31090" ]] \
         || { echo "FAIL: MLATSERVER=${MLATSERVER:-<unset>}" >&2; exit 1; }
 '
 
 grep -q 'feed\.airplanes\.live,30004,beast_reduce_plus_out,feed2\.airplanes\.live,64004' \
     /usr/local/share/airplanes/airplanes-feed.sh \
-    || { echo "FAIL: image-default TARGET literal missing in installed airplanes-feed.sh" >&2; exit 1; }
+    || { echo "FAIL: failover TARGET literal missing in installed airplanes-feed.sh default" >&2; exit 1; }
+
+grep -q 'feed\.airplanes\.live:31090' /usr/local/share/airplanes/airplanes-mlat.sh \
+    || { echo "FAIL: MLATSERVER literal missing in installed airplanes-mlat.sh default" >&2; exit 1; }
 
 grep -rq '/api/feeders/secret' /usr/local/share/airplanes/ \
     || { echo "FAIL: /api/feeders/secret reference missing" >&2; exit 1; }

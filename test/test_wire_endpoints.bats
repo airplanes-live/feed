@@ -11,18 +11,30 @@ setup() {
     REPO_ROOT="$BATS_TEST_DIRNAME/.."
 }
 
-@test "configure.sh writes TARGET=feed.airplanes.live:30004 + feed2:64004 to feed.env" {
-    grep -qE '^TARGET="--net-connector feed\.airplanes\.live,30004,beast_reduce_plus_out,feed2\.airplanes\.live,64004"$' \
-        "$REPO_ROOT/configure.sh"
-}
-
-@test "configure.sh writes MLATSERVER=feed.airplanes.live:31090 to feed.env" {
-    grep -qE '^MLATSERVER="feed\.airplanes\.live:31090"$' "$REPO_ROOT/configure.sh"
-}
-
-@test "airplanes-feed.sh image-default TARGET embeds feed.airplanes.live:30004 + feed2:64004" {
+@test "airplanes-feed.sh TARGET default embeds feed.airplanes.live:30004 + feed2:64004" {
+    # Brand endpoint lives as a daemon default since feed.env was slimmed
+    # to operator data; configure.sh no longer writes TARGET.
     grep -q 'feed\.airplanes\.live,30004,beast_reduce_plus_out,feed2\.airplanes\.live,64004' \
         "$REPO_ROOT/scripts/airplanes-feed.sh"
+}
+
+@test "airplanes-mlat.sh MLATSERVER default embeds feed.airplanes.live:31090" {
+    grep -qE 'MLATSERVER="\$\{MLATSERVER:-feed\.airplanes\.live:31090\}"' \
+        "$REPO_ROOT/scripts/airplanes-mlat.sh"
+}
+
+@test "configure.sh does not write brand endpoints or tuning defaults to feed.env" {
+    # These keys are owned by the daemon defaults now. Keeping them in
+    # the rendered feed.env would freeze them on every feeder. `! grep -q`
+    # is a tested context for bash, so set -e doesn't fire on match —
+    # use grep -c for the count so a regression actually aborts.
+    [ "$(grep -cE '^TARGET=' "$REPO_ROOT/configure.sh")" -eq 0 ]
+    [ "$(grep -cE '^MLATSERVER=' "$REPO_ROOT/configure.sh")" -eq 0 ]
+    [ "$(grep -cE '^NET_OPTIONS=' "$REPO_ROOT/configure.sh")" -eq 0 ]
+    [ "$(grep -cE '^JSON_OPTIONS=' "$REPO_ROOT/configure.sh")" -eq 0 ]
+    [ "$(grep -cE '^REDUCE_INTERVAL=' "$REPO_ROOT/configure.sh")" -eq 0 ]
+    [ "$(grep -cE '^RESULTS[0-9]*=' "$REPO_ROOT/configure.sh")" -eq 0 ]
+    [ "$(grep -cE '^UAT_INPUT=' "$REPO_ROOT/configure.sh")" -eq 0 ]
 }
 
 @test "claim CLI posts to /api/feeders/secret" {

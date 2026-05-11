@@ -124,21 +124,6 @@ migrate_strip_uuid_file_arg() {
     sed -i -E 's/[[:space:]]*--uuid-file(=|[[:space:]]+)(\/usr\/local\/share\/airplanes\/airplanes-uuid|\/boot\/airplanes-uuid)//g' "$feed_env" || true
 }
 
-# Append the UAT_INPUT default if not already present. Comment matches the
-# original wording so subsequent runs don't accidentally re-append.
-migrate_add_uat_input_default() {
-    local feed_env="$1"
-    [[ -f "$feed_env" ]] || return 0
-    if ! grep -qs -e UAT_INPUT "$feed_env"; then
-        cat >> "$feed_env" <<"EOF"
-
-# this is the source for 978 data, use port 30978 from dump978 --raw-port
-# if you're not receiving 978, don't worry about it, not doing any harm!
-UAT_INPUT="127.0.0.1:30978"
-EOF
-    fi
-}
-
 # Split the legacy USER key into MLAT_USER and MLAT_ENABLED. Idempotent:
 # no-op when USER is absent. When USER is present, derives:
 #
