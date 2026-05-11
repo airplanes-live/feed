@@ -157,6 +157,26 @@ _image_source_pick_asset_via_manifest() {
         | jq -r --arg name "$manifest_name" \
             '[.assets[]? | select(.name == $name)] | first | .browser_download_url // empty')"
     if [[ -z "$manifest_url" ]]; then
+        # No manifest sidecar. Distinguish two cases:
+        #   - Release has at least one asset matching the immutable
+        #     SHA-tagged pattern → the publisher emits manifests, so a
+        #     missing one is a broken publish (e.g., the sequential upload
+        #     chain crashed between the .img.xz step and the manifest
+        #     step). Hard error so callers don't silently regress to an
+        #     older release via the regex fallback.
+        #   - No immutable-pattern asset either → this is a pre-manifest
+        #     release (rolling-only) or an unrelated release. Treat as
+        #     "no manifest path here" and let the strategy fall back to
+        #     the legacy regex picker.
+        local immutable_re has_immutable
+        immutable_re="^airplanes-feeder-${channel}-${arch}-[0-9a-f]+-r[0-9]+-a[0-9]+\\.img\\.xz$"
+        has_immutable="$(printf '%s\n' "$release_json" \
+            | jq -r --arg re "$immutable_re" \
+                '[.assets[]? | select(.name | test($re))] | length')"
+        if [[ "$has_immutable" -gt 0 ]]; then
+            echo "image-source: release has immutable .img.xz asset(s) but no manifest sidecar — refusing to fall back to a stale release" >&2
+            return 2
+        fi
         return 1
     fi
 
