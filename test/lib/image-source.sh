@@ -24,6 +24,18 @@
 # move on" rather than hard failure. This matches the public-repo expectation:
 # an authenticated-but-broken token shouldn't block a public release lookup,
 # and tier-empty signals naturally degrade via the caller's skip-with-notice.
+#
+# Asset selection for the `new` contract is manifest-driven: when REGEX is
+# unset, the resolver looks for the rpi-imager Custom Repository sidecar
+# (`airplanes-feeder-${channel}-${arch}.rpi-imager-manifest.json`) in the
+# resolved release, parses `os_list[0].url`, and downloads that — the same
+# pointer rpi-imager itself follows. If the manifest is absent the resolver
+# falls back to the legacy regex picker so releases that predate manifest
+# publishing still resolve. A manifest that is PRESENT but malformed (unreadable,
+# missing url, url points outside the release, basename does not match the
+# expected pattern) is a hard error rather than a silent fallback.
+# Pass an explicit REGEX to bypass the manifest path for one-off testing of
+# a specific asset (e.g. image-boot-smoke's `image_asset_regex` input).
 
 # ---- requirements ----
 
@@ -112,6 +124,132 @@ _image_source_pick_asset() {
     esac
 }
 
+# Manifest-fetch retry tuning. GitHub release assets can be briefly
+# inconsistent during `gh release upload --clobber` (DELETE-then-POST window),
+# so we retry the small manifest sidecar before declaring a hard error. The
+# .img.xz it references is uploaded under an immutable name and never
+# clobbered, so a manifest-fetch retry is the only race we need to absorb.
+_IMAGE_SOURCE_MANIFEST_FETCH_ATTEMPTS="${_IMAGE_SOURCE_MANIFEST_FETCH_ATTEMPTS:-3}"
+_IMAGE_SOURCE_MANIFEST_FETCH_BACKOFF_S="${_IMAGE_SOURCE_MANIFEST_FETCH_BACKOFF_S:-2}"
+
+_image_source_pick_asset_via_manifest() {
+    # Reads a single release JSON object on stdin. Looks for a sidecar
+    # `airplanes-feeder-${channel}-${arch}.rpi-imager-manifest.json` asset,
+    # fetches it over HTTPS, parses the rpi-imager Custom Repository JSON,
+    # extracts os_list[0].url, and validates the URL points at an asset of
+    # the SAME release whose name matches the expected immutable pattern.
+    # Emits <asset_name>\t<asset_url> on success.
+    #
+    # Args: channel arch
+    # Return: 0 success
+    #         1 no manifest sidecar present in this release (caller decides
+    #             whether to fall back or escalate)
+    #         2 manifest present but malformed, fetch failed after retries,
+    #             url field missing/empty, url not an asset of this release,
+    #             or url's asset name does not match the expected pattern
+    local channel="$1" arch="$2"
+    local manifest_name="airplanes-feeder-${channel}-${arch}.rpi-imager-manifest.json"
+    local release_json manifest_url manifest_body image_url
+    local matched_name expected_re attempt
+
+    release_json="$(cat)"
+    manifest_url="$(printf '%s\n' "$release_json" \
+        | jq -r --arg name "$manifest_name" \
+            '[.assets[]? | select(.name == $name)] | first | .browser_download_url // empty')"
+    if [[ -z "$manifest_url" ]]; then
+        return 1
+    fi
+
+    manifest_body=""
+    for (( attempt = 1; attempt <= _IMAGE_SOURCE_MANIFEST_FETCH_ATTEMPTS; attempt++ )); do
+        # --fail makes curl exit non-zero on HTTP >=400; --location follows
+        # GitHub's redirect to the signed asset URL. stderr suppression here
+        # keeps each attempt quiet — the final-failure message below is the
+        # one that matters.
+        if manifest_body="$(curl --fail --location --silent --show-error "$manifest_url" 2>/dev/null)"; then
+            [[ -n "$manifest_body" ]] && break
+            manifest_body=""
+        fi
+        if (( attempt < _IMAGE_SOURCE_MANIFEST_FETCH_ATTEMPTS )); then
+            sleep "$_IMAGE_SOURCE_MANIFEST_FETCH_BACKOFF_S"
+        fi
+    done
+    if [[ -z "$manifest_body" ]]; then
+        echo "image-source: failed to fetch manifest after $_IMAGE_SOURCE_MANIFEST_FETCH_ATTEMPTS attempts: $manifest_url" >&2
+        return 2
+    fi
+
+    # jq filter: require .os_list[0].url to be a non-empty string. `strings`
+    # keeps only string values (drops null/numbers/arrays); `select(length > 0)`
+    # drops empty strings. Output is empty iff any check fails.
+    image_url="$(printf '%s\n' "$manifest_body" \
+        | jq -r '.os_list[0].url // empty | strings | select(length > 0)')"
+    if [[ -z "$image_url" ]]; then
+        echo "image-source: manifest missing or invalid os_list[0].url: $manifest_url" >&2
+        return 2
+    fi
+
+    # Structural validation: the manifest's url must equal one of the same
+    # release's asset URLs. Prefix-only validation is too weak — it would
+    # accept a malformed manifest pointing at a different release, wrong
+    # channel/arch, or off-asset content.
+    matched_name="$(printf '%s\n' "$release_json" \
+        | jq -r --arg url "$image_url" \
+            '[.assets[]? | select(.browser_download_url == $url)] | first | .name // empty')"
+    if [[ -z "$matched_name" ]]; then
+        echo "image-source: manifest url is not an asset of the resolved release: $image_url" >&2
+        return 2
+    fi
+
+    # And its basename must match the expected immutable pattern for the
+    # requested channel + arch. Catches a misrouted manifest that points at
+    # e.g. the release-notes asset.
+    expected_re="^airplanes-feeder-${channel}-${arch}(-.+)?\\.img\\.xz$"
+    if ! [[ "$matched_name" =~ $expected_re ]]; then
+        echo "image-source: manifest url asset name $matched_name does not match expected pattern $expected_re" >&2
+        return 2
+    fi
+
+    printf '%s\t%s\n' "$matched_name" "$image_url"
+}
+
+_image_source_pick_via_strategy() {
+    # Picks an asset from the given release JSON. For the `new` contract with
+    # no explicit REGEX, tries the rpi-imager manifest sidecar first; if the
+    # manifest is absent (rc 1 from the manifest picker), falls back to the
+    # legacy regex picker so older or hand-crafted releases still resolve. A
+    # manifest that is PRESENT but malformed (rc 2) is a hard error and is
+    # NOT papered over by the regex fallback — the broken publisher must
+    # surface, not silently get downgraded to "older asset pointed at by
+    # regex". Reads release JSON on stdin.
+    #
+    # Args: contract channel arch regex strict explicit_regex
+    #   explicit_regex: "1" if caller passed REGEX to image_source_resolve;
+    #                   "" if the regex argument was the library default.
+    # Output / return: identical to _image_source_pick_asset.
+    local contract="$1" channel="$2" arch="$3"
+    local regex="$4" strict="$5" explicit_regex="$6"
+    local release_json
+    release_json="$(cat)"
+    if [[ "$contract" == "new" && -z "$explicit_regex" ]]; then
+        local pick rc
+        if pick="$(printf '%s\n' "$release_json" | _image_source_pick_asset_via_manifest "$channel" "$arch")"; then
+            printf '%s\n' "$pick"
+            return 0
+        else
+            rc=$?
+        fi
+        if [[ $rc -ne 1 ]]; then
+            # rc 2: manifest present but malformed. Hard error — don't fall
+            # back to regex, since that would let a broken manifest get
+            # papered over with a stale rolling-name asset.
+            return "$rc"
+        fi
+        # rc 1: no manifest sidecar in this release. Fall through to regex.
+    fi
+    printf '%s\n' "$release_json" | _image_source_pick_asset "$regex" "$strict"
+}
+
 # ---- download ----
 
 _image_source_download() {
@@ -162,7 +300,7 @@ _image_source_emit_selected() {
 #   2 — hard error inside the tier; caller should propagate
 
 _resolve_release_stable() {
-    # Args: repo regex strict_mode output_dir
+    # Args: repo contract channel arch regex strict explicit_regex output_dir
     #
     # IMPORTANT: capture exit codes via `if cmd; then rc=0; else rc=$?; fi`,
     # not `cmd; rc=$?`. Two bash gotchas conspire here:
@@ -172,7 +310,8 @@ _resolve_release_stable() {
     #     the then-block $? becomes the if-test result, not cmd's status.
     # The if/else pattern below puts the call in a tested context (set -e
     # suppressed) AND captures the unmodified exit code in the else branch.
-    local repo="$1" regex="$2" strict="$3" output_dir="$4"
+    local repo="$1" contract="$2" channel="$3" arch="$4"
+    local regex="$5" strict="$6" explicit_regex="$7" output_dir="$8"
     local json pick rc name url
     if json="$(gh api "/repos/$repo/releases/latest" 2>/dev/null)"; then
         rc=0
@@ -183,7 +322,7 @@ _resolve_release_stable() {
         echo "skipped-tier=release-stable: no /releases/latest for $repo" >&2
         return 1
     fi
-    if pick="$(printf '%s\n' "$json" | _image_source_pick_asset "$regex" "$strict")"; then
+    if pick="$(printf '%s\n' "$json" | _image_source_pick_via_strategy "$contract" "$channel" "$arch" "$regex" "$strict" "$explicit_regex")"; then
         rc=0
     else
         rc=$?
@@ -205,9 +344,10 @@ _resolve_release_stable() {
 }
 
 _resolve_release_any() {
-    # Args: repo regex strict_mode output_dir
+    # Args: repo contract channel arch regex strict explicit_regex output_dir
     # See note in _resolve_release_stable about exit-code capture pattern.
-    local repo="$1" regex="$2" strict="$3" output_dir="$4"
+    local repo="$1" contract="$2" channel="$3" arch="$4"
+    local regex="$5" strict="$6" explicit_regex="$7" output_dir="$8"
     local releases sorted release_json pick name url rc
     if releases="$(gh api "/repos/$repo/releases?per_page=30" 2>/dev/null)"; then
         rc=0
@@ -226,7 +366,7 @@ _resolve_release_any() {
         return 1
     fi
     while IFS= read -r release_json; do
-        if pick="$(printf '%s\n' "$release_json" | _image_source_pick_asset "$regex" "$strict")"; then
+        if pick="$(printf '%s\n' "$release_json" | _image_source_pick_via_strategy "$contract" "$channel" "$arch" "$regex" "$strict" "$explicit_regex")"; then
             rc=0
         else
             rc=$?
@@ -238,7 +378,9 @@ _resolve_release_any() {
             _image_source_download "$url" "$output_dir" "$name"
             return $?
         elif [[ $rc -eq 2 ]]; then
-            # Strict violation — hard failure on this release.
+            # Hard failure: strict-regex violation, malformed/missing
+            # manifest, or other structural problem on this release. Don't
+            # silently advance to an older release — escalate.
             return 2
         fi
         # rc=1: this release didn't have the asset, try next.
@@ -260,7 +402,13 @@ image_source_resolve() {
 
     _image_source_require_tools || return 1
 
-    if [[ -z "$regex" ]]; then
+    # Track whether the caller passed an explicit regex. Explicit regex
+    # bypasses the new-contract manifest path (one-off testing of a specific
+    # asset, e.g. image-boot-smoke's image_asset_regex dispatch input).
+    local explicit_regex=""
+    if [[ -n "$regex" ]]; then
+        explicit_regex=1
+    else
         regex="$(_image_source_default_regex "$contract" "$channel" "$arch")"
     fi
 
@@ -279,14 +427,14 @@ image_source_resolve() {
         case "$tier" in
             release-stable)
                 # set -e bypass via tested context, same pattern as the helpers.
-                if _resolve_release_stable "$repo" "$regex" "$strict" "$output_dir"; then
+                if _resolve_release_stable "$repo" "$contract" "$channel" "$arch" "$regex" "$strict" "$explicit_regex" "$output_dir"; then
                     rc=0
                 else
                     rc=$?
                 fi
                 ;;
             release-any)
-                if _resolve_release_any "$repo" "$regex" "$strict" "$output_dir"; then
+                if _resolve_release_any "$repo" "$contract" "$channel" "$arch" "$regex" "$strict" "$explicit_regex" "$output_dir"; then
                     rc=0
                 else
                     rc=$?
