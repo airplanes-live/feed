@@ -325,6 +325,12 @@ prepare_mounted_image() {
         set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LATITUDE "52.52000"
         set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LONGITUDE "13.40500"
         set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" ALTITUDE "35m"
+        # Simulate airplanes-update's pre-feed-update migrator step.
+        # Without this the strict guard in feed/update.sh fires on the
+        # legacy USER= schema. The migration itself is unit-tested in
+        # airplanes-webconfig and integration-tested in airplanes-update.
+        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" MLAT_USER "image-release-rootfs-smoke"
+        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" MLAT_ENABLED "true"
     else
         [[ -f "$ROOT_MNT/etc/airplanes/feed.env" ]] || fail "new image lacks /etc/airplanes/feed.env"
         rm -f "$ROOT_MNT/usr/bin/airplanes-feeder"
