@@ -37,6 +37,10 @@ Usage:
   apl-feed id set [--force]
   apl-feed mlat enable
   apl-feed mlat disable
+  apl-feed mlat setup
+  apl-feed mlat user <name>
+  apl-feed mlat user --clear
+  apl-feed mlat geo <lat> <lon> <alt>
   apl-feed mlat private enable
   apl-feed mlat private disable
   apl-feed 978 enable [--serial SERIAL] [--gain GAIN]

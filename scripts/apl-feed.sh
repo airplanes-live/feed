@@ -15,6 +15,35 @@ resolve_lib_dir() {
 
 APL_FEED_LIB_DIR="${APL_FEED_LIB_DIR:-$(resolve_lib_dir)}"
 
+# Resolve the daemon-lib directory ($IPATH/lib in production, ../lib in the
+# repo checkout) so apl-feed can source pure-function libs like
+# configure-validators.sh that ship alongside the daemons.
+resolve_daemon_lib_dir() {
+    local script_dir
+    script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -d "$script_dir/lib" ]]; then
+        printf '%s\n' "$script_dir/lib"
+    else
+        printf '%s\n' '/usr/local/share/airplanes/lib'
+    fi
+}
+APL_FEED_DAEMON_LIB_DIR="${APL_FEED_DAEMON_LIB_DIR:-$(resolve_daemon_lib_dir)}"
+
+# Pure-function validators shared with configure.sh. Sourced defensively
+# (mirrors apl-feed/status.sh's state-reader fallback) so a partial install
+# missing the lib produces a clear error at first use rather than failing
+# every CLI invocation.
+if [[ -r "$APL_FEED_DAEMON_LIB_DIR/configure-validators.sh" ]]; then
+    # shellcheck source=scripts/lib/configure-validators.sh
+    source "$APL_FEED_DAEMON_LIB_DIR/configure-validators.sh"
+else
+    valid_latitude()     { echo "configure-validators.sh missing at $APL_FEED_DAEMON_LIB_DIR; reinstall feed" >&2; return 2; }
+    valid_longitude()    { valid_latitude "$@"; }
+    valid_altitude()     { valid_latitude "$@"; }
+    normalize_altitude() { valid_latitude "$@"; }
+    sanitize_mlat_user() { valid_latitude "$@"; }
+fi
+
 # shellcheck source=scripts/apl-feed/common.sh
 source "$APL_FEED_LIB_DIR/common.sh"
 # shellcheck source=scripts/apl-feed/http.sh
