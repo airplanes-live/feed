@@ -79,22 +79,25 @@ apl_feed_import_legacy_config() {
                 fi
                 break
                 ;;
-            -*) die "unknown flag for import legacy-config: $1" ;;
-            *)
+            -*)
+                # parse_common_option owns --root, --server-url, etc.
+                # Check it BEFORE rejecting as unknown so chroot / build /
+                # test callers can pass `--root /mnt` to redirect paths.
                 local opt_rc
                 if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
                 case "$opt_rc" in
                     1) shift ;;
                     2) shift 2 ;;
-                    0)
-                        if [[ -z "$path" ]]; then
-                            path="$1"
-                            shift
-                        else
-                            die "import legacy-config takes exactly one path"
-                        fi
-                        ;;
+                    0) die "unknown flag for import legacy-config: $1" ;;
                 esac
+                ;;
+            *)
+                if [[ -z "$path" ]]; then
+                    path="$1"
+                    shift
+                else
+                    die "import legacy-config takes exactly one path"
+                fi
                 ;;
         esac
     done
@@ -105,12 +108,31 @@ apl_feed_import_legacy_config() {
     local -A payload=()
     local v
 
-    # Geo + gain + 978 keys: passthrough.
-    local k
+    # Geo + gain + 978 keys: passthrough through the matching validator
+    # so a legacy file with a stray bad value (e.g. GAIN=bad) doesn't
+    # fail the entire import. The library would have rejected the whole
+    # payload — costing the operator every other valid setting that was
+    # otherwise importable. configure-validators.sh is sourced upstream
+    # by apl-feed.sh; the fallback messaging there fires if the lib was
+    # not installed.
+    declare -A _import_validators=(
+        [LATITUDE]=valid_latitude
+        [LONGITUDE]=valid_longitude
+        [ALTITUDE]=valid_altitude
+        [GAIN]=valid_gain
+        [UAT_INPUT]=valid_uat_input
+        [DUMP978_SDR_SERIAL]=valid_dump978_serial
+        [DUMP978_GAIN]=valid_dump978_gain
+    )
+    local k validator
     for k in LATITUDE LONGITUDE ALTITUDE GAIN UAT_INPUT DUMP978_SDR_SERIAL DUMP978_GAIN; do
         v="$(_apl_feed_import_extract "$path" "$k")"
-        if [[ -n "$v" ]]; then
+        [[ -n "$v" ]] || continue
+        validator="${_import_validators[$k]}"
+        if "$validator" "$v" >/dev/null 2>&1; then
             payload[$k]="$v"
+        else
+            echo "import legacy-config: skipping $k=$v (invalid per $validator)" >&2
         fi
     done
 
@@ -162,12 +184,19 @@ apl_feed_import_legacy_config() {
         esac
     fi
     # PRIVACY → MLAT_PRIVATE. Wins over MLAT_MARKER when both are present.
+    # Legacy configs encode privacy in several shapes: yes/true/1 from
+    # generic forms, and `--privacy` cargo-culted from old documentation
+    # that suggested adding it as an mlat-client flag. All map to true.
+    # Unknown values are silently dropped rather than falling back to
+    # false — silently flipping a previously-private feeder to public
+    # on migration is the wrong failure mode.
     if grep -qE '^PRIVACY=' "$path"; then
         local privacy
         privacy="$(_apl_feed_import_extract "$path" PRIVACY)"
         case "$privacy" in
-            yes|true|1) payload[MLAT_PRIVATE]="true" ;;
-            *)          payload[MLAT_PRIVATE]="false" ;;
+            yes|true|1|--privacy) payload[MLAT_PRIVATE]="true" ;;
+            no|false|0|"")        payload[MLAT_PRIVATE]="false" ;;
+            *) echo "import legacy-config: unrecognised PRIVACY value '$privacy'; leaving MLAT_PRIVATE unchanged" >&2 ;;
         esac
     fi
     # MLAT_PRIVATE passthrough wins over both.

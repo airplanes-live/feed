@@ -362,3 +362,84 @@ echo "rc=${rc:-0}"
     # The critical check: no "unbound variable" error.
     ! [[ "$output" == *'unbound variable'* ]]
 }
+
+@test "--root <path> from parse_common_option is accepted, not rejected" {
+    # Regression for an earlier ordering bug: the -* arm fired before
+    # parse_common_option, so chroot / build callers could not pass
+    # --root /mnt and the restart-skip implicit path was unreachable.
+    cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+EOF
+    APPLY_ARGS_LOG="$ROOT_DIR/apply.argv"
+    : > "$APPLY_ARGS_LOG"
+    apl_feed_apply() {
+        printf '%s\n' "$*" >> "$APPLY_ARGS_LOG"
+        APL_APPLY_STATUS=no_change
+        return 0
+    }
+
+    import --root "$ROOT_DIR" "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    # parse_common_option set ROOT=$ROOT_DIR; non-host implicit path
+    # then adds --no-restart.
+    [ "$ROOT" = "$ROOT_DIR" ]
+    grep -q -- '--no-restart' "$APPLY_ARGS_LOG"
+}
+
+@test "PRIVACY=--privacy maps to MLAT_PRIVATE=true" {
+    # Regression: legacy configs that encoded privacy as `--privacy`
+    # (cargo-culted from old mlat-client flag documentation) used to
+    # fall through to the catch-all and turn previously-private feeders
+    # public on migration.
+    cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+PRIVACY=--privacy
+EOF
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -qE '^MLAT_PRIVATE=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "PRIVACY=unrecognised does NOT silently flip privacy off" {
+    # Sets MLAT_MARKER=no (privacy ON) first, then PRIVACY=garble. The
+    # old catch-all behavior would have turned this into MLAT_PRIVATE=
+    # false on migration. The new behavior keeps MLAT_PRIVATE=true via
+    # the MLAT_MARKER mapping and ignores the unrecognised PRIVACY.
+    cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+MLAT_MARKER=no
+PRIVACY=garble
+EOF
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -qE '^MLAT_PRIVATE=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "invalid passthrough value (GAIN=bad) is skipped, valid keys still import" {
+    # Before this validation, GAIN=bad would make apl_feed_apply reject
+    # the entire payload — the user would lose every other valid
+    # setting along with the bad one. The import is permissive by
+    # design: skip invalid values, log to stderr, apply the rest.
+    cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+GAIN=bad
+EOF
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -q '^MLAT_USER="alice"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^LATITUDE="52.5"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    # GAIN was skipped, never written.
+    ! grep -q '^GAIN=' "$ROOT_DIR/etc/airplanes/feed.env"
+}
