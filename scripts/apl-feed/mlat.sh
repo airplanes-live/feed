@@ -272,6 +272,13 @@ apl_feed_mlat_setup() {
         die "configure-validators.sh missing from \$APL_FEED_DAEMON_LIB_DIR; reinstall feed before running \`apl-feed mlat setup\`"
     fi
 
+    # Bootstrap canonical feed.env from /boot/airplanes-config.txt on
+    # bridged-legacy boxes before reading defaults — otherwise the
+    # whiptail prompts pre-populate from the legacy schema (USER,
+    # MLAT_MARKER) instead of the canonical one, silently dropping the
+    # operator's existing name / privacy preference at the first ENTER.
+    feed_env_ensure_canonical_for_write
+
     local feed_env
     feed_env="$(feed_env_path)"
     [[ -f "$feed_env" ]] || die "feed.env not found at $feed_env; run setup first"

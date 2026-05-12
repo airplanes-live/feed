@@ -143,6 +143,29 @@ apl_feed_import_legacy_config() {
     done
 
     # USER → MLAT_USER + MLAT_ENABLED.
+    #
+    # MLAT_ENABLED=true is only set when the legacy file carries a complete,
+    # validatable geo state: LATITUDE / LONGITUDE / ALTITUDE all in the
+    # payload (i.e. all passed per-key validation above) and the (lat, lon)
+    # pair is not the (0, 0) placeholder. Without this gate, a legacy box
+    # whose geo is missing, invalid, or still at default-zero would be
+    # force-imported with MLAT_ENABLED=true, hit apl_feed_apply's MLAT-vs-
+    # geo consistency check, and reject the entire bootstrap — meaning
+    # the operator couldn't even `apl-feed mlat disable` to recover (the
+    # auto-bootstrap fails before their explicit intent applies). When
+    # geo is incomplete, USER still maps to MLAT_USER; MLAT_ENABLED is
+    # omitted from the payload, so disk stays at its default.
+    #
+    # USER=0 / USER=disable still maps to MLAT_ENABLED=false unconditionally
+    # — explicit disable doesn't need geo to apply.
+    local geo_complete=0
+    if [[ -n "${payload[LATITUDE]+set}" \
+       && -n "${payload[LONGITUDE]+set}" \
+       && -n "${payload[ALTITUDE]+set}" ]] \
+       && ! { [[ "${payload[LATITUDE]}" =~ ^[+-]?0+(\.0+)?$ ]] \
+           && [[ "${payload[LONGITUDE]}" =~ ^[+-]?0+(\.0+)?$ ]]; }; then
+        geo_complete=1
+    fi
     if grep -qE '^USER=' "$path"; then
         local user_value
         user_value="$(_apl_feed_import_extract "$path" USER)"
@@ -153,14 +176,14 @@ apl_feed_import_legacy_config() {
                 ;;
             '')
                 payload[MLAT_USER]=""
-                payload[MLAT_ENABLED]="true"
+                (( geo_complete )) && payload[MLAT_ENABLED]="true"
                 ;;
             *)
                 # Strict regex — silently drop on shape mismatch so an
                 # illegible legacy username doesn't fail the whole import.
                 if [[ "$user_value" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
                     payload[MLAT_USER]="$user_value"
-                    payload[MLAT_ENABLED]="true"
+                    (( geo_complete )) && payload[MLAT_ENABLED]="true"
                 fi
                 ;;
         esac
@@ -176,7 +199,15 @@ apl_feed_import_legacy_config() {
     if grep -qE '^MLAT_ENABLED=' "$path"; then
         v="$(_apl_feed_import_extract "$path" MLAT_ENABLED)"
         case "$v" in
-            true|false) payload[MLAT_ENABLED]="$v" ;;
+            true)
+                # Same geo-complete gate as the USER block above —
+                # MLAT_ENABLED=true requires geo per apply's
+                # consistency check, so a legacy file with stale
+                # MLAT_ENABLED=true plus missing/invalid geo would
+                # block the bootstrap. false is always safe.
+                (( geo_complete )) && payload[MLAT_ENABLED]="true"
+                ;;
+            false) payload[MLAT_ENABLED]="false" ;;
         esac
     fi
 
