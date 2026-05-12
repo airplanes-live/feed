@@ -721,3 +721,132 @@ EOF
     grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
 }
 
+# ---------------------------------------------------------------------------
+# migrate_seed_feed_meta_json (DEV-380)
+# ---------------------------------------------------------------------------
+
+@test "migrate_seed_feed_meta_json: seeds the 6 tracked fields from a typical feed.env" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="52.5"
+LONGITUDE="13.4"
+ALTITUDE="35m"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+GAIN=auto
+EOF
+    META="$TMP/feed.meta.json"
+    migrate_seed_feed_meta_json "$FEED_ENV" "$META"
+
+    [ -f "$META" ]
+    [ "$(jq -r '.schema_version' "$META")" = "1" ]
+    for k in LATITUDE LONGITUDE ALTITUDE MLAT_USER MLAT_ENABLED MLAT_PRIVATE; do
+        [ "$(jq -r ".fields.${k}.edited_at" "$META")" = "2020-01-01T00:00:00Z" ]
+        [ "$(jq -r ".fields.${k}.edited_by" "$META")" = "legacy" ]
+    done
+    # GAIN is NOT tracked.
+    [ "$(jq -r '.fields | has("GAIN")' "$META")" = "false" ]
+}
+
+@test "migrate_seed_feed_meta_json: idempotent when sidecar already exists" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="52.5"
+MLAT_USER="alice"
+EOF
+    META="$TMP/feed.meta.json"
+    cat > "$META" <<EOF
+{"schema_version":1,"fields":{"MLAT_USER":{"edited_at":"2026-05-12T10:00:00Z","edited_by":"website"}}}
+EOF
+    cp "$META" "$META.before"
+    migrate_seed_feed_meta_json "$FEED_ENV" "$META"
+    diff -u "$META.before" "$META"
+}
+
+@test "migrate_seed_feed_meta_json: skips when feed.env missing (no sidecar created)" {
+    META="$TMP/feed.meta.json"
+    migrate_seed_feed_meta_json "$FEED_ENV" "$META"
+    [ ! -f "$META" ]
+}
+
+@test "migrate_seed_feed_meta_json: skips when jq missing" {
+    cat > "$FEED_ENV" <<'EOF'
+MLAT_USER="alice"
+EOF
+    META="$TMP/feed.meta.json"
+    # Override `command` so the `command -v jq` lookup inside the migration
+    # returns non-zero, mirroring a system that doesn't have jq installed.
+    # Everything else falls through to the bash builtin.
+    command() {
+        if [[ "${1:-}" == "-v" && "${2:-}" == "jq" ]]; then
+            return 1
+        fi
+        builtin command "$@"
+    }
+    migrate_seed_feed_meta_json "$FEED_ENV" "$META"
+    unset -f command
+    [ ! -f "$META" ]
+}
+
+@test "migrate_seed_feed_meta_json: handles partial feed.env (only LATITUDE/LONGITUDE present)" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="52.5"
+LONGITUDE="13.4"
+EOF
+    META="$TMP/feed.meta.json"
+    migrate_seed_feed_meta_json "$FEED_ENV" "$META"
+
+    [ -f "$META" ]
+    [ "$(jq -r '.fields | has("LATITUDE")' "$META")" = "true" ]
+    [ "$(jq -r '.fields | has("LONGITUDE")' "$META")" = "true" ]
+    # Other tracked fields not present in feed.env → not in meta either.
+    [ "$(jq -r '.fields | has("ALTITUDE")' "$META")" = "false" ]
+    [ "$(jq -r '.fields | has("MLAT_USER")' "$META")" = "false" ]
+}
+
+@test "migrate_seed_feed_meta_json: seeds present-but-empty MLAT_USER (key-presence rule)" {
+    cat > "$FEED_ENV" <<'EOF'
+MLAT_USER=""
+MLAT_ENABLED=false
+EOF
+    META="$TMP/feed.meta.json"
+    migrate_seed_feed_meta_json "$FEED_ENV" "$META"
+
+    [ "$(jq -r '.fields | has("MLAT_USER")' "$META")" = "true" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$META")" = "legacy" ]
+}
+
+@test "migrate_seed_feed_meta_json: failure returns 0 (no update.sh abort under set -e)" {
+    cat > "$FEED_ENV" <<'EOF'
+MLAT_USER="alice"
+EOF
+    # Point sidecar at a path whose parent cannot be created (parent is a
+    # regular file).
+    BAD_PARENT="$TMP/not-a-dir"
+    : > "$BAD_PARENT"
+    META="$BAD_PARENT/feed.meta.json"
+    run bash -c "
+        set -e
+        source '$COMMON_LIB'
+        source '$LIB'
+        migrate_seed_feed_meta_json '$FEED_ENV' '$META'
+    "
+    # set -e + return 0 from the migration ⇒ status 0 even on internal failure.
+    [ "$status" -eq 0 ]
+    [ ! -f "$META" ]
+}
+
+@test "run_config_file_migrations: produces feed.meta.json alongside feed.env" {
+    cat > "$FEED_ENV" <<'EOF'
+USER="alice"
+LATITUDE="52.5"
+LONGITUDE="13.4"
+EOF
+    run_config_file_migrations "$FEED_ENV"
+    META="$(dirname "$FEED_ENV")/feed.meta.json"
+    [ -f "$META" ]
+    [ "$(jq -r '.schema_version' "$META")" = "1" ]
+    # MLAT_USER landed via migrate_user_to_mlat_split; key presence triggers seed.
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$META")" = "legacy" ]
+}
+

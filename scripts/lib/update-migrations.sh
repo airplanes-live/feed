@@ -371,6 +371,59 @@ migrate_geo_to_configured_flag() {
     mv -f "$tmp" "$feed_env"
 }
 
+# Seed /etc/airplanes/feed.meta.json from the current feed.env on installs
+# that don't have it yet. The sidecar tracks per-write (edited_at, edited_by)
+# tuples for the LWW remote-config sync; without this seed, existing
+# feeders' values would be missing from feed.meta.json and the server-side
+# merge would treat them as never-stamped.
+#
+# Each present tracked key gets a fixed-low timestamp (2020-01-01) with
+# edited_by="legacy". Server-side merge treats this combination as the
+# lowest-precedence tuple, so the first authenticated post-deploy write —
+# whether feeder-originated or website-originated — naturally wins.
+#
+# Key-presence drives seeding (not value non-empty). MLAT_USER="" with
+# MLAT_ENABLED=false is a legitimate state and must be reflected in meta.
+#
+# Always returns 0 — failure must NOT abort update.sh's run_config_file
+# phase under `set -e`. Missing jq, mktemp failure, or a non-writable
+# directory all degrade silently; the next metadata-bearing apply will
+# produce the sidecar on the next save.
+migrate_seed_feed_meta_json() {
+    local feed_env="$1"
+    local meta_path="$2"
+    [[ -f "$feed_env" ]] || return 0
+    [[ -f "$meta_path" ]] && return 0
+    command -v jq >/dev/null 2>&1 || return 0
+
+    local legacy_at="2020-01-01T00:00:00Z"
+    local tracked=(LATITUDE LONGITUDE ALTITUDE MLAT_USER MLAT_ENABLED MLAT_PRIVATE)
+    local jq_args=() filter='{schema_version: 1, fields: {}}'
+    local k i=0
+    for k in "${tracked[@]}"; do
+        # Key presence (not value non-empty) — empty MLAT_USER is valid.
+        if grep -qE "^[[:space:]]*${k}=" "$feed_env" 2>/dev/null; then
+            jq_args+=(--arg "k${i}" "$k" --arg "a${i}" "$legacy_at" --arg "b${i}" "legacy")
+            filter+=" | .fields[\$k${i}] = {edited_at: \$a${i}, edited_by: \$b${i}}"
+            i=$((i + 1))
+        fi
+    done
+    (( i == 0 )) && return 0
+
+    local dir tmp
+    dir="$(dirname "$meta_path")"
+    mkdir -p "$dir" 2>/dev/null || return 0
+    tmp="$(mktemp "${meta_path}.XXXXXX" 2>/dev/null)" || return 0
+    if ! jq -nc "${jq_args[@]}" "$filter" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 0
+    fi
+    chown --reference="$feed_env" "$tmp" 2>/dev/null || true
+    chmod 0664 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$meta_path" 2>/dev/null || rm -f "$tmp"
+    return 0
+}
+
 run_config_file_migrations() {
     local feed_env="$1"
     # Take the same /run/airplanes/feed-env.lock the privileged writer
@@ -399,6 +452,7 @@ run_config_file_migrations() {
     migrate_user_to_mlat_split "$feed_env"
     migrate_privacy_to_mlat_private "$feed_env"
     migrate_geo_to_configured_flag "$feed_env"
+    migrate_seed_feed_meta_json "$feed_env" "$(dirname "$feed_env")/feed.meta.json"
     if [[ -n "$_feed_lock_fd" ]]; then
         eval "exec ${_feed_lock_fd}>&-"
     fi

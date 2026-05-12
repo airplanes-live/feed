@@ -34,6 +34,34 @@ APL_FEED_APPLY_FEED_ENV_DEFAULT="${APL_FEED_APPLY_FEED_ENV_DEFAULT:-/etc/airplan
 APL_FEED_APPLY_LOCK_DEFAULT="${APL_FEED_APPLY_LOCK_DEFAULT:-/run/airplanes/feed-env.lock}"
 APL_FEED_APPLY_LOCK_TIMEOUT_DEFAULT="${APL_FEED_APPLY_LOCK_TIMEOUT_DEFAULT:-30}"
 
+# Sidecar metadata file ("feed.meta.json") lives next to feed.env by default.
+# Only the *basename* is fixed here; the actual path is derived at call time
+# from dirname(feed_env) so a `--feed-env /alt/path/feed.env` invocation
+# automatically writes /alt/path/feed.meta.json and never touches the host.
+APL_FEED_APPLY_META_BASENAME="feed.meta.json"
+
+# The subset of feed.env keys whose per-write metadata is tracked in
+# feed.meta.json. GEO_CONFIGURED is derived from LATITUDE/LONGITUDE and is
+# intentionally not tracked; GAIN/UAT_INPUT/DUMP978_* are not part of
+# remote configuration.
+APL_FEED_APPLY_META_TRACKED_KEYS=(
+    LATITUDE LONGITUDE ALTITUDE MLAT_USER MLAT_ENABLED MLAT_PRIVATE
+)
+
+# Allowed values for the `edited_by` field, both on read and on write.
+APL_FEED_APPLY_EDITED_BY_ENUM="feeder website legacy"
+
+# RFC 3339 UTC shape required for `edited_at`. Strict — the server side
+# stamps with this exact format; webconfig writes do too.
+APL_FEED_APPLY_EDITED_AT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$'
+
+# Caller-input arrays. Parallel maps keyed by feed.env key. apl_feed_apply
+# snapshots these into locals at entry; the caller MAY free them after the
+# call. NOT reset by _apl_feed_apply_reset_state — they are inputs, not
+# result state.
+declare -gA APL_APPLY_INCOMING_META_EDITED_AT=()
+declare -gA APL_APPLY_INCOMING_META_EDITED_BY=()
+
 # Universal-reject character set. Mirrors Go configspec.universalReject.
 # Defense-in-depth: a regex-passing value containing a shell metachar
 # cannot reach feed.env (which gets `source`d by airplanes-feed.sh and
@@ -401,11 +429,125 @@ _apl_feed_apply_canonicalize_altitude() {
     esac
 }
 
-# Reset the result globals to a clean slate.
+# Predicate: returns 0 if the given key is one of the sidecar-tracked keys.
+_apl_feed_apply_is_tracked_key() {
+    local needle="$1" k
+    for k in "${APL_FEED_APPLY_META_TRACKED_KEYS[@]}"; do
+        [[ "$k" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
+# Emit current time in the RFC 3339 UTC shape the sidecar requires.
+_apl_feed_apply_iso_now() {
+    date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+# Read feed.meta.json into two parallel assoc arrays passed by nameref.
+# Missing file → empty maps, no warning. Wrong schema_version or malformed
+# JSON → empty maps + APL_APPLY_PENDING_META_WARNING set (the next write
+# will overwrite the file fresh). Per-entry validation drops entries whose
+# shape doesn't match the canonical (object with edited_at/edited_by,
+# edited_by in enum, edited_at matching RFC 3339 regex).
+_apl_feed_apply_read_meta() {
+    local meta_path="$1"
+    local -n at_ref="$2"
+    local -n by_ref="$3"
+    at_ref=()
+    by_ref=()
+    [[ -f "$meta_path" ]] || return 0
+    local schema_ok
+    if ! schema_ok="$(jq -r '
+        if (type == "object") and (.schema_version == 1) and (.fields | type == "object")
+        then "ok" else "schema_mismatch" end' "$meta_path" 2>/dev/null)"; then
+        APL_APPLY_PENDING_META_WARNING="existing feed.meta.json is unreadable; rewriting fresh"
+        return 0
+    fi
+    if [[ "$schema_ok" != "ok" ]]; then
+        APL_APPLY_PENDING_META_WARNING="existing feed.meta.json has unexpected schema; rewriting fresh"
+        return 0
+    fi
+    local entries
+    if ! entries="$(jq -r '
+        .fields | to_entries[] |
+        select(.value | type == "object") |
+        select(.value.edited_at | type == "string") |
+        select(.value.edited_by | type == "string") |
+        "\(.key)\t\(.value.edited_at)\t\(.value.edited_by)"' "$meta_path" 2>/dev/null)"; then
+        APL_APPLY_PENDING_META_WARNING="existing feed.meta.json fields unreadable; rewriting fresh"
+        return 0
+    fi
+    local key at by
+    while IFS=$'\t' read -r key at by; do
+        [[ -z "$key" ]] && continue
+        _apl_feed_apply_is_tracked_key "$key" || continue
+        case " $APL_FEED_APPLY_EDITED_BY_ENUM " in
+            *" $by "*) ;;
+            *) continue ;;
+        esac
+        [[ "$at" =~ $APL_FEED_APPLY_EDITED_AT_RE ]] || continue
+        at_ref[$key]="$at"
+        by_ref[$key]="$by"
+    done <<< "$entries"
+}
+
+# Atomic write of feed.meta.json from two parallel assoc arrays passed by
+# nameref. Mode 0664 so the airplanes-feed group can update metadata
+# without sudo (the sync CLI in a future story relies on this). Owner is
+# inherited from feed.env via chown --reference.
+_apl_feed_apply_write_meta() {
+    local meta_path="$1"
+    local feed_env_for_owner="$2"
+    # shellcheck disable=SC2178  # at_ref/by_ref are array namerefs; shellcheck doesn't always recognise `-n` on arrays
+    local -n at_ref="$3"
+    # shellcheck disable=SC2178
+    local -n by_ref="$4"
+
+    local dir tmp
+    dir="$(dirname "$meta_path")"
+    mkdir -p "$dir" || return 1
+    tmp="$(mktemp "${meta_path}.XXXXXX")" || return 1
+
+    # Build via two parallel --arg streams so the bash values pass through
+    # jq's string escaping without any extra-quote hazards.
+    local jq_args=() key i=0
+    for key in "${APL_FEED_APPLY_META_TRACKED_KEYS[@]}"; do
+        [[ -z "${at_ref[$key]+set}" ]] && continue
+        jq_args+=(--arg "k${i}" "$key" --arg "a${i}" "${at_ref[$key]}" --arg "b${i}" "${by_ref[$key]}")
+        i=$((i + 1))
+    done
+    local filter='{schema_version: 1, fields: {}}'
+    local j
+    for (( j = 0; j < i; j++ )); do
+        filter+=" | .fields[\$k${j}] = {edited_at: \$a${j}, edited_by: \$b${j}}"
+    done
+    if ! jq -nc "${jq_args[@]}" "$filter" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if [[ -f "$feed_env_for_owner" ]]; then
+        chown --reference="$feed_env_for_owner" "$tmp" 2>/dev/null || true
+    fi
+    chmod 0664 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$meta_path" || { rm -f "$tmp"; return 1; }
+    return 0
+}
+
+# Emit the sidecar-write warning (if any) to stderr. Non-JSON CLI callers
+# call this after their normal result line so operators see when a save
+# updated feed.env but not feed.meta.json.
+apl_feed_apply_emit_meta_warning() {
+    [[ -n "${APL_APPLY_PENDING_META_WARNING:-}" ]] || return 0
+    printf 'warning: %s\n' "$APL_APPLY_PENDING_META_WARNING" >&2
+}
+
+# Reset the result globals to a clean slate. Inputs (APL_APPLY_INCOMING_META_*)
+# are NOT cleared here — they are owned by the caller.
 _apl_feed_apply_reset_state() {
     APL_APPLY_STATUS=""
     APL_APPLY_CHANGED=()
     APL_APPLY_PENDING_RESTART=()
+    APL_APPLY_PENDING_META_WARNING=""
     APL_APPLY_ERROR_MESSAGE=""
     declare -gA APL_APPLY_ERRORS=()
 }
@@ -416,6 +558,7 @@ _apl_feed_apply_reset_state() {
 #   apl_feed_apply [--no-restart] [--create-if-missing]
 #                  [--lock-timeout SECS]
 #                  [--feed-env PATH] [--lock-file PATH]
+#                  [--meta-file PATH]
 #                  KEY=value [KEY=value ...]
 #
 # --create-if-missing: create feed.env inside the apply lock when it
@@ -423,12 +566,20 @@ _apl_feed_apply_reset_state() {
 # filesystem_error. Used by apl_feed_import_legacy_config to make the
 # bootstrap atomic (no read-then-create race between two concurrent
 # writers).
+#
+# --meta-file: override the sidecar path (default: dirname(feed_env) +
+# /feed.meta.json). Sidecar tracks per-write (edited_at, edited_by) for
+# the keys in APL_FEED_APPLY_META_TRACKED_KEYS. To stamp metadata on a
+# write, the caller pre-populates APL_APPLY_INCOMING_META_EDITED_AT[$key]
+# and APL_APPLY_INCOMING_META_EDITED_BY[$key] before invoking; bare-string
+# writes default to edited_by=feeder, edited_at=now() for tracked keys.
 apl_feed_apply() {
     _apl_feed_apply_reset_state
 
     local feed_env="$APL_FEED_APPLY_FEED_ENV_DEFAULT"
     local lock_path="$APL_FEED_APPLY_LOCK_DEFAULT"
     local lock_timeout="$APL_FEED_APPLY_LOCK_TIMEOUT_DEFAULT"
+    local meta_path=""
     local skip_restart=0
     local create_if_missing=0
     local explicit_geo_in_payload=0
@@ -436,6 +587,19 @@ apl_feed_apply() {
     local -A payload=()
     local -A merged=()
     local key value pair
+
+    # Snapshot caller-supplied metadata into locals so result-state resets
+    # at function entry cannot lose them, and so a caller mid-flight (in
+    # the same shell) cannot mutate them between validation and write.
+    local -A _meta_in_at=()
+    local -A _meta_in_by=()
+    local _meta_in_key
+    for _meta_in_key in "${!APL_APPLY_INCOMING_META_EDITED_AT[@]}"; do
+        _meta_in_at[$_meta_in_key]="${APL_APPLY_INCOMING_META_EDITED_AT[$_meta_in_key]}"
+    done
+    for _meta_in_key in "${!APL_APPLY_INCOMING_META_EDITED_BY[@]}"; do
+        _meta_in_by[$_meta_in_key]="${APL_APPLY_INCOMING_META_EDITED_BY[$_meta_in_key]}"
+    done
 
     while (( $# > 0 )); do
         case "$1" in
@@ -474,6 +638,15 @@ apl_feed_apply() {
                 lock_path="$2"
                 shift 2
                 ;;
+            --meta-file)
+                [[ $# -ge 2 ]] || {
+                    APL_APPLY_STATUS=usage_error
+                    APL_APPLY_ERROR_MESSAGE="--meta-file requires PATH"
+                    return 5
+                }
+                meta_path="$2"
+                shift 2
+                ;;
             --)
                 shift
                 break
@@ -487,6 +660,38 @@ apl_feed_apply() {
                 break
                 ;;
         esac
+    done
+
+    # Auto-derive meta_path from feed_env's directory if --meta-file wasn't
+    # passed. Keeps `apl-feed apply --root /alt/path/ ...` from accidentally
+    # touching the host's /etc/airplanes/feed.meta.json.
+    if [[ -z "$meta_path" ]]; then
+        meta_path="$(dirname "$feed_env")/$APL_FEED_APPLY_META_BASENAME"
+    fi
+
+    # Validate caller-supplied metadata against the tracked-keys list, the
+    # edited_by enum, and the RFC 3339 edited_at shape. Fail fast — before
+    # any lock or filesystem work.
+    local _meta_check_key
+    for _meta_check_key in "${!_meta_in_by[@]}"; do
+        if ! _apl_feed_apply_is_tracked_key "$_meta_check_key"; then
+            APL_APPLY_ERRORS[$_meta_check_key]="metadata not supported for this key"
+            APL_APPLY_STATUS=rejected
+            return 2
+        fi
+        case " $APL_FEED_APPLY_EDITED_BY_ENUM " in
+            *" ${_meta_in_by[$_meta_check_key]} "*) ;;
+            *)
+                APL_APPLY_ERRORS[$_meta_check_key]="edited_by must be one of: $APL_FEED_APPLY_EDITED_BY_ENUM"
+                APL_APPLY_STATUS=rejected
+                return 2
+                ;;
+        esac
+        if ! [[ "${_meta_in_at[$_meta_check_key]:-}" =~ $APL_FEED_APPLY_EDITED_AT_RE ]]; then
+            APL_APPLY_ERRORS[$_meta_check_key]="edited_at must be RFC 3339 UTC (YYYY-MM-DDTHH:MM:SS[.fff]Z)"
+            APL_APPLY_STATUS=rejected
+            return 2
+        fi
     done
 
     # Parse KEY=value pairs.
@@ -641,18 +846,75 @@ apl_feed_apply() {
         return 2
     fi
 
-    if (( ${#APL_APPLY_CHANGED[@]} == 0 )); then
+    # Build the set of tracked keys that need a sidecar refresh:
+    #   (a) tracked keys whose canonical value just changed, OR
+    #   (b) tracked keys with explicit incoming metadata (object-form
+    #       payloads always reconcile, even when the canonical value
+    #       matched on-disk — this is how a feeder with a corrupt-future
+    #       edited_at gets its metadata replaced by the server's tuple).
+    local -a sidecar_keys=()
+    local sk_check
+    for sk_check in "${APL_APPLY_CHANGED[@]}"; do
+        _apl_feed_apply_is_tracked_key "$sk_check" && sidecar_keys+=("$sk_check")
+    done
+    for sk_check in "${!_meta_in_by[@]}"; do
+        local _already=0 _sk
+        for _sk in "${sidecar_keys[@]}"; do [[ "$_sk" == "$sk_check" ]] && _already=1; done
+        (( _already == 0 )) && sidecar_keys+=("$sk_check")
+    done
+
+    if (( ${#APL_APPLY_CHANGED[@]} == 0 && ${#sidecar_keys[@]} == 0 )); then
         APL_APPLY_STATUS=no_change
         [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
         return 0
     fi
 
-    # Write atomically.
-    if ! _apl_feed_apply_write "$feed_env" merged; then
-        APL_APPLY_STATUS=filesystem_error
-        APL_APPLY_ERROR_MESSAGE="atomic write to $feed_env failed"
-        [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
-        return 3
+    # Write feed.env atomically only when canonical values actually changed.
+    # An object-form payload whose value matched on-disk reaches this point
+    # with APL_APPLY_CHANGED empty but sidecar_keys non-empty — the sidecar
+    # block below still runs.
+    if (( ${#APL_APPLY_CHANGED[@]} > 0 )); then
+        if ! _apl_feed_apply_write "$feed_env" merged; then
+            APL_APPLY_STATUS=filesystem_error
+            APL_APPLY_ERROR_MESSAGE="atomic write to $feed_env failed"
+            [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
+            return 3
+        fi
+    fi
+
+    # Sidecar write — same lock as feed.env. Skipped in build mode (where
+    # lock_fd is empty because /run/airplanes/ may not exist). feed.env was
+    # already renamed by this point; on sidecar failure we log a warning
+    # but do NOT roll back feed.env — the daemon source of truth must not
+    # be held hostage by an informational sidecar. The next metadata-bearing
+    # write reconciles.
+    if (( ${#sidecar_keys[@]} > 0 )) && [[ -n "$lock_fd" ]]; then
+        local -A existing_at=() existing_by=()
+        _apl_feed_apply_read_meta "$meta_path" existing_at existing_by
+
+        local -A merged_at=() merged_by=()
+        local mk
+        for mk in "${!existing_at[@]}"; do
+            merged_at[$mk]="${existing_at[$mk]}"
+            merged_by[$mk]="${existing_by[$mk]}"
+        done
+
+        local now_iso
+        now_iso="$(_apl_feed_apply_iso_now)"
+        local ck
+        for ck in "${sidecar_keys[@]}"; do
+            if [[ -n "${_meta_in_by[$ck]+set}" ]]; then
+                merged_at[$ck]="${_meta_in_at[$ck]}"
+                merged_by[$ck]="${_meta_in_by[$ck]}"
+            else
+                merged_at[$ck]="$now_iso"
+                merged_by[$ck]="feeder"
+            fi
+        done
+
+        if ! _apl_feed_apply_write_meta "$meta_path" "$feed_env" merged_at merged_by; then
+            APL_APPLY_PENDING_META_WARNING="sidecar write failed; feed.env updated, feed.meta.json stale"
+        fi
     fi
 
     # Release lock before service restarts so a slow systemctl call cannot

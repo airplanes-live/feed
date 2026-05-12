@@ -78,6 +78,7 @@ _uat_emit_result() {
             if (( ${#APL_APPLY_PENDING_RESTART[@]} > 0 )); then
                 echo "Warning: failed to restart ${APL_APPLY_PENDING_RESTART[*]} — re-run: sudo systemctl restart ${APL_APPLY_PENDING_RESTART[*]}" >&2
             fi
+            apl_feed_apply_emit_meta_warning
             return 0
             ;;
         no_change)

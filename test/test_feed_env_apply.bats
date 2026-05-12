@@ -450,3 +450,223 @@ EOF
     # Original keys preserved.
     grep -q '^MLAT_USER="alice"$' "$FEED_ENV"
 }
+
+# ---------------------------------------------------------------------------
+# feed.meta.json sidecar (DEV-380)
+# ---------------------------------------------------------------------------
+
+# Default meta path is dirname($FEED_ENV)/feed.meta.json. Tests reference
+# $ROOT_DIR/etc/airplanes/feed.meta.json directly because ROOT_DIR is only
+# valid inside a test body (after setup()); a file-scope reference would
+# expand to /etc/airplanes/feed.meta.json on the host. A dedicated test
+# below proves the lib's auto-derive itself.
+
+@test "metadata object payload stamps feed.meta.json with the caller's tuple" {
+    seed_feed_env
+    APL_APPLY_INCOMING_META_EDITED_AT=([MLAT_USER]="2026-05-12T10:00:00Z")
+    APL_APPLY_INCOMING_META_EDITED_BY=([MLAT_USER]="website")
+    do_apply --no-restart MLAT_USER=bob
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+    [ "$(jq -r '.schema_version' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "1" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_at' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "2026-05-12T10:00:00Z" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "website" ]
+    # Clean up input arrays so they don't leak into the next test.
+    APL_APPLY_INCOMING_META_EDITED_AT=()
+    APL_APPLY_INCOMING_META_EDITED_BY=()
+}
+
+@test "bare-string change to tracked field stamps default feeder+now metadata" {
+    seed_feed_env
+    do_apply --no-restart MLAT_USER=bob
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "feeder"  ]
+    # Current-ish timestamp — assert RFC 3339 shape (regex). Strict equality
+    # would require freezing the clock.
+    EDITED_AT="$(jq -r '.fields.MLAT_USER.edited_at' "$ROOT_DIR/etc/airplanes/feed.meta.json")"
+    [[ "$EDITED_AT" =~ ^2[0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+}
+
+@test "unchanged tracked key with no incoming metadata leaves prior tuple intact" {
+    seed_feed_env
+    cat > "$ROOT_DIR/etc/airplanes/feed.meta.json" <<EOF
+{"schema_version":1,"fields":{"MLAT_USER":{"edited_at":"2020-01-01T00:00:00Z","edited_by":"legacy"}}}
+EOF
+    # Apply a no-op (MLAT_USER already alice) — meta file untouched.
+    do_apply --no-restart MLAT_USER=alice
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "no_change" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_at' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "2020-01-01T00:00:00Z" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "legacy" ]
+}
+
+@test "object-form metadata reconciles sidecar even when value matches on-disk" {
+    # Closes the stuck-future-timestamp hole: a feeder with a bogus future
+    # edited_at must reconcile to the server's tuple even if .value is the
+    # same as on-disk after canonicalization.
+    seed_feed_env
+    cat > "$ROOT_DIR/etc/airplanes/feed.meta.json" <<EOF
+{"schema_version":1,"fields":{"MLAT_USER":{"edited_at":"3000-01-01T00:00:00Z","edited_by":"feeder"}}}
+EOF
+    APL_APPLY_INCOMING_META_EDITED_AT=([MLAT_USER]="2026-05-12T10:00:00Z")
+    APL_APPLY_INCOMING_META_EDITED_BY=([MLAT_USER]="website")
+    # Value matches on-disk; only metadata differs.
+    do_apply --no-restart MLAT_USER=alice
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_at' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "2026-05-12T10:00:00Z" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "website" ]
+    APL_APPLY_INCOMING_META_EDITED_AT=()
+    APL_APPLY_INCOMING_META_EDITED_BY=()
+}
+
+@test "untracked key change does not touch sidecar" {
+    seed_feed_env
+    do_apply --no-restart GAIN=42.5
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+}
+
+@test "mixed tracked + untracked: only the tracked key gets a meta entry" {
+    seed_feed_env
+    do_apply --no-restart MLAT_USER=carol GAIN=42.5
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+    [ "$(jq -r '.fields | has("MLAT_USER")' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "true" ]
+    [ "$(jq -r '.fields | has("GAIN")' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "false" ]
+}
+
+@test "non-tracked key with incoming metadata is rejected (no write)" {
+    seed_feed_env
+    cp "$FEED_ENV" "$FEED_ENV.before"
+    APL_APPLY_INCOMING_META_EDITED_AT=([GAIN]="2026-05-12T10:00:00Z")
+    APL_APPLY_INCOMING_META_EDITED_BY=([GAIN]="website")
+    do_apply --no-restart GAIN=42.5
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    [ -n "${APL_APPLY_ERRORS[GAIN]:-}" ]
+    diff -u "$FEED_ENV.before" "$FEED_ENV"
+    [ ! -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+    APL_APPLY_INCOMING_META_EDITED_AT=()
+    APL_APPLY_INCOMING_META_EDITED_BY=()
+}
+
+@test "incoming edited_by not in {feeder,website,legacy} is rejected" {
+    seed_feed_env
+    APL_APPLY_INCOMING_META_EDITED_AT=([MLAT_USER]="2026-05-12T10:00:00Z")
+    APL_APPLY_INCOMING_META_EDITED_BY=([MLAT_USER]="some-other-actor")
+    do_apply --no-restart MLAT_USER=carol
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    [ -n "${APL_APPLY_ERRORS[MLAT_USER]:-}" ]
+    APL_APPLY_INCOMING_META_EDITED_AT=()
+    APL_APPLY_INCOMING_META_EDITED_BY=()
+}
+
+@test "incoming edited_at not matching RFC 3339 regex is rejected" {
+    seed_feed_env
+    APL_APPLY_INCOMING_META_EDITED_AT=([MLAT_USER]="yesterday at noon")
+    APL_APPLY_INCOMING_META_EDITED_BY=([MLAT_USER]="website")
+    do_apply --no-restart MLAT_USER=carol
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    [ -n "${APL_APPLY_ERRORS[MLAT_USER]:-}" ]
+    APL_APPLY_INCOMING_META_EDITED_AT=()
+    APL_APPLY_INCOMING_META_EDITED_BY=()
+}
+
+@test "sidecar write failure preserves feed.env update and sets pending_meta_warning" {
+    seed_feed_env
+    # Make the meta directory not creatable: replace it with a regular file.
+    # mkdir -p on existing-but-not-a-directory will fail.
+    rm -rf "$ROOT_DIR/etc/airplanes"
+    # Recreate a stand-in feed.env path: directory holding feed.env exists,
+    # but the sidecar's intended directory does not.
+    mkdir -p "$ROOT_DIR/etc/airplanes"
+    seed_feed_env
+    # Override meta path to one whose parent dir cannot be created.
+    BAD_META="$ROOT_DIR/etc/airplanes/feed.env/feed.meta.json"
+    do_apply --no-restart --meta-file "$BAD_META" MLAT_USER=daniela
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    grep -q '^MLAT_USER="daniela"$' "$FEED_ENV"
+    [ -n "$APL_APPLY_PENDING_META_WARNING" ]
+}
+
+@test "existing sidecar with malformed entries is dropped on next write" {
+    seed_feed_env
+    cat > "$ROOT_DIR/etc/airplanes/feed.meta.json" <<'EOF'
+{"schema_version":1,"fields":{"MLAT_USER":"bad-shape","ALTITUDE":{"edited_at":"2026-05-12T10:00:00Z","edited_by":"website"}}}
+EOF
+    # Trigger a write on a DIFFERENT field (MLAT_PRIVATE) — the read should
+    # drop MLAT_USER (bad shape) and keep ALTITUDE (good shape).
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    # Bad MLAT_USER entry gone.
+    [ "$(jq -r '.fields | has("MLAT_USER")' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "false" ]
+    # Preserved ALTITUDE tuple survives.
+    [ "$(jq -r '.fields.ALTITUDE.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "website" ]
+    # New MLAT_PRIVATE got stamped (default feeder).
+    [ "$(jq -r '.fields.MLAT_PRIVATE.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "feeder" ]
+}
+
+@test "feed.meta.json is created with mode 0664" {
+    seed_feed_env
+    do_apply --no-restart MLAT_USER=eric
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+    # GNU stat is fine on the CI runner (ubuntu-24.04); test/macOS uses
+    # docker for Ubuntu parity per rules/testing.md.
+    MODE="$(stat -c '%a' "$ROOT_DIR/etc/airplanes/feed.meta.json" 2>/dev/null || stat -f '%A' "$ROOT_DIR/etc/airplanes/feed.meta.json")"
+    [ "$MODE" = "664" ]
+}
+
+@test "default meta_path derives from feed_env dirname when --meta-file omitted" {
+    seed_feed_env
+    do_apply --no-restart MLAT_USER=fiona
+    [ "$APL_APPLY_RC" -eq 0 ]
+    # Expected default path is dirname($FEED_ENV)/feed.meta.json.
+    [ -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+}
+
+@test "--meta-file overrides the default sidecar path" {
+    seed_feed_env
+    OVERRIDE="$ROOT_DIR/custom-meta.json"
+    do_apply --no-restart --meta-file "$OVERRIDE" MLAT_USER=greta
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ -f "$OVERRIDE" ]
+    # Default path NOT created.
+    [ ! -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+}
+
+@test "build mode does not create sidecar (no /run lock held)" {
+    seed_feed_env
+    AIRPLANES_BUILD_MODE=1 do_apply --no-restart MLAT_USER=hank
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    grep -q '^MLAT_USER="hank"$' "$FEED_ENV"
+    # Sidecar block is gated on lock_fd being held, which build mode skips.
+    [ ! -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+}
+
+@test "INCOMING_META survives across two consecutive apply calls in the same shell" {
+    seed_feed_env
+    APL_APPLY_INCOMING_META_EDITED_AT=([MLAT_USER]="2026-05-12T11:00:00Z")
+    APL_APPLY_INCOMING_META_EDITED_BY=([MLAT_USER]="website")
+    do_apply --no-restart MLAT_USER=irene
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "website" ]
+    # Caller did NOT clear; second call should still see the same input
+    # state (snapshot is per-call, not consumed at exit).
+    do_apply --no-restart MLAT_USER=julia
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "website" ]
+    APL_APPLY_INCOMING_META_EDITED_AT=()
+    APL_APPLY_INCOMING_META_EDITED_BY=()
+}

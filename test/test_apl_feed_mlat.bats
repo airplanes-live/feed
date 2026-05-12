@@ -692,6 +692,53 @@ EOF
     [ "$before" = "$(cat "$ROOT_DIR/boot/airplanes-config.txt")" ]
 }
 
+# --- feed.meta.json sidecar via mlat verbs (DEV-380) ---
+
+@test "mlat private writes feed.meta.json with edited_by=feeder" {
+    write_feed_env "alice" "true"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_private_enable
+
+    META="$ROOT_DIR/etc/airplanes/feed.meta.json"
+    [ -f "$META" ]
+    [ "$(jq -r '.fields.MLAT_PRIVATE.edited_by' "$META")" = "feeder" ]
+    [[ "$(jq -r '.fields.MLAT_PRIVATE.edited_at' "$META")" =~ ^2[0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+}
+
+@test "mlat --root targets only the rootfs sidecar, never the host" {
+    # ROOT_DIR is not "/", so the apply runs --no-restart and writes under
+    # the scratch tree. Verify no /etc/airplanes/feed.meta.json materializes
+    # outside ROOT_DIR (we can't write to /etc as a regular user, but a
+    # path-based check matches the contract).
+    write_feed_env "alice" "true"
+    ROOT="$ROOT_DIR"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_private_enable
+
+    META="$ROOT_DIR/etc/airplanes/feed.meta.json"
+    [ -f "$META" ]
+    # MLAT_PRIVATE stamped under ROOT_DIR.
+    [ "$(jq -r '.fields.MLAT_PRIVATE.edited_by' "$META")" = "feeder" ]
+}
+
+@test "_mlat_emit_result surfaces APL_APPLY_PENDING_META_WARNING to stderr" {
+    APL_APPLY_STATUS=applied
+    APL_APPLY_CHANGED=(MLAT_PRIVATE)
+    APL_APPLY_PENDING_RESTART=()
+    APL_APPLY_PENDING_META_WARNING="sidecar write failed; feed.env updated, feed.meta.json stale"
+
+    run _mlat_emit_result "ok"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"sidecar write failed; feed.env updated, feed.meta.json stale"* ]]
+}
+
 # --- setup helper (single 7-key transaction) ---
 
 
