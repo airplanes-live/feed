@@ -167,11 +167,15 @@ EOF
     [[ "$output" == *'not found'* ]]
 }
 
-@test "empty file: no recognised keys" {
+@test "empty file: no recognised keys, no canonical feed.env created" {
+    rm -rf "$ROOT_DIR/etc/airplanes"
     : > "$ROOT_DIR/airplanes-config.txt"
     run apl_feed_import_legacy_config "$ROOT_DIR/airplanes-config.txt"
     [ "$status" -eq 0 ]
     [[ "$output" == *'no recognised keys'* ]]
+    # No payload → must not create canonical feed.env, so feed_env_path()'s
+    # bridged-legacy fallback stays available for status readers.
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
 }
 
 @test "idempotent: rerun on identical input returns no_change" {
@@ -278,4 +282,83 @@ EOF
     # ROOT != / would inject one anyway, so we don't assert count, only
     # presence.
     grep -q -- '--no-restart' "$APPLY_ARGS_LOG"
+}
+
+@test "host-root: explicit --no-restart is passed, default is not" {
+    # The previous test confirmed --no-restart survives when the implicit
+    # path (ROOT != /) would also inject it. Here we pin the production
+    # shape: ROOT="/" suppresses the implicit inject, so the explicit
+    # flag (or its absence) is observable on its own.
+    cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+EOF
+    APPLY_ARGS_LOG="$ROOT_DIR/apply.argv"
+    : > "$APPLY_ARGS_LOG"
+    apl_feed_apply() {
+        printf '%s\n' "$*" >> "$APPLY_ARGS_LOG"
+        APL_APPLY_STATUS=no_change
+        return 0
+    }
+    # Stub root_path so the import still resolves the target inside
+    # ROOT_DIR while ROOT is set to "/" to flip off the implicit
+    # --no-restart inject.
+    root_path() { printf '%s\n' "$ROOT_DIR$1"; }
+    ROOT="/"
+
+    : > "$APPLY_ARGS_LOG"
+    import --no-restart "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -q -- '--no-restart' "$APPLY_ARGS_LOG"
+
+    : > "$APPLY_ARGS_LOG"
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    ! grep -q -- '--no-restart' "$APPLY_ARGS_LOG"
+}
+
+@test "rejected apply does not leave empty canonical feed.env behind" {
+    rm -rf "$ROOT_DIR/etc/airplanes"
+    cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+EOF
+    # Force the library to reject so we exercise the cleanup path.
+    apl_feed_apply() {
+        APL_APPLY_STATUS=rejected
+        APL_APPLY_ERRORS=()
+        APL_APPLY_ERRORS[MLAT_USER]="synthetic rejection"
+        return 2
+    }
+
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -ne 0 ]
+    # Pre-created empty canonical file must be cleaned up so the bridged-
+    # legacy fallback (feed_env_path() → /boot/airplanes-config.txt) stays
+    # available to status readers.
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
+}
+
+@test "apl-feed import legacy-config --  is set-u-safe with no path" {
+    # Regression for the unquoted $1 deref after shift past --. Production
+    # apl-feed.sh runs under set -euo pipefail; this test simulates that
+    # discipline in a sub-shell.
+    run bash -c '
+set -euo pipefail
+source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/configure-validators.sh"
+source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/feed-env-keys.sh"
+source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/feed-env-apply.sh"
+source "'"$BATS_TEST_DIRNAME"'/../scripts/apl-feed/common.sh"
+source "'"$BATS_TEST_DIRNAME"'/../scripts/apl-feed/import.sh"
+ROOT='"$ROOT_DIR"'
+apl_feed_import_legacy_config -- 2>&1 || rc=$?
+echo "rc=${rc:-0}"
+'
+    [[ "$output" == *'usage:'* || "$output" == *'not found'* || "$output" == *'rc='* ]]
+    # The critical check: no "unbound variable" error.
+    ! [[ "$output" == *'unbound variable'* ]]
 }
