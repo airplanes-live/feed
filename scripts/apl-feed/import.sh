@@ -126,8 +126,14 @@ apl_feed_import_legacy_config() {
     )
     local k validator
     for k in LATITUDE LONGITUDE ALTITUDE GAIN UAT_INPUT DUMP978_SDR_SERIAL DUMP978_GAIN; do
+        # Gate on key PRESENCE, not value non-emptiness. valid_uat_input,
+        # valid_dump978_serial, and valid_mlat_user accept empty as a
+        # meaningful payload (clear the key). A legacy file containing
+        # `UAT_INPUT=` should propagate that as MLAT_INPUT="" so 978-
+        # disable saves on the legacy webconfig actually clear the daemon
+        # state — a value-non-empty gate would silently drop those.
+        grep -qE "^${k}=" "$path" || continue
         v="$(_apl_feed_import_extract "$path" "$k")"
-        [[ -n "$v" ]] || continue
         validator="${_import_validators[$k]}"
         if "$validator" "$v" >/dev/null 2>&1; then
             payload[$k]="$v"
