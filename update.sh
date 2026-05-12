@@ -489,6 +489,12 @@ install -m 0644 "$GIT"/scripts/lib/state-reader.sh "$IPATH/lib"
 # with the interactive setup path. Installed at $IPATH/lib so the CLI works
 # the same on standalone-feed installs and image installs.
 install -m 0644 "$GIT"/scripts/lib/configure-validators.sh "$IPATH/lib"
+# feed-env-keys.sh and feed-env-apply.sh together back the canonical
+# privileged writer (apl-feed apply) and the schema endpoint that
+# webconfig caches at boot. Same installation shape as configure-validators
+# (pure-function, sourced from apl-feed and from configure-time helpers).
+install -m 0644 "$GIT"/scripts/lib/feed-env-keys.sh "$IPATH/lib"
+install -m 0644 "$GIT"/scripts/lib/feed-env-apply.sh "$IPATH/lib"
 
 # Historical-ship manifests for the wildcard cp/install above. Each entry is
 # a script we have ever shipped to $IPATH (top-level) or $IPATH/apl-feed/.
@@ -508,17 +514,21 @@ historical_top_level_scripts=(
     second-mlat.sh
 )
 historical_apl_feed_modules=(
+    apply.sh
     backup.sh
     claim.sh
     common.sh
     http.sh
     id.sh
     mlat.sh
+    schema.sh
     status.sh
     uat.sh
 )
 historical_daemon_libs=(
     configure-validators.sh
+    feed-env-apply.sh
+    feed-env-keys.sh
     state-reader.sh
     state-writer.sh
 )

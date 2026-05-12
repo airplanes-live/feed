@@ -37,11 +37,42 @@ if [[ -r "$APL_FEED_DAEMON_LIB_DIR/configure-validators.sh" ]]; then
     # shellcheck source=scripts/lib/configure-validators.sh
     source "$APL_FEED_DAEMON_LIB_DIR/configure-validators.sh"
 else
-    valid_latitude()     { echo "configure-validators.sh missing at $APL_FEED_DAEMON_LIB_DIR; reinstall feed" >&2; return 2; }
-    valid_longitude()    { valid_latitude "$@"; }
-    valid_altitude()     { valid_latitude "$@"; }
-    normalize_altitude() { valid_latitude "$@"; }
-    sanitize_mlat_user() { valid_latitude "$@"; }
+    valid_latitude()         { echo "configure-validators.sh missing at $APL_FEED_DAEMON_LIB_DIR; reinstall feed" >&2; return 2; }
+    valid_longitude()        { valid_latitude "$@"; }
+    valid_altitude()         { valid_latitude "$@"; }
+    normalize_altitude()     { valid_latitude "$@"; }
+    sanitize_mlat_user()     { valid_latitude "$@"; }
+    valid_mlat_user_strict() { valid_latitude "$@"; }
+    valid_bool()             { valid_latitude "$@"; }
+    valid_gain()             { valid_latitude "$@"; }
+    valid_uat_input()        { valid_latitude "$@"; }
+    valid_dump978_serial()   { valid_latitude "$@"; }
+    valid_dump978_gain()     { valid_latitude "$@"; }
+fi
+
+# Feed-env key registry + apply library. Pure data + pure functions, no
+# side effects. Sourced defensively so a missing install still produces a
+# clear error rather than crashing every CLI invocation.
+if [[ -r "$APL_FEED_DAEMON_LIB_DIR/feed-env-keys.sh" ]]; then
+    # shellcheck source=scripts/lib/feed-env-keys.sh
+    source "$APL_FEED_DAEMON_LIB_DIR/feed-env-keys.sh"
+else
+    apl_feed_is_writable_key() { return 1; }
+    apl_feed_is_readable_key() { return 1; }
+    declare -ga APL_FEED_WRITABLE_KEYS=()
+    declare -ga APL_FEED_READABLE_KEYS=()
+    declare -gA APL_FEED_KEY_TYPE=()
+    declare -gA APL_FEED_KEY_RESTART=()
+fi
+if [[ -r "$APL_FEED_DAEMON_LIB_DIR/feed-env-apply.sh" ]]; then
+    # shellcheck source=scripts/lib/feed-env-apply.sh
+    source "$APL_FEED_DAEMON_LIB_DIR/feed-env-apply.sh"
+else
+    apl_feed_apply() {
+        echo "feed-env-apply.sh missing at $APL_FEED_DAEMON_LIB_DIR; reinstall feed" >&2
+        APL_APPLY_STATUS=usage_error
+        return 5
+    }
 fi
 
 # shellcheck source=scripts/apl-feed/common.sh
@@ -60,6 +91,10 @@ source "$APL_FEED_LIB_DIR/backup.sh"
 source "$APL_FEED_LIB_DIR/mlat.sh"
 # shellcheck source=scripts/apl-feed/uat.sh
 source "$APL_FEED_LIB_DIR/uat.sh"
+# shellcheck source=scripts/apl-feed/apply.sh
+source "$APL_FEED_LIB_DIR/apply.sh"
+# shellcheck source=scripts/apl-feed/schema.sh
+source "$APL_FEED_LIB_DIR/schema.sh"
 
 main() {
     local cmd="${1:-}"
@@ -91,6 +126,14 @@ main() {
         978)
             shift
             dispatch_uat "$@"
+            ;;
+        apply)
+            shift
+            apl_feed_apply_cli "$@"
+            ;;
+        schema)
+            shift
+            apl_feed_schema_cli "$@"
             ;;
         -h|--help|'')
             usage

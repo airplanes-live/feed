@@ -30,18 +30,79 @@ sanitize_mlat_user() {
     printf '%s' "$1" | tr -c '[a-zA-Z0-9]_\- ' '_'
 }
 
+# Numeric range bounds are CLOSED, matching Go configspec.validateLatitude
+# (`f < -90 || f > 90` rejects, i.e. ±90 accepted). The previous open-range
+# check rejected a legitimate ±90 antenna at the geographic poles.
 valid_latitude() {
     [[ "$1" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] \
-        && awk -v LAT="$1" 'BEGIN { exit !(LAT < 90 && LAT > -90) }'
+        && awk -v LAT="$1" 'BEGIN { exit !(LAT <= 90 && LAT >= -90) }'
 }
 
 valid_longitude() {
     [[ "$1" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] \
-        && awk -v LON="$1" 'BEGIN { exit !(LON < 180 && LON > -180) }'
+        && awk -v LON="$1" 'BEGIN { exit !(LON <= 180 && LON >= -180) }'
 }
 
+# Altitude accepts integers and decimals, optional `m`/`ft` suffix, and is
+# numerically range-checked against [-1000, 10000] to match Go configspec.
+# The previous integer-only rule rejected legitimate decimal antenna
+# heights (e.g. `120.5m`) and skipped the range check entirely.
 valid_altitude() {
-    [[ "$1" =~ ^-?[0-9]+(ft|m)?$ ]]
+    [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?(ft|m)?$ ]] || return 1
+    local num="${BASH_REMATCH[0]}"
+    num="${num%ft}"
+    num="${num%m}"
+    awk -v ALT="$num" 'BEGIN { exit !(ALT >= -1000 && ALT <= 10000) }'
+}
+
+# Strict shape match for canonical MLAT_USER input. Mirrors Go
+# configspec.mlatUserRE. Differs from sanitize_mlat_user (which rewrites
+# disallowed bytes to `_` — used by configure.sh's whiptail loop) by
+# refusing instead of mangling. Empty string is rejected here; callers
+# that allow empty (daemon-Anonymous fallback) check that separately.
+valid_mlat_user_strict() {
+    [[ "$1" =~ ^[A-Za-z0-9_-]{1,64}$ ]]
+}
+
+valid_bool() {
+    case "$1" in
+        true|false) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# GAIN accepts auto/min/max or a finite number in [0, 60]. Mirrors Go
+# configspec.validateGain.
+valid_gain() {
+    case "$1" in
+        auto|min|max) return 0 ;;
+    esac
+    [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?$ ]] || return 1
+    awk -v G="$1" 'BEGIN { exit !(G >= 0 && G <= 60) }'
+}
+
+# UAT_INPUT v1: only "" (978 disabled) or the local dump978-fa endpoint.
+# Mirrors Go configspec.validateUATInput.
+valid_uat_input() {
+    case "$1" in
+        ''|127.0.0.1:30978) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# DUMP978_SDR_SERIAL: empty or 1-32 chars in [0-9A-Za-z_-]. Mirrors
+# Go configspec.validateDump978SdrSerial.
+valid_dump978_serial() {
+    [[ -z "$1" ]] && return 0
+    [[ "$1" =~ ^[0-9A-Za-z_-]{1,32}$ ]]
+}
+
+# DUMP978_GAIN: finite number in [0, 60]. dump978-fa rejects readsb's
+# `auto`/`min`/`max` so we reject them here too. Mirrors Go
+# configspec.validateDump978Gain.
+valid_dump978_gain() {
+    [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?$ ]] || return 1
+    awk -v G="$1" 'BEGIN { exit !(G >= 0 && G <= 60) }'
 }
 
 normalize_altitude() {

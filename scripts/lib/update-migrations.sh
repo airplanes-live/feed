@@ -376,12 +376,28 @@ migrate_geo_to_configured_flag() {
 
 run_config_file_migrations() {
     local feed_env="$1"
+    # Take the same /run/airplanes/feed-env.lock the privileged writer
+    # (apl-feed apply) uses so a webconfig save racing an update.sh
+    # invocation cannot interleave their respective feed.env writes.
+    # Build mode skips: /run/airplanes/ doesn't exist in a chroot rootfs.
+    local _feed_lock_fd=""
+    if ! airplanes_is_build_mode 2>/dev/null && command -v flock >/dev/null 2>&1; then
+        mkdir -p /run/airplanes 2>/dev/null || true
+        if exec {_feed_lock_fd}>/run/airplanes/feed-env.lock 2>/dev/null; then
+            flock -w 30 "$_feed_lock_fd" || _feed_lock_fd=""
+        else
+            _feed_lock_fd=""
+        fi
+    fi
     migrate_net_options_beast_reduce_plus "$feed_env"
     migrate_target_fallback_host "$feed_env"
     migrate_strip_uuid_file_arg "$feed_env"
     migrate_user_to_mlat_split "$feed_env"
     migrate_privacy_to_mlat_private "$feed_env"
     migrate_geo_to_configured_flag "$feed_env"
+    if [[ -n "$_feed_lock_fd" ]]; then
+        eval "exec ${_feed_lock_fd}>&-"
+    fi
 }
 
 # ---------------------------------------------------------------------------
