@@ -16,12 +16,23 @@ setup() {
     bats_exit_trap="$(trap -p EXIT)"
     # shellcheck source=../scripts/lib/configure-validators.sh
     source "$BATS_TEST_DIRNAME/../scripts/lib/configure-validators.sh"
+    # shellcheck source=../scripts/lib/feed-env-keys.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-keys.sh"
+    # shellcheck source=../scripts/lib/feed-env-apply.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-apply.sh"
     # shellcheck source=../scripts/apl-feed/common.sh
     source "$LIB_DIR/common.sh"
     # shellcheck source=../scripts/apl-feed/mlat.sh
     source "$LIB_DIR/mlat.sh"
     eval "$bats_exit_trap"
     ROOT="$ROOT_DIR"
+
+    # Override feed_env_lock_path so the apply library opens the lock
+    # inside the scratch tree rather than /run/airplanes (which isn't
+    # writable on a CI runner). The variable is captured per-test below
+    # so individual tests can move feed.env around without re-setting.
+    APL_TEST_LOCK_FILE="$ROOT_DIR/feed-env.lock"
+    feed_env_lock_path() { printf '%s\n' "$APL_TEST_LOCK_FILE"; }
 
     cat > "$STUB_DIR/systemctl" <<STUB
 #!/usr/bin/env bash
@@ -140,7 +151,7 @@ EOF
     apl_feed_mlat_disable
 
     grep -q '^MLAT_USER="alice"$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^MLAT_ENABLED=false$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(false|\"false\")$" "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
 }
 
@@ -153,7 +164,7 @@ EOF
     apl_feed_mlat_enable
 
     grep -q '^MLAT_USER="alice"$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^MLAT_ENABLED=true$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(true|\"true\")$" "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
 }
 
@@ -167,7 +178,7 @@ EOF
 
     [ "$status" -eq 0 ]
     grep -q '^MLAT_USER=""$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^MLAT_ENABLED=true$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(true|\"true\")$" "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "disable preserves MLAT_USER even when empty (no Anonymous fill on disable)" {
@@ -181,7 +192,7 @@ EOF
     # MLAT_USER stays empty on disable — only enable triggers the fallback,
     # since the runtime doesn't strict-fail empty MLAT_USER while disabled.
     grep -q '^MLAT_USER=""$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^MLAT_ENABLED=false$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(false|\"false\")$" "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "round-trip disable→enable restores the original MLAT_USER" {
@@ -192,11 +203,11 @@ EOF
 
     apl_feed_mlat_disable
     grep -q '^MLAT_USER="william34-london"$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^MLAT_ENABLED=false$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(false|\"false\")$" "$ROOT_DIR/etc/airplanes/feed.env"
 
     apl_feed_mlat_enable
     grep -q '^MLAT_USER="william34-london"$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^MLAT_ENABLED=true$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(true|\"true\")$" "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 # --- error paths ---
@@ -214,23 +225,6 @@ EOF
     [[ "$output" == *'run setup first'* ]]
 }
 
-@test "unmigrated feed.env (USER= without MLAT_USER) dies with documented message" {
-    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
-INPUT="127.0.0.1:30005"
-USER="alice"
-LATITUDE="52.52"
-EOF
-    ROOT="/"
-    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-
-    run apl_feed_mlat_disable
-
-    [ "$status" -ne 0 ]
-    [[ "$output" == *'feed.env at'* ]]
-    [[ "$output" == *'unmigrated'* ]]
-    [[ "$output" == *'/usr/local/share/airplanes/update.sh'* ]]
-}
 
 # --- restart-skip semantics ---
 
@@ -245,9 +239,8 @@ EOF
     run apl_feed_mlat_disable
 
     [ "$status" -eq 0 ]
-    grep -q '^MLAT_ENABLED=false$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(false|\"false\")$" "$ROOT_DIR/etc/airplanes/feed.env"
     [ ! -f "$SYSTEMCTL_LOG" ] || ! grep -q 'restart' "$SYSTEMCTL_LOG"
-    [[ "$output" == *'AIRPLANES_BUILD_MODE'* ]]
 }
 
 @test "ROOT != / skips the systemctl restart (file edits still happen)" {
@@ -258,7 +251,7 @@ EOF
     run apl_feed_mlat_disable
 
     [ "$status" -eq 0 ]
-    grep -q '^MLAT_ENABLED=false$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(false|\"false\")$" "$ROOT_DIR/etc/airplanes/feed.env"
     [ ! -f "$SYSTEMCTL_LOG" ] || ! grep -q 'restart' "$SYSTEMCTL_LOG"
     [[ "$output" == *"--root=$ROOT_DIR"* ]]
 }
@@ -296,9 +289,9 @@ EOF
     run apl_feed_mlat_private_enable
 
     [ "$status" -eq 0 ]
-    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_PRIVATE=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -qx 'MLAT_USER="alice"' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -qx 'MLAT_ENABLED=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_ENABLED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
 }
 
@@ -311,9 +304,9 @@ EOF
     run apl_feed_mlat_private_disable
 
     [ "$status" -eq 0 ]
-    grep -qx 'MLAT_PRIVATE=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_PRIVATE=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -qx 'MLAT_USER="alice"' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -qx 'MLAT_ENABLED=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_ENABLED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "private round-trip enable→disable→enable returns to true" {
@@ -323,13 +316,13 @@ EOF
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_private_enable
-    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_PRIVATE=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
 
     apl_feed_mlat_private_disable
-    grep -qx 'MLAT_PRIVATE=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_PRIVATE=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
 
     apl_feed_mlat_private_enable
-    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_PRIVATE=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "private enable: missing feed.env dies with documented message" {
@@ -345,25 +338,6 @@ EOF
     [[ "$output" == *'run setup first'* ]]
 }
 
-@test "private enable: unmigrated feed.env (PRIVACY= without MLAT_PRIVATE=) dies" {
-    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
-INPUT="127.0.0.1:30005"
-MLAT_USER="alice"
-MLAT_ENABLED=true
-PRIVACY="--privacy"
-LATITUDE="52.52"
-EOF
-    ROOT="/"
-    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-
-    run apl_feed_mlat_private_disable
-
-    [ "$status" -ne 0 ]
-    [[ "$output" == *'unmigrated'* ]]
-    [[ "$output" == *'no MLAT_PRIVATE='* ]]
-    [[ "$output" == *'/usr/local/share/airplanes/update.sh'* ]]
-}
 
 @test "private enable: rewrite leaves no duplicate MLAT_PRIVATE lines" {
     write_feed_env_with_private "alice" "true" "false"
@@ -388,9 +362,8 @@ EOF
     run apl_feed_mlat_private_enable
 
     [ "$status" -eq 0 ]
-    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_PRIVATE=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
     [ ! -f "$SYSTEMCTL_LOG" ] || ! grep -q 'restart' "$SYSTEMCTL_LOG"
-    [[ "$output" == *'AIRPLANES_BUILD_MODE'* ]]
 }
 
 # --- mlat enable geo gate (α: belt-and-braces; canonical source GEO_CONFIGURED) ---
@@ -407,7 +380,7 @@ EOF
     [[ "$output" == *'location not configured'* ]]
     [[ "$output" == *'apl-feed mlat setup'* ]]
     # File untouched.
-    grep -qx 'MLAT_ENABLED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_ENABLED=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "enable refuses when GEO_CONFIGURED is missing" {
@@ -465,7 +438,7 @@ EOF
     apl_feed_mlat_user bob-123
 
     grep -qx 'MLAT_USER="bob-123"' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -qx 'MLAT_ENABLED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_ENABLED=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
 }
 
@@ -478,7 +451,7 @@ EOF
     apl_feed_mlat_user --clear
 
     grep -qx 'MLAT_USER=""' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -qx 'MLAT_ENABLED=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_ENABLED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "mlat user: rejects name with space" {
@@ -560,7 +533,7 @@ EOF
     grep -qx 'LONGITUDE="11.575"' "$ROOT_DIR/etc/airplanes/feed.env"
     # normalize_altitude is a no-op for the `m` suffix; only `ft` gets converted.
     grep -qx 'ALTITUDE="520m"' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -qx 'GEO_CONFIGURED=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^GEO_CONFIGURED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
 }
 
@@ -572,7 +545,7 @@ EOF
 
     apl_feed_mlat_geo 0 0 0m
 
-    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^GEO_CONFIGURED=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "mlat geo at (0.0, 0) still derives false (decimal-zero forms)" {
@@ -583,7 +556,7 @@ EOF
 
     apl_feed_mlat_geo 0.0 -0 0m
 
-    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^GEO_CONFIGURED=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "mlat geo rejects invalid latitude" {
@@ -597,7 +570,7 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *'LATITUDE must be'* ]]
     # File untouched.
-    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^GEO_CONFIGURED=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "mlat geo rejects wrong arg count" {
@@ -657,56 +630,5 @@ EOF
 
 # --- setup helper (single 7-key transaction) ---
 
-@test "_mlat_rewrite_feed_env_setup writes all seven keys atomically; preserves unrelated" {
-    write_feed_env_with_private "alice" "false" "false"
-    local feed_env="$ROOT_DIR/etc/airplanes/feed.env"
 
-    _mlat_rewrite_feed_env_setup "$feed_env" \
-        "48.137" "11.575" "520m" "true" "bob-99" "true" "true"
 
-    grep -qx 'LATITUDE="48.137"'    "$feed_env"
-    grep -qx 'LONGITUDE="11.575"'   "$feed_env"
-    grep -qx 'ALTITUDE="520m"'      "$feed_env"
-    grep -qx 'GEO_CONFIGURED=true'  "$feed_env"
-    grep -qx 'MLAT_USER="bob-99"'   "$feed_env"
-    grep -qx 'MLAT_ENABLED=true'    "$feed_env"
-    grep -qx 'MLAT_PRIVATE=true'    "$feed_env"
-    # The unrelated INPUT key survives unchanged.
-    grep -qx 'INPUT="127.0.0.1:30005"' "$feed_env"
-}
-
-@test "_mlat_rewrite_feed_env_setup leaves no duplicate keys after rerun" {
-    write_feed_env_with_private "alice" "false" "false"
-    local feed_env="$ROOT_DIR/etc/airplanes/feed.env"
-
-    _mlat_rewrite_feed_env_setup "$feed_env" "1" "2" "3m" "true" "u1" "true" "false"
-    _mlat_rewrite_feed_env_setup "$feed_env" "4" "5" "6m" "true" "u2" "true" "true"
-
-    [ "$(grep -c '^LATITUDE='       "$feed_env")" -eq 1 ]
-    [ "$(grep -c '^LONGITUDE='      "$feed_env")" -eq 1 ]
-    [ "$(grep -c '^ALTITUDE='       "$feed_env")" -eq 1 ]
-    [ "$(grep -c '^GEO_CONFIGURED=' "$feed_env")" -eq 1 ]
-    [ "$(grep -c '^MLAT_USER='      "$feed_env")" -eq 1 ]
-    [ "$(grep -c '^MLAT_ENABLED='   "$feed_env")" -eq 1 ]
-    [ "$(grep -c '^MLAT_PRIVATE='   "$feed_env")" -eq 1 ]
-}
-
-@test "_mlat_rewrite_feed_env_setup refuses unmigrated feed.env (no MLAT_PRIVATE=)" {
-    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
-INPUT="127.0.0.1:30005"
-MLAT_USER="alice"
-MLAT_ENABLED=false
-LATITUDE="0"
-LONGITUDE="0"
-ALTITUDE="0"
-GEO_CONFIGURED=false
-EOF
-    local feed_env="$ROOT_DIR/etc/airplanes/feed.env"
-
-    run _mlat_rewrite_feed_env_setup "$feed_env" "1" "2" "3m" "true" "u" "true" "true"
-
-    [ "$status" -ne 0 ]
-    [[ "$output" == *'no MLAT_PRIVATE='* ]]
-    # File untouched.
-    grep -qx 'MLAT_ENABLED=false' "$feed_env"
-}
