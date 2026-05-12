@@ -993,6 +993,12 @@ case "$phase" in
         assert_service_healthy airplanes-feed.service
         assert_service_healthy airplanes-mlat.service
 
+        if [[ -f /opt/airplanes-boot-smoke/extra-probe.sh ]]; then
+            echo "airplanes image boot smoke: extra-probe phase"
+            # shellcheck source=/dev/null
+            source /opt/airplanes-boot-smoke/extra-probe.sh
+        fi
+
         printf '%s\n' success > "$STATE_DIR/result"
         sync
         systemctl poweroff
@@ -1023,6 +1029,17 @@ UNIT
         "$ROOT_MNT/etc/systemd/system/default.target.wants/airplanes-boot-smoke.service"
     ln -sfn ../airplanes-boot-smoke.service \
         "$ROOT_MNT/etc/systemd/system/multi-user.target.wants/airplanes-boot-smoke.service"
+
+    # Extension hook for image-side callers (airplanes-live/image): drop extra
+    # rootfs/boot fixtures (authorized_keys, airplanes-config.txt, an
+    # /opt/airplanes-boot-smoke/extra-probe.sh sourced post-reboot) without
+    # forking this script.
+    if [[ -n "${AIRPLANES_BOOT_SMOKE_EXTRA_SETUP:-}" ]]; then
+        [[ -x "$AIRPLANES_BOOT_SMOKE_EXTRA_SETUP" ]] \
+            || fail "AIRPLANES_BOOT_SMOKE_EXTRA_SETUP not executable: $AIRPLANES_BOOT_SMOKE_EXTRA_SETUP"
+        ROOT_MNT="$ROOT_MNT" BOOT_MNT="$BOOT_MNT" IMAGE_CONTRACT="$IMAGE_CONTRACT" \
+            "$AIRPLANES_BOOT_SMOKE_EXTRA_SETUP"
+    fi
 }
 
 qemu_command() {
