@@ -72,8 +72,12 @@ apl_feed_import_legacy_config() {
                 ;;
             --)
                 shift
-                [[ -n "$1" ]] && path="$1"
-                shift || true
+                if [[ -n "${1:-}" ]]; then
+                    [[ -z "$path" ]] || die "import legacy-config takes exactly one path"
+                    path="$1"
+                    shift
+                fi
+                break
                 ;;
             -*) die "unknown flag for import legacy-config: $1" ;;
             *)
@@ -195,18 +199,28 @@ apl_feed_import_legacy_config() {
     feed_env_file="$(root_path '/etc/airplanes/feed.env')"
     lock_file="$(feed_env_lock_path)"
 
-    # apl_feed_apply rejects on missing feed.env. The legacy boot path
-    # may be invoked before any feed.env exists at all (e.g. on the
-    # first reboot after a bridge update) — pre-create an empty file so
-    # the library has somewhere to merge into.
-    if [[ ! -f "$feed_env_file" ]]; then
-        mkdir -p "$(dirname "$feed_env_file")"
-        : > "$feed_env_file"
-    fi
-
+    # No recognised keys in the source: nothing to write. Return BEFORE
+    # creating any file on disk — leaving an empty canonical feed.env
+    # behind would defeat the bridged-legacy fallback in feed_env_path()
+    # (status readers would see empty canonical state instead of falling
+    # back to the still-populated /boot/airplanes-config.txt).
     if (( ${#payload[@]} == 0 )); then
         echo "import legacy-config: no recognised keys in $path"
         return 0
+    fi
+
+    # apl_feed_apply rejects on missing feed.env. The legacy boot path
+    # may be invoked before any feed.env exists at all (e.g. on the
+    # first reboot after a bridge update) — pre-create an empty file so
+    # the library has somewhere to merge into. Track whether we created
+    # it so a rejected/filesystem_error apply can remove it instead of
+    # leaving an empty file behind that would suppress the legacy
+    # fallback for status readers.
+    local pre_created=0
+    if [[ ! -f "$feed_env_file" ]]; then
+        mkdir -p "$(dirname "$feed_env_file")"
+        : > "$feed_env_file"
+        pre_created=1
     fi
 
     local -a args=()
@@ -228,6 +242,18 @@ apl_feed_import_legacy_config() {
     IMPORT_APPLY_RC=0
     apl_feed_apply "${args[@]}" || IMPORT_APPLY_RC=$?
 
+    # Clean up a pre-created empty feed.env on any non-success path so the
+    # legacy fallback in feed_env_path() stays available. Only safe when
+    # we created it AND it is still empty — a concurrent writer that
+    # populated the file (under the apply lock) must not lose their
+    # write here.
+    local _import_cleanup_pre_created=0
+    if (( pre_created )) \
+        && [[ "$APL_APPLY_STATUS" != "applied" && "$APL_APPLY_STATUS" != "no_change" ]] \
+        && [[ -f "$feed_env_file" && ! -s "$feed_env_file" ]]; then
+        _import_cleanup_pre_created=1
+    fi
+
     case "$APL_APPLY_STATUS" in
         applied)
             echo "import legacy-config: applied ${#APL_APPLY_CHANGED[@]} key(s)"
@@ -242,10 +268,12 @@ apl_feed_import_legacy_config() {
             for rk in "${!APL_APPLY_ERRORS[@]}"; do
                 echo "import legacy-config: $rk: ${APL_APPLY_ERRORS[$rk]}" >&2
             done
+            (( _import_cleanup_pre_created )) && rm -f "$feed_env_file"
             return 1
             ;;
         *)
             echo "import legacy-config: apply ${APL_APPLY_STATUS:-failed}: ${APL_APPLY_ERROR_MESSAGE:-}" >&2
+            (( _import_cleanup_pre_created )) && rm -f "$feed_env_file"
             return 1
             ;;
     esac
