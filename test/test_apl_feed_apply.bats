@@ -112,3 +112,77 @@ run_apply() {
     # runner's stubbed systemctl is never called.
     [ ! -s "$SYSTEMCTL_LOG" ]
 }
+
+# ---------------------------------------------------------------------------
+# feed.meta.json sidecar via the JSON adapter (DEV-380)
+# ---------------------------------------------------------------------------
+
+# Default sidecar path under --root.
+META_FILE_FOR_ROOT() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.meta.json"; }
+
+@test "apply with object-form metadata writes feed.meta.json" {
+    PAYLOAD='{"updates":{"MLAT_USER":{"value":"bob","edited_at":"2026-05-12T10:00:00Z","edited_by":"website"}}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 0 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "applied" ]
+    META="$(META_FILE_FOR_ROOT)"
+    [ -f "$META" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_at' "$META")" = "2026-05-12T10:00:00Z" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$META")" = "website" ]
+}
+
+@test "apply with mixed bare/object updates forwards metadata for the object form only" {
+    PAYLOAD='{"updates":{"MLAT_USER":{"value":"carol","edited_at":"2026-05-12T10:00:00Z","edited_by":"website"},"MLAT_PRIVATE":"true"}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 0 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "applied" ]
+    META="$(META_FILE_FOR_ROOT)"
+    # Object form → caller's tuple.
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$META")" = "website" ]
+    # Bare-string change → default feeder stamp.
+    [ "$(jq -r '.fields.MLAT_PRIVATE.edited_by' "$META")" = "feeder" ]
+}
+
+@test "apply rejects object form for non-tracked key with parse_error" {
+    PAYLOAD='{"updates":{"GAIN":{"value":"42.5","edited_at":"2026-05-12T10:00:00Z","edited_by":"website"}}}'
+    run_apply "$PAYLOAD" --no-restart
+    # Adapter shape is valid (GAIN is a string-value-or-object key on the
+    # wire); library rejects because GAIN is not in the tracked set.
+    [ "$APPLY_RC" -eq 2 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "rejected" ]
+    [ "$(jq -r '.errors.GAIN' <<<"$APPLY_OUT")" != "null" ]
+}
+
+@test "apply rejects object missing .value with parse_error" {
+    PAYLOAD='{"updates":{"MLAT_USER":{"edited_at":"2026-05-12T10:00:00Z","edited_by":"website"}}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+}
+
+@test "apply rejects object missing .edited_at with parse_error" {
+    PAYLOAD='{"updates":{"MLAT_USER":{"value":"bob","edited_by":"website"}}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+}
+
+@test "apply rejects edited_by not in {feeder,website,legacy}" {
+    PAYLOAD='{"updates":{"MLAT_USER":{"value":"bob","edited_at":"2026-05-12T10:00:00Z","edited_by":"unknown"}}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+}
+
+@test "apply rejects edited_at not matching RFC 3339" {
+    PAYLOAD='{"updates":{"MLAT_USER":{"value":"bob","edited_at":"yesterday","edited_by":"website"}}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+}
+
+@test "malformed JSON returns structured parse_error (no bash abort)" {
+    run_apply '{"updates":{"MLAT_USER":' --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+}

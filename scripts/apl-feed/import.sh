@@ -310,6 +310,7 @@ apl_feed_import_legacy_config() {
     case "$APL_APPLY_STATUS" in
         applied)
             echo "import legacy-config: applied ${#APL_APPLY_CHANGED[@]} key(s)"
+            apl_feed_apply_emit_meta_warning
             return 0
             ;;
         no_change)
