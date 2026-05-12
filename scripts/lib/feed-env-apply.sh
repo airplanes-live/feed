@@ -413,9 +413,16 @@ _apl_feed_apply_reset_state() {
 # Public entry. See header comment for the contract.
 #
 # Usage:
-#   apl_feed_apply [--no-restart] [--lock-timeout SECS]
+#   apl_feed_apply [--no-restart] [--create-if-missing]
+#                  [--lock-timeout SECS]
 #                  [--feed-env PATH] [--lock-file PATH]
 #                  KEY=value [KEY=value ...]
+#
+# --create-if-missing: create feed.env inside the apply lock when it
+# doesn't yet exist. Without this flag, a missing file returns
+# filesystem_error. Used by apl_feed_import_legacy_config to make the
+# bootstrap atomic (no read-then-create race between two concurrent
+# writers).
 apl_feed_apply() {
     _apl_feed_apply_reset_state
 
@@ -423,6 +430,7 @@ apl_feed_apply() {
     local lock_path="$APL_FEED_APPLY_LOCK_DEFAULT"
     local lock_timeout="$APL_FEED_APPLY_LOCK_TIMEOUT_DEFAULT"
     local skip_restart=0
+    local create_if_missing=0
     local explicit_geo_in_payload=0
     local touched_lat=0 touched_lon=0
     local -A payload=()
@@ -433,6 +441,10 @@ apl_feed_apply() {
         case "$1" in
             --no-restart)
                 skip_restart=1
+                shift
+                ;;
+            --create-if-missing)
+                create_if_missing=1
                 shift
                 ;;
             --lock-timeout)
@@ -548,11 +560,27 @@ apl_feed_apply() {
     # config from a single-key POST — that would silently produce a
     # half-formed file. Matches Go apply-config's behavior of treating
     # a missing file as an internal error.
+    #
+    # The --create-if-missing flag opens a narrow exception for callers
+    # that legitimately produce a fresh feed.env in a single locked
+    # transaction (apl_feed_import_legacy_config). Creation happens HERE,
+    # under the lock, so a concurrent writer that checks file existence
+    # cannot see a half-formed canonical file as the bootstrap signal.
     if [[ ! -f "$feed_env" ]]; then
-        APL_APPLY_STATUS=filesystem_error
-        APL_APPLY_ERROR_MESSAGE="feed.env not found at $feed_env; run setup first"
-        [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
-        return 3
+        if (( create_if_missing )); then
+            mkdir -p "$(dirname "$feed_env")" 2>/dev/null || true
+            if ! : > "$feed_env" 2>/dev/null; then
+                APL_APPLY_STATUS=filesystem_error
+                APL_APPLY_ERROR_MESSAGE="cannot create feed.env at $feed_env"
+                [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
+                return 3
+            fi
+        else
+            APL_APPLY_STATUS=filesystem_error
+            APL_APPLY_ERROR_MESSAGE="feed.env not found at $feed_env; run setup first"
+            [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
+            return 3
+        fi
     fi
 
     # Read current feed.env into merged, then overlay payload.

@@ -232,32 +232,22 @@ apl_feed_import_legacy_config() {
     lock_file="$(feed_env_lock_path)"
 
     # No recognised keys in the source: nothing to write. Return BEFORE
-    # creating any file on disk — leaving an empty canonical feed.env
-    # behind would defeat the bridged-legacy fallback in feed_env_path()
-    # (status readers would see empty canonical state instead of falling
-    # back to the still-populated /boot/airplanes-config.txt).
+    # invoking apply so we don't create a canonical feed.env via
+    # --create-if-missing for no useful reason. The legacy fallback in
+    # feed_env_path() stays available for status readers.
     if (( ${#payload[@]} == 0 )); then
         echo "import legacy-config: no recognised keys in $path"
         return 0
     fi
 
-    # apl_feed_apply rejects on missing feed.env. The legacy boot path
-    # may be invoked before any feed.env exists at all (e.g. on the
-    # first reboot after a bridge update) — pre-create an empty file so
-    # the library has somewhere to merge into. Track whether we created
-    # it so a rejected/filesystem_error apply can remove it instead of
-    # leaving an empty file behind that would suppress the legacy
-    # fallback for status readers.
-    local pre_created=0
-    if [[ ! -f "$feed_env_file" ]]; then
-        mkdir -p "$(dirname "$feed_env_file")"
-        : > "$feed_env_file"
-        pre_created=1
-    fi
-
+    # --create-if-missing makes the bootstrap atomic. The library creates
+    # the file inside its own lock before reading, so there is no
+    # check-then-create race with a concurrent writer. On rejection /
+    # filesystem_error the library never writes, so no empty canonical
+    # file is left behind — no import-side cleanup needed.
     local -a args=()
-    args+=(--feed-env "$feed_env_file" --lock-file "$lock_file")
-    # Skip restarts in three cases: explicit --no-restart from the caller
+    args+=(--feed-env "$feed_env_file" --lock-file "$lock_file" --create-if-missing)
+    # Skip restarts in two cases: explicit --no-restart from the caller
     # (airplanes-first-run passes this so the same script doesn't try to
     # restart units that have After=airplanes-first-run.service), or when
     # ROOT != "/" (build-mode / tests).
@@ -274,18 +264,6 @@ apl_feed_import_legacy_config() {
     IMPORT_APPLY_RC=0
     apl_feed_apply "${args[@]}" || IMPORT_APPLY_RC=$?
 
-    # Clean up a pre-created empty feed.env on any non-success path so the
-    # legacy fallback in feed_env_path() stays available. Only safe when
-    # we created it AND it is still empty — a concurrent writer that
-    # populated the file (under the apply lock) must not lose their
-    # write here.
-    local _import_cleanup_pre_created=0
-    if (( pre_created )) \
-        && [[ "$APL_APPLY_STATUS" != "applied" && "$APL_APPLY_STATUS" != "no_change" ]] \
-        && [[ -f "$feed_env_file" && ! -s "$feed_env_file" ]]; then
-        _import_cleanup_pre_created=1
-    fi
-
     case "$APL_APPLY_STATUS" in
         applied)
             echo "import legacy-config: applied ${#APL_APPLY_CHANGED[@]} key(s)"
@@ -300,12 +278,10 @@ apl_feed_import_legacy_config() {
             for rk in "${!APL_APPLY_ERRORS[@]}"; do
                 echo "import legacy-config: $rk: ${APL_APPLY_ERRORS[$rk]}" >&2
             done
-            (( _import_cleanup_pre_created )) && rm -f "$feed_env_file"
             return 1
             ;;
         *)
             echo "import legacy-config: apply ${APL_APPLY_STATUS:-failed}: ${APL_APPLY_ERROR_MESSAGE:-}" >&2
-            (( _import_cleanup_pre_created )) && rm -f "$feed_env_file"
             return 1
             ;;
     esac
