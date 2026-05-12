@@ -109,13 +109,19 @@ write_feed_env() {
     # Hold /run/airplanes/feed-env.lock for the write window so a
     # concurrent apl-feed apply (privileged writer in webconfig and the
     # CLI) cannot land an update between the two `tee` blocks below.
-    # Build mode skips the lock — /run/airplanes/ doesn't exist in a
-    # chroot rootfs.
+    # Build mode and missing-/run rootfs skip the lock; acquired but
+    # timed-out is a hard failure to prevent silent interleaving.
     local _feed_lock_fd=""
-    if ! airplanes_is_build_mode 2>/dev/null && command -v flock >/dev/null 2>&1; then
+    if ! airplanes_is_build_mode 2>/dev/null \
+        && command -v flock >/dev/null 2>&1 \
+        && [[ -d /run ]]; then
         mkdir -p /run/airplanes 2>/dev/null || true
         if exec {_feed_lock_fd}>/run/airplanes/feed-env.lock 2>/dev/null; then
-            flock -w 30 "$_feed_lock_fd" || _feed_lock_fd=""
+            if ! flock -w 30 "$_feed_lock_fd"; then
+                eval "exec ${_feed_lock_fd}>&-"
+                echo "configure: could not acquire /run/airplanes/feed-env.lock after 30s" >&2
+                exit 1
+            fi
         else
             _feed_lock_fd=""
         fi

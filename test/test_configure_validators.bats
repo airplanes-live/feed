@@ -27,12 +27,15 @@ setup() {
 }
 
 @test "valid_latitude rejects out-of-range" {
-    ! valid_latitude 90
-    ! valid_latitude 90.0
-    ! valid_latitude -90
-    ! valid_latitude 91
-    ! valid_latitude -91
-    ! valid_latitude 100
+    # Closed-range boundary lives in its own test; this one covers
+    # strictly-out-of-range values. `! cmd` is a tested context — bash
+    # suppresses `set -e` inside, so always assert exit code via run/$?
+    # to actually catch a regression where valid_latitude accepts a
+    # value it shouldn't.
+    run valid_latitude 91; [ "$status" -ne 0 ]
+    run valid_latitude -91; [ "$status" -ne 0 ]
+    run valid_latitude 100; [ "$status" -ne 0 ]
+    run valid_latitude -100; [ "$status" -ne 0 ]
 }
 
 @test "valid_latitude rejects non-numeric" {
@@ -52,10 +55,9 @@ setup() {
 }
 
 @test "valid_longitude rejects out-of-range" {
-    ! valid_longitude 180
-    ! valid_longitude -180
-    ! valid_longitude 181
-    ! valid_longitude -181
+    run valid_longitude 181; [ "$status" -ne 0 ]
+    run valid_longitude -181; [ "$status" -ne 0 ]
+    run valid_longitude 360; [ "$status" -ne 0 ]
 }
 
 @test "valid_longitude rejects non-numeric" {
