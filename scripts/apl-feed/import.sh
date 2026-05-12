@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# `apl-feed import legacy-config <PATH>` — translate a legacy
+# `apl-feed import legacy-config [--no-restart] <PATH>` — translate a legacy
 # /boot/airplanes-config.txt-shaped file into the canonical feed.env
-# schema and write it via apl_feed_apply.
+# schema and write it via apl_feed_apply. Always targets the canonical
+# /etc/airplanes/feed.env path on the host (never the source path),
+# so a bridged-legacy box ends up with a real feed.env the new daemons
+# can source.
 #
 # Used by `airplanes-first-run` on the legacy-bridge image stack so a
 # legacy webconfig save (which still writes to /boot/airplanes-config.txt)
@@ -9,6 +12,13 @@
 # new image. Legacy-key parsing lives here so feed/ remains the sole
 # owner of the feed.env schema; airplanes-first-run becomes a thin shim
 # that detects the boot file and shells in.
+#
+# `--no-restart` suppresses the post-write service restart. airplanes-
+# first-run passes this because the legacy services have
+# `After=airplanes-first-run.service`; restarting them from inside first-
+# run would either race (Type=simple) or deadlock (Type=oneshot). The
+# caller (the webconfig save path, or systemd at boot) restarts on its
+# own schedule.
 #
 # Legacy → canonical mapping:
 #   LATITUDE / LONGITUDE / ALTITUDE          preserved as-is
@@ -52,9 +62,14 @@ _apl_feed_import_extract() {
 
 apl_feed_import_legacy_config() {
     local path=""
+    local no_restart=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) usage; return 0 ;;
+            --no-restart)
+                no_restart=1
+                shift
+                ;;
             --)
                 shift
                 [[ -n "$1" ]] && path="$1"
@@ -170,8 +185,14 @@ apl_feed_import_legacy_config() {
         esac
     fi
 
+    # Import always writes to the canonical /etc/airplanes/feed.env, never
+    # via the feed_env_path() reader fallback. That fallback is for status
+    # readers on bridged-legacy boxes (airplanes-feeder binary present, no
+    # feed.env yet) and resolves to /boot/airplanes-config.txt — which for
+    # this writer would mean translating the source file into itself,
+    # never creating the canonical feed.env the new daemons consume.
     local feed_env_file lock_file
-    feed_env_file="$(feed_env_path)"
+    feed_env_file="$(root_path '/etc/airplanes/feed.env')"
     lock_file="$(feed_env_lock_path)"
 
     # apl_feed_apply rejects on missing feed.env. The legacy boot path
@@ -190,9 +211,15 @@ apl_feed_import_legacy_config() {
 
     local -a args=()
     args+=(--feed-env "$feed_env_file" --lock-file "$lock_file")
-    if [[ "$ROOT" != "/" ]]; then
+    # Skip restarts in three cases: explicit --no-restart from the caller
+    # (airplanes-first-run passes this so the same script doesn't try to
+    # restart units that have After=airplanes-first-run.service), or when
+    # ROOT != "/" (build-mode / tests).
+    if (( no_restart )) || [[ "$ROOT" != "/" ]]; then
         args+=(--no-restart)
-        echo "Skipping service restart (--root=$ROOT, not the host root)" >&2
+        if [[ "$ROOT" != "/" ]]; then
+            echo "Skipping service restart (--root=$ROOT, not the host root)" >&2
+        fi
     fi
     for k in "${!payload[@]}"; do
         args+=("$k=${payload[$k]}")
