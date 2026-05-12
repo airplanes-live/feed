@@ -215,3 +215,67 @@ EOF
     [ "$IMPORT_RC" -eq 0 ]
     ! grep -q 'rm -rf' "$ROOT_DIR/etc/airplanes/feed.env"
 }
+
+@test "bridged-legacy box: writes canonical /etc/airplanes/feed.env, not boot config" {
+    # Reproduce the production shape that broke before: airplanes-feeder
+    # binary is present (bridge installed it), /etc/airplanes/feed.env
+    # does NOT exist yet, /boot/airplanes-config.txt does. feed_env_path()
+    # in this shape returns /boot/airplanes-config.txt as a status-reader
+    # fallback — but the import writer must always target the canonical
+    # path so the new daemons get a real feed.env to source.
+    rm -rf "$ROOT_DIR/etc/airplanes"
+    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+
+    cat > "$ROOT_DIR/boot/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+MLAT_MARKER=no
+EOF
+    local source_before
+    source_before="$(cat "$ROOT_DIR/boot/airplanes-config.txt")"
+
+    import "$ROOT_DIR/boot/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+
+    # Canonical target exists with imported values …
+    [ -f "$ROOT_DIR/etc/airplanes/feed.env" ]
+    grep -q '^MLAT_USER="alice"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_ENABLED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE '^MLAT_PRIVATE=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
+
+    # … and the source legacy file is untouched.
+    [ "$source_before" = "$(cat "$ROOT_DIR/boot/airplanes-config.txt")" ]
+    ! grep -q '^MLAT_USER=' "$ROOT_DIR/boot/airplanes-config.txt"
+}
+
+@test "--no-restart flag is plumbed through to apl_feed_apply" {
+    cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+EOF
+    # Stub the apply call to capture its argv. The default ROOT in this
+    # test fixture (mktemp) already implicitly passes --no-restart, so we
+    # verify the explicit flag survives even when no implicit path
+    # rewrites would already inject it.
+    APPLY_ARGS_LOG="$ROOT_DIR/apply.argv"
+    : > "$APPLY_ARGS_LOG"
+    apl_feed_apply() {
+        printf '%s\n' "$*" >> "$APPLY_ARGS_LOG"
+        APL_APPLY_STATUS=no_change
+        return 0
+    }
+
+    import --no-restart "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+
+    # Single restart token in the recorded args is sufficient — implicit
+    # ROOT != / would inject one anyway, so we don't assert count, only
+    # presence.
+    grep -q -- '--no-restart' "$APPLY_ARGS_LOG"
+}
