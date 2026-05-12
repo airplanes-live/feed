@@ -540,7 +540,7 @@ apl_feed_apply() {
     # a missing file as an internal error.
     if [[ ! -f "$feed_env" ]]; then
         APL_APPLY_STATUS=filesystem_error
-        APL_APPLY_ERROR_MESSAGE="feed.env not found at $feed_env"
+        APL_APPLY_ERROR_MESSAGE="feed.env not found at $feed_env; run setup first"
         [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
         return 3
     fi
@@ -622,18 +622,6 @@ apl_feed_apply() {
     [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
 
     if (( skip_restart == 1 )); then
-        APL_APPLY_STATUS=applied
-        return 0
-    fi
-
-    # Don't touch host services when writing to a non-host feed.env
-    # (--feed-env pointing somewhere under a /mnt or /tmp scratch tree).
-    # The canonical host path is /etc/airplanes/feed.env; anything else
-    # is by definition not the live system. APL_FEED_APPLY_HOST_PATH
-    # overrides the comparison for tests that want to exercise the
-    # restart fan-out against a scratch feed.env.
-    local host_path="${APL_FEED_APPLY_HOST_PATH:-/etc/airplanes/feed.env}"
-    if [[ "$feed_env" != "$host_path" ]]; then
         APL_APPLY_STATUS=applied
         return 0
     fi

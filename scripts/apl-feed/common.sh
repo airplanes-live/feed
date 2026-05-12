@@ -146,6 +146,14 @@ feed_env_paths() {
     printf '\n'
 }
 
+# Canonical lock path for feed.env writes. apl_feed_apply takes this
+# through --lock-file. Same root_path pattern as feed_env_path — tests
+# override this helper so the library doesn't try to open /run/airplanes
+# on a test runner that doesn't have that path writable.
+feed_env_lock_path() {
+    root_path '/run/airplanes/feed-env.lock'
+}
+
 require_jq() {
     command -v jq >/dev/null 2>&1 || die "jq is required"
 }

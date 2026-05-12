@@ -15,6 +15,12 @@ setup() {
     export TMPDIR
 
     bats_exit_trap="$(trap -p EXIT)"
+    # shellcheck source=../scripts/lib/configure-validators.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/configure-validators.sh"
+    # shellcheck source=../scripts/lib/feed-env-keys.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-keys.sh"
+    # shellcheck source=../scripts/lib/feed-env-apply.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-apply.sh"
     # shellcheck source=../scripts/apl-feed/common.sh
     source "$LIB_DIR/common.sh"
     # shellcheck source=../scripts/apl-feed/uat.sh
@@ -22,8 +28,13 @@ setup() {
     eval "$bats_exit_trap"
     ROOT="$ROOT_DIR"
 
+    # Override feed_env_lock_path so the apply library opens the lock
+    # in the scratch tree rather than /run/airplanes.
+    APL_TEST_LOCK_FILE="$ROOT_DIR/feed-env.lock"
+    feed_env_lock_path() { printf '%s\n' "$APL_TEST_LOCK_FILE"; }
+
     # Default: dump978-fa + airplanes-978 units NOT installed (standalone-feed
-    # install). Tests can `mark_unit_installed dump978-fa.service` to flip
+    # install). Tests can `mark_unit_installed dump978-fa` to flip
     # to the image-host shape.
     : > "$INSTALLED_UNITS_FILE"
 
@@ -45,7 +56,7 @@ case "\$1" in
         # would. _uat_restart_services has separate handling for ALWAYS vs
         # OPTIONAL units, but the OPTIONAL path gates on cat first.
         unit="\${@: -1}"
-        if [[ "\$unit" == "airplanes-feed.service" ]]; then exit 0; fi
+        if [[ "\$unit" == "airplanes-feed" ]]; then exit 0; fi
         if grep -Fxq "\$unit" "$INSTALLED_UNITS_FILE" 2>/dev/null; then exit 0; fi
         echo "Unit \$unit not found." >&2
         exit 5
@@ -87,6 +98,7 @@ MLAT_PRIVATE=false
 LATITUDE="52.52"
 LONGITUDE="13.40"
 ALTITUDE="35m"
+GEO_CONFIGURED=true
 EOF
 }
 
@@ -114,20 +126,20 @@ EOF
     run apl_feed_uat_enable
     [ "$status" -eq 0 ]
     grep -q '^UAT_INPUT="127.0.0.1:30978"$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^systemctl restart airplanes-feed.service$' "$SYSTEMCTL_LOG"
+    grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
 }
 
 @test "enable: image-only units are restarted when present" {
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
-    mark_unit_installed dump978-fa.service
-    mark_unit_installed airplanes-978.service
+    mark_unit_installed dump978-fa
+    mark_unit_installed airplanes-978
 
     run apl_feed_uat_enable
     [ "$status" -eq 0 ]
-    grep -q '^systemctl restart dump978-fa.service$' "$SYSTEMCTL_LOG"
-    grep -q '^systemctl restart airplanes-978.service$' "$SYSTEMCTL_LOG"
+    grep -q '^systemctl restart dump978-fa$' "$SYSTEMCTL_LOG"
+    grep -q '^systemctl restart airplanes-978$' "$SYSTEMCTL_LOG"
 }
 
 @test "enable: image-only units are skipped on standalone-feed host" {
@@ -139,9 +151,9 @@ EOF
 
     run apl_feed_uat_enable
     [ "$status" -eq 0 ]
-    ! grep -q '^systemctl restart dump978-fa.service$' "$SYSTEMCTL_LOG"
-    ! grep -q '^systemctl restart airplanes-978.service$' "$SYSTEMCTL_LOG"
-    grep -q '^systemctl restart airplanes-feed.service$' "$SYSTEMCTL_LOG"
+    ! grep -q '^systemctl restart dump978-fa$' "$SYSTEMCTL_LOG"
+    ! grep -q '^systemctl restart airplanes-978$' "$SYSTEMCTL_LOG"
+    grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
 }
 
 @test "enable --serial / --gain pin the wrapper defaults in feed.env" {
@@ -169,7 +181,7 @@ EOF
     # Disable uses the `-` sentinel so the serial/gain lines stay verbatim.
     grep -q '^DUMP978_SDR_SERIAL="00000978"$' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^DUMP978_GAIN="40.0"$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^systemctl restart airplanes-feed.service$' "$SYSTEMCTL_LOG"
+    grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
 }
 
 @test "enable preserves unrelated keys (MLAT_USER, LATITUDE, etc.)" {
@@ -180,8 +192,8 @@ EOF
     apl_feed_uat_enable --serial "978" --gain "42.1"
 
     grep -q '^MLAT_USER="Anonymous"$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^MLAT_ENABLED=true$' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q '^MLAT_PRIVATE=false$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_ENABLED=(true|\"true\")$" "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qE "^MLAT_PRIVATE=(false|\"false\")$" "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^LATITUDE="52.52"$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
@@ -296,6 +308,6 @@ EOF
 
     run apl_feed_uat_status
     [ "$status" -eq 0 ]
-    [[ "$output" == *'dump978-fa.service'*'not installed (image-only)'* ]]
-    [[ "$output" == *'airplanes-978.service'*'not installed (image-only)'* ]]
+    [[ "$output" == *'dump978-fa'*'not installed (image-only)'* ]]
+    [[ "$output" == *'airplanes-978'*'not installed (image-only)'* ]]
 }

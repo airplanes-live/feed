@@ -105,9 +105,7 @@ run_apply() {
 }
 
 @test "apply changes restart matching services (no --no-restart)" {
-    # Override the canonical host-path comparison so the scratch tree's
-    # feed.env is treated as the live target for restart purposes.
-    APL_FEED_APPLY_HOST_PATH="$FEED_ENV" run_apply '{"updates":{"MLAT_PRIVATE":"true"}}'
+    run_apply '{"updates":{"MLAT_PRIVATE":"true"}}'
     [ "$APPLY_RC" -eq 0 ]
     [ "$(jq -r .status <<<"$APPLY_OUT")" = "applied" ]
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"

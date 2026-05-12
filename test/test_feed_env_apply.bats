@@ -208,12 +208,8 @@ EOF
 }
 
 @test "MLAT_ENABLED change restarts airplanes-mlat" {
-    # The library skips host-service restarts when --feed-env != the
-    # canonical /etc/airplanes/feed.env. Override the comparison via
-    # APL_FEED_APPLY_HOST_PATH so the test can exercise the restart
-    # fan-out against the scratch tree.
     seed_feed_env
-    APL_FEED_APPLY_HOST_PATH="$FEED_ENV" do_apply MLAT_ENABLED=false
+    do_apply MLAT_ENABLED=false
     [ "$APL_APPLY_RC" -eq 0 ]
     [ "$APL_APPLY_STATUS" = "applied" ]
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
@@ -221,7 +217,7 @@ EOF
 
 @test "LATITUDE change restarts the full geo fan-out" {
     seed_feed_env
-    APL_FEED_APPLY_HOST_PATH="$FEED_ENV" do_apply LATITUDE=48.13
+    do_apply LATITUDE=48.13
     [ "$APL_APPLY_RC" -eq 0 ]
     grep -q '^systemctl restart readsb$' "$SYSTEMCTL_LOG"
     grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
@@ -235,7 +231,7 @@ LATITUDE="1"
 LONGITUDE="1"
 GEO_CONFIGURED=false
 EOF
-    APL_FEED_APPLY_HOST_PATH="$FEED_ENV" do_apply GEO_CONFIGURED=true
+    do_apply GEO_CONFIGURED=true
     [ "$APL_APPLY_RC" -eq 0 ]
     [ "$APL_APPLY_STATUS" = "applied" ]
     [ ! -s "$SYSTEMCTL_LOG" ]
@@ -372,16 +368,6 @@ EOF
     [ "$APL_APPLY_RC" -eq 2 ]
     [ "$APL_APPLY_STATUS" = "rejected" ]
     [ -n "${APL_APPLY_ERRORS[DUMP978_SDR_SERIAL]}" ]
-}
-
-@test "non-host feed.env path skips service restarts" {
-    seed_feed_env
-    : > "$SYSTEMCTL_LOG"
-    do_apply MLAT_ENABLED=false
-    [ "$APL_APPLY_RC" -eq 0 ]
-    # Default seeds feed_env under $ROOT_DIR/etc/airplanes (not the host
-    # /etc path), so restart_set must be suppressed.
-    [ ! -s "$SYSTEMCTL_LOG" ]
 }
 
 @test "malformed feed.env lines silently dropped" {
