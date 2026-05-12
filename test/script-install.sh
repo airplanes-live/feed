@@ -131,7 +131,9 @@ test -f /lib/systemd/system/airplanes-mlat.service
 test -f /etc/airplanes/feeder-claim-secret
 test "$(readlink /etc/default/airplanes)" = "/etc/airplanes/feed.env"
 grep -q 'systemctl restart airplanes-feed' /tmp/systemctl.log
-# UAT_INPUT default lives in the installed daemon wrapper now (was in
-# feed.env). airplanes-feed silent_fails on the UAT connector so the
-# default is harmless on feeders without 978 hardware.
-grep -q 'UAT_INPUT="127.0.0.1:30978"' /usr/local/share/airplanes/airplanes-feed.sh
+# 978 is opt-in: UAT_INPUT must not default to anything in feed.env (the
+# initial configure.sh-written file) NOR in the daemon wrapper. Operators
+# opt in via `apl-feed 978 enable` (CLI) or webconfig (image), and a fresh
+# install leaves the connector unwired.
+! grep -q 'UAT_INPUT="127.0.0.1:30978"' /etc/airplanes/feed.env
+! grep -q 'UAT_INPUT="127.0.0.1:30978"' /usr/local/share/airplanes/airplanes-feed.sh
