@@ -334,13 +334,15 @@ EOF
 @test "bridged-legacy: _uat_apply targets canonical feed.env, not boot config" {
     # Same shape as the mlat bridged-legacy regression — guards against
     # the writer side resolving via feed_env_path()'s reader fallback
-    # when feed.env doesn't exist yet on a bridged box.
+    # when feed.env doesn't exist yet on a bridged box. Uses a canonical
+    # key (UAT_INPUT) that apl_feed_import_legacy_config understands so
+    # this fixture is also a valid input to that command.
     rm -rf "$ROOT_DIR/etc/airplanes"
     mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
     : > "$ROOT_DIR/usr/bin/airplanes-feeder"
     chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
     cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
-DUMP978=yes
+UAT_INPUT=127.0.0.1:30978
 EOF
     local before
     before="$(cat "$ROOT_DIR/boot/airplanes-config.txt")"

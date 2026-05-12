@@ -142,6 +142,45 @@ feed_env_write_path() {
     root_path '/etc/airplanes/feed.env'
 }
 
+# Bootstrap the canonical feed.env from a bridged-legacy boot config when
+# canonical is missing. Idempotent: no-op when canonical already exists.
+# Detection mirrors feed_env_path()'s legacy fallback: airplanes-feeder
+# binary installed (bridge ran) + /boot/airplanes-config.txt present.
+#
+# Without this, every apl-feed writer (mlat, uat, eventually configure
+# wrappers) would error out with "feed.env not found" on a bridged-legacy
+# box even though the legacy source carries all the operational keys.
+# Auto-bootstrap calls apl_feed_import_legacy_config (which must be in
+# scope — apl-feed.sh sources scripts/apl-feed/import.sh after common.sh
+# so this is satisfied in production) with --no-restart, since writer
+# callers own the post-write restart themselves.
+#
+# Errors from the bootstrap propagate to the caller so the writer can
+# decide whether to continue with a fresh canonical or abort. Returns 0
+# in the non-bridged-legacy case so a manual-install box with a missing
+# feed.env hits apl_feed_apply's normal filesystem_error path — the
+# operator there is expected to run setup/install first, not import.
+feed_env_ensure_canonical_for_write() {
+    local canonical
+    canonical="$(feed_env_write_path)"
+    [[ -f "$canonical" ]] && return 0
+
+    local boot_config feeder_binary
+    boot_config="$(root_path '/boot/airplanes-config.txt')"
+    feeder_binary="$(root_path '/usr/bin/airplanes-feeder')"
+    if [[ ! -x "$feeder_binary" || ! -f "$boot_config" ]]; then
+        return 0
+    fi
+
+    if ! declare -F apl_feed_import_legacy_config >/dev/null; then
+        echo "feed_env_ensure_canonical_for_write: apl_feed_import_legacy_config not in scope — source apl-feed/import.sh before invoking writers" >&2
+        return 0
+    fi
+
+    echo "Bootstrapping canonical feed.env from $boot_config" >&2
+    apl_feed_import_legacy_config --no-restart "$boot_config"
+}
+
 feed_env_paths() {
     if [[ -f "$(root_path '/etc/airplanes/feed.env')" ]]; then
         root_path '/etc/airplanes/feed.env'
