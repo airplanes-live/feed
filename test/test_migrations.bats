@@ -16,6 +16,8 @@ setup() {
     source "$COMMON_LIB"
     # shellcheck source=/dev/null
     source "$LIB"
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/scripts/lib/legacy-mlat-translation.sh"
 }
 
 teardown() {

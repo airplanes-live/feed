@@ -18,6 +18,8 @@ setup() {
     source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-keys.sh"
     # shellcheck source=../scripts/lib/feed-env-apply.sh
     source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-apply.sh"
+    # shellcheck source=../scripts/lib/legacy-mlat-translation.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/legacy-mlat-translation.sh"
     # shellcheck source=../scripts/apl-feed/common.sh
     source "$LIB_DIR/common.sh"
     # shellcheck source=../scripts/apl-feed/import.sh
@@ -112,14 +114,18 @@ EOF
     grep -qE '^MLAT_PRIVATE=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
-@test "PRIVACY=yes wins over MLAT_MARKER=yes" {
+@test "PRIVACY=--privacy wins over MLAT_MARKER=yes" {
+    # MLAT_MARKER=yes (privacy OFF) and PRIVACY=--privacy (privacy ON)
+    # conflict. PRIVACY wins because it's the more deliberate hand-edit
+    # signal (PHP webconfig writes MLAT_MARKER; PRIVACY appears only in
+    # hand-edited configs and historical airplanes-mlat docs).
     cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
 LATITUDE=52.5
 LONGITUDE=13.4
 ALTITUDE=120m
 USER=alice
 MLAT_MARKER=yes
-PRIVACY=yes
+PRIVACY=--privacy
 EOF
     import "$ROOT_DIR/airplanes-config.txt"
     [ "$IMPORT_RC" -eq 0 ]

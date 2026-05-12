@@ -75,6 +75,18 @@ else
     }
 fi
 
+# Legacy-key translation helpers (single source of truth for the
+# PRIVACY / MLAT_MARKER → MLAT_PRIVATE mapping used by import.sh, the
+# update-time migration, and the daemon runtime fallback). Defensive
+# source mirrors the pattern above.
+if [[ -r "$APL_FEED_DAEMON_LIB_DIR/legacy-mlat-translation.sh" ]]; then
+    # shellcheck source=scripts/lib/legacy-mlat-translation.sh
+    source "$APL_FEED_DAEMON_LIB_DIR/legacy-mlat-translation.sh"
+else
+    derive_mlat_private_from_privacy() { return 1; }
+    derive_mlat_private_from_marker()  { return 1; }
+fi
+
 # shellcheck source=scripts/apl-feed/common.sh
 source "$APL_FEED_LIB_DIR/common.sh"
 # shellcheck source=scripts/apl-feed/http.sh

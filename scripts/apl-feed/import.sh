@@ -212,29 +212,31 @@ apl_feed_import_legacy_config() {
     fi
 
     # MLAT_MARKER → MLAT_PRIVATE (inverted polarity: "no" = privacy ON).
+    # Translation lives in scripts/lib/legacy-mlat-translation.sh, shared
+    # with the update-time migration and the daemon runtime fallback.
+    # Unrecognised values are dropped (MLAT_PRIVATE not added to payload)
+    # rather than silently flipping to false — that would lose the
+    # operator's stored preference on migration.
     if grep -qE '^MLAT_MARKER=' "$path"; then
-        local marker
+        local marker derived
         marker="$(_apl_feed_import_extract "$path" MLAT_MARKER)"
-        case "$marker" in
-            no) payload[MLAT_PRIVATE]="true" ;;
-            *)  payload[MLAT_PRIVATE]="false" ;;
-        esac
+        if derived="$(derive_mlat_private_from_marker "$marker")"; then
+            payload[MLAT_PRIVATE]="$derived"
+        else
+            echo "import legacy-config: unrecognised MLAT_MARKER '$marker'; leaving MLAT_PRIVATE unchanged" >&2
+        fi
     fi
-    # PRIVACY → MLAT_PRIVATE. Wins over MLAT_MARKER when both are present.
-    # Legacy configs encode privacy in several shapes: yes/true/1 from
-    # generic forms, and `--privacy` cargo-culted from old documentation
-    # that suggested adding it as an mlat-client flag. All map to true.
-    # Unknown values are silently dropped rather than falling back to
-    # false — silently flipping a previously-private feeder to public
-    # on migration is the wrong failure mode.
+    # PRIVACY → MLAT_PRIVATE. Wins over MLAT_MARKER when both are present
+    # (PHP webconfig is still the active writer of marker, but PRIVACY is
+    # the more deliberate hand-edit signal).
     if grep -qE '^PRIVACY=' "$path"; then
-        local privacy
+        local privacy derived
         privacy="$(_apl_feed_import_extract "$path" PRIVACY)"
-        case "$privacy" in
-            yes|true|1|--privacy) payload[MLAT_PRIVATE]="true" ;;
-            no|false|0|"")        payload[MLAT_PRIVATE]="false" ;;
-            *) echo "import legacy-config: unrecognised PRIVACY value '$privacy'; leaving MLAT_PRIVATE unchanged" >&2 ;;
-        esac
+        if derived="$(derive_mlat_private_from_privacy "$privacy")"; then
+            payload[MLAT_PRIVATE]="$derived"
+        else
+            echo "import legacy-config: unrecognised PRIVACY value '$privacy'; leaving MLAT_PRIVATE unchanged" >&2
+        fi
     fi
     # MLAT_PRIVATE passthrough wins over both.
     if grep -qE '^MLAT_PRIVATE=' "$path"; then

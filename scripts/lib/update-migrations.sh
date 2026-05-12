@@ -271,31 +271,28 @@ migrate_privacy_to_mlat_private() {
         return 0
     fi
 
-    local mlat_private
+    # Translation rules are in scripts/lib/legacy-mlat-translation.sh
+    # (single source of truth across import.sh, this migration, and
+    # airplanes-mlat.sh's daemon-read fallback). update.sh sources that
+    # lib before calling this function. On an unrecognised legacy value
+    # the helper returns non-zero — leave mlat_private at false so the
+    # post-migration disk default mirrors the daemon's
+    # ${MLAT_PRIVATE:-false} runtime fallback.
+    local mlat_private="false"
     if [[ "$has_mlat_private" == "1" ]]; then
         mlat_private="$(_extract_env_value "$feed_env" MLAT_PRIVATE)"
     elif [[ "$has_privacy" == "1" ]]; then
-        local privacy_value
+        local privacy_value derived
         privacy_value="$(_extract_env_value "$feed_env" PRIVACY)"
-        # Trim leading/trailing whitespace; tolerate hand-edits like
-        # `PRIVACY=" --privacy "` and `PRIVACY=--privacy`.
-        privacy_value="${privacy_value#"${privacy_value%%[![:space:]]*}"}"
-        privacy_value="${privacy_value%"${privacy_value##*[![:space:]]}"}"
-        case "$privacy_value" in
-            --privacy) mlat_private="true" ;;
-            *)         mlat_private="false" ;;
-        esac
+        if derived="$(derive_mlat_private_from_privacy "$privacy_value")"; then
+            mlat_private="$derived"
+        fi
     elif [[ "$has_marker" == "1" ]]; then
-        local marker_value
+        local marker_value derived
         marker_value="$(_extract_env_value "$feed_env" MLAT_MARKER)"
-        marker_value="${marker_value#"${marker_value%%[![:space:]]*}"}"
-        marker_value="${marker_value%"${marker_value##*[![:space:]]}"}"
-        case "$marker_value" in
-            no) mlat_private="true" ;;
-            *)  mlat_private="false" ;;
-        esac
-    else
-        mlat_private="false"
+        if derived="$(derive_mlat_private_from_marker "$marker_value")"; then
+            mlat_private="$derived"
+        fi
     fi
 
     if [[ "$has_privacy" == "1" || "$has_marker" == "1" || "$has_mlat_private" == "0" ]]; then

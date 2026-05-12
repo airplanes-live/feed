@@ -25,6 +25,8 @@ setup() {
     source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-keys.sh"
     # shellcheck source=../scripts/lib/feed-env-apply.sh
     source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-apply.sh"
+    # shellcheck source=../scripts/lib/legacy-mlat-translation.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/legacy-mlat-translation.sh"
     # shellcheck source=../scripts/apl-feed/common.sh
     source "$LIB_DIR/common.sh"
     # shellcheck source=../scripts/apl-feed/import.sh
