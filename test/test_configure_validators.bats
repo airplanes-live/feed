@@ -82,10 +82,90 @@ setup() {
     valid_altitude -200ft
 }
 
-@test "valid_altitude rejects decimals" {
-    ! valid_altitude 35.5
-    ! valid_altitude 35.5m
-    ! valid_altitude 35.5ft
+@test "valid_altitude accepts decimals" {
+    # Now matches Go configspec.validateAltitude. Previously the library
+    # accepted only integers, diverging from the Go side; the apply
+    # library required parity before it could replace apply-config.
+    valid_altitude 35.5
+    valid_altitude 35.5m
+    valid_altitude 35.5ft
+}
+
+@test "valid_altitude enforces [-1000, 10000] range" {
+    valid_altitude 10000
+    valid_altitude -1000
+    ! valid_altitude 10001
+    ! valid_altitude -1001
+}
+
+@test "valid_latitude accepts the closed-range boundary" {
+    valid_latitude 90
+    valid_latitude -90
+    ! valid_latitude 90.1
+    ! valid_latitude -90.1
+}
+
+@test "valid_longitude accepts the closed-range boundary" {
+    valid_longitude 180
+    valid_longitude -180
+    ! valid_longitude 180.1
+    ! valid_longitude -180.1
+}
+
+@test "valid_bool accepts only true and false" {
+    valid_bool true
+    valid_bool false
+    ! valid_bool 0
+    ! valid_bool 1
+    ! valid_bool yes
+    ! valid_bool ''
+}
+
+@test "valid_mlat_user_strict matches Go mlatUserRE shape" {
+    valid_mlat_user_strict alice
+    valid_mlat_user_strict alice_42
+    valid_mlat_user_strict A-Za-z
+    ! valid_mlat_user_strict ''
+    ! valid_mlat_user_strict 'alice rabbit'
+    ! valid_mlat_user_strict "$(printf 'a%.0s' {1..65})"
+}
+
+@test "valid_gain accepts auto/min/max and [0, 60]" {
+    valid_gain auto
+    valid_gain min
+    valid_gain max
+    valid_gain 0
+    valid_gain 30
+    valid_gain 60
+    valid_gain 49.6
+    ! valid_gain -1
+    ! valid_gain 60.1
+    ! valid_gain abc
+}
+
+@test "valid_uat_input accepts only empty or the local dump978-fa endpoint" {
+    valid_uat_input ''
+    valid_uat_input 127.0.0.1:30978
+    ! valid_uat_input 10.0.0.1:30978
+    ! valid_uat_input 127.0.0.1:30005
+}
+
+@test "valid_dump978_serial accepts empty or 1-32 chars in [0-9A-Za-z_-]" {
+    valid_dump978_serial ''
+    valid_dump978_serial 978
+    valid_dump978_serial '978-Alpha_2'
+    ! valid_dump978_serial 'has space'
+    ! valid_dump978_serial '978;rm'
+    ! valid_dump978_serial "$(printf 'a%.0s' {1..33})"
+}
+
+@test "valid_dump978_gain accepts [0, 60] numbers" {
+    valid_dump978_gain 0
+    valid_dump978_gain 60
+    valid_dump978_gain 33.5
+    ! valid_dump978_gain auto
+    ! valid_dump978_gain -1
+    ! valid_dump978_gain 60.1
 }
 
 @test "valid_altitude rejects unknown units" {

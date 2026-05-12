@@ -106,6 +106,20 @@ write_feed_env() {
     derive_mlat_keys
     derive_geo_configured
     mkdir -p "$ETC_AIRPLANES"
+    # Hold /run/airplanes/feed-env.lock for the write window so a
+    # concurrent apl-feed apply (privileged writer in webconfig and the
+    # CLI) cannot land an update between the two `tee` blocks below.
+    # Build mode skips the lock — /run/airplanes/ doesn't exist in a
+    # chroot rootfs.
+    local _feed_lock_fd=""
+    if ! airplanes_is_build_mode 2>/dev/null && command -v flock >/dev/null 2>&1; then
+        mkdir -p /run/airplanes 2>/dev/null || true
+        if exec {_feed_lock_fd}>/run/airplanes/feed-env.lock 2>/dev/null; then
+            flock -w 30 "$_feed_lock_fd" || _feed_lock_fd=""
+        else
+            _feed_lock_fd=""
+        fi
+    fi
     tee "$FEED_ENV" >/dev/null <<EOF
 # /etc/airplanes/feed.env — operator-supplied configuration for the
 # airplanes.live feeder daemons. Product-side defaults (brand endpoints,
@@ -145,6 +159,9 @@ EOF
 INPUT="$INPUT"
 INPUT_TYPE="$INPUT_TYPE"
 EOF
+    fi
+    if [[ -n "$_feed_lock_fd" ]]; then
+        eval "exec ${_feed_lock_fd}>&-"
     fi
 }
 
