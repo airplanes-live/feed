@@ -424,6 +424,31 @@ EOF
     grep -qE '^MLAT_PRIVATE=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
+@test "empty UAT_INPUT propagates as cleared key (legacy 978-disable save)" {
+    # Regression: previously the import gated on value non-emptiness, so
+    # a legacy save that wrote `UAT_INPUT=` (clear 978) was dropped on
+    # the floor and the daemon kept running with the stale endpoint.
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+LATITUDE="52.5"
+LONGITUDE="13.4"
+ALTITUDE="120m"
+MLAT_USER="alice"
+MLAT_ENABLED=true
+GEO_CONFIGURED=true
+UAT_INPUT="127.0.0.1:30978"
+EOF
+    cat > "$ROOT_DIR/airplanes-config.txt" <<EOF
+LATITUDE=52.5
+LONGITUDE=13.4
+ALTITUDE=120m
+USER=alice
+UAT_INPUT=
+EOF
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -qE '^UAT_INPUT=""?$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
 @test "invalid passthrough value (GAIN=bad) is skipped, valid keys still import" {
     # Before this validation, GAIN=bad would make apl_feed_apply reject
     # the entire payload — the user would lose every other valid
