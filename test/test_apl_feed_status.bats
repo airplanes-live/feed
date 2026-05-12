@@ -324,6 +324,16 @@ STUB
     [[ "$output" == *"MLAT_PRIVATE must be 'true' or 'false'"* ]]
 }
 
+@test "mlat_status_line: ActiveState=failed + exit 64 + misconfigured altitude_empty → actionable" {
+    write_mlat_state misconfigured altitude_empty
+    stub_systemctl_active_state failed 64
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'ALTITUDE is empty'* ]]
+}
+
 @test "mlat_status_line: ActiveState=activating + enabled → 'starting up'" {
     write_mlat_state enabled ok
     stub_systemctl_active_state activating

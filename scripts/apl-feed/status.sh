@@ -273,6 +273,7 @@ _render_mlat_misconfig_reason() {
     local label="MLAT service"
     case "$reason" in
         mlat_private_invalid) status_line fail "$label" "MLAT_PRIVATE must be 'true' or 'false' in feed.env" ;;
+        altitude_empty)       status_line fail "$label" "ALTITUDE is empty (set the antenna altitude, e.g. ALTITUDE=120m)" ;;
         *)                    status_line fail "$label" "misconfigured ($reason)" ;;
     esac
 }
