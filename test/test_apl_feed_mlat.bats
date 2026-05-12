@@ -146,6 +146,7 @@ EOF
     # Override feed_env_path to point inside ROOT_DIR (the helper resolves
     # off /etc/airplanes which would be the host's real path with ROOT='/').
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_disable
@@ -159,6 +160,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_enable
@@ -172,6 +174,7 @@ EOF
     write_feed_env "" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_enable
@@ -185,6 +188,7 @@ EOF
     write_feed_env "" "true"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_disable
@@ -199,6 +203,7 @@ EOF
     write_feed_env "william34-london" "true"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_disable
@@ -215,6 +220,7 @@ EOF
 @test "missing feed.env: enable dies with documented message" {
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
 
@@ -234,6 +240,7 @@ EOF
     AIRPLANES_BUILD_MODE=1
     export AIRPLANES_BUILD_MODE
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_disable
@@ -246,6 +253,7 @@ EOF
 @test "ROOT != / skips the systemctl restart (file edits still happen)" {
     write_feed_env "alice" "true"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_disable
@@ -284,6 +292,7 @@ EOF
     write_feed_env_with_private "alice" "true" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_private_enable
@@ -299,6 +308,7 @@ EOF
     write_feed_env_with_private "alice" "true" "true"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_private_disable
@@ -313,6 +323,7 @@ EOF
     write_feed_env_with_private "alice" "true" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_private_enable
@@ -328,6 +339,7 @@ EOF
 @test "private enable: missing feed.env dies with documented message" {
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     [ ! -e "$ROOT_DIR/etc/airplanes/feed.env" ]
 
@@ -343,6 +355,7 @@ EOF
     write_feed_env_with_private "alice" "true" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_private_enable
@@ -357,6 +370,7 @@ EOF
     AIRPLANES_BUILD_MODE=1
     export AIRPLANES_BUILD_MODE
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_private_enable
@@ -372,6 +386,7 @@ EOF
     write_feed_env_no_geo_flag "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_enable
@@ -395,6 +410,7 @@ ALTITUDE="35m"
 EOF
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_enable
@@ -407,6 +423,7 @@ EOF
     write_feed_env_no_axis "alice" "false" LATITUDE
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_enable
@@ -419,6 +436,7 @@ EOF
     write_feed_env_no_axis "alice" "false" ALTITUDE
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_enable
@@ -433,6 +451,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_user bob-123
@@ -446,6 +465,7 @@ EOF
     write_feed_env "alice" "true"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_user --clear
@@ -458,6 +478,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_user "alice rabbit"
@@ -471,6 +492,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     local long
@@ -487,6 +509,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_user 'bad$name'
@@ -499,6 +522,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_user --clear bob
@@ -511,6 +535,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_user
@@ -525,6 +550,7 @@ EOF
     write_feed_env_no_geo_flag "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_geo 48.137 11.575 520m
@@ -541,6 +567,7 @@ EOF
     write_feed_env_no_geo_flag "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_geo 0 0 0m
@@ -552,6 +579,7 @@ EOF
     write_feed_env_no_geo_flag "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_mlat_geo 0.0 -0 0m
@@ -563,6 +591,7 @@ EOF
     write_feed_env_no_geo_flag "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_geo 91 0 0m
@@ -577,6 +606,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_mlat_geo 52.5 13.4
@@ -594,6 +624,7 @@ EOF
     write_feed_env "alice" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     # bats's run captures stdin from a pipe so [[ -t 0 ]] is false.
@@ -626,6 +657,39 @@ EOF
     "
     [ "$status" -ne 0 ]
     [[ "$output" == *'exactly three positional args'* ]]
+}
+
+@test "bridged-legacy: _mlat_apply targets canonical feed.env, not boot config" {
+    # Reproduce the bridged-legacy reader-fallback shape: airplanes-feeder
+    # is installed, /boot/airplanes-config.txt exists, /etc/airplanes/
+    # feed.env does not. Before feed_env_write_path() was introduced,
+    # _mlat_apply called feed_env_path() and would have asked the apply
+    # library to rewrite /boot/airplanes-config.txt itself.
+    rm -rf "$ROOT_DIR/etc/airplanes"
+    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
+LATITUDE=52.5
+USER=alice
+MLAT_MARKER=yes
+EOF
+    local before
+    before="$(cat "$ROOT_DIR/boot/airplanes-config.txt")"
+
+    APPLY_ARGS=""
+    apl_feed_apply() {
+        APPLY_ARGS="$*"
+        APL_APPLY_STATUS=no_change
+        return 0
+    }
+
+    apl_feed_mlat_disable
+
+    [[ "$APPLY_ARGS" == *"--feed-env $ROOT_DIR/etc/airplanes/feed.env"* ]]
+    [[ "$APPLY_ARGS" != *"--feed-env $ROOT_DIR/boot/airplanes-config.txt"* ]]
+    # Source legacy file must not be touched by the resolver.
+    [ "$before" = "$(cat "$ROOT_DIR/boot/airplanes-config.txt")" ]
 }
 
 # --- setup helper (single 7-key transaction) ---

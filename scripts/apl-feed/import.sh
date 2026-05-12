@@ -189,14 +189,11 @@ apl_feed_import_legacy_config() {
         esac
     fi
 
-    # Import always writes to the canonical /etc/airplanes/feed.env, never
-    # via the feed_env_path() reader fallback. That fallback is for status
-    # readers on bridged-legacy boxes (airplanes-feeder binary present, no
-    # feed.env yet) and resolves to /boot/airplanes-config.txt — which for
-    # this writer would mean translating the source file into itself,
-    # never creating the canonical feed.env the new daemons consume.
+    # feed_env_write_path() is canonical-only; never resolves to the
+    # bridged-legacy fallback /boot/airplanes-config.txt (which would
+    # mean translating the source file into itself).
     local feed_env_file lock_file
-    feed_env_file="$(root_path '/etc/airplanes/feed.env')"
+    feed_env_file="$(feed_env_write_path)"
     lock_file="$(feed_env_lock_path)"
 
     # No recognised keys in the source: nothing to write. Return BEFORE
