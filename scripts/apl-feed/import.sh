@@ -20,16 +20,26 @@
 # caller (the webconfig save path, or systemd at boot) restarts on its
 # own schedule.
 #
-# Legacy → canonical mapping:
+# Legacy → canonical mapping. PRIVACY / MLAT_MARKER recognition lives in
+# scripts/lib/legacy-mlat-translation.sh (single source of truth, shared
+# with the update-time migration and the daemon read fallback); the
+# MLAT_ENABLED gating happens in this file. Unrecognised PRIVACY /
+# MLAT_MARKER values leave MLAT_PRIVATE untouched rather than coercing
+# to false — never silently flip a previously-private feeder.
+#
 #   LATITUDE / LONGITUDE / ALTITUDE          preserved as-is
-#   USER=<name>  / USER=""                    MLAT_USER=<name>, MLAT_ENABLED=true
+#   USER=<name> + geo complete                MLAT_USER=<name>, MLAT_ENABLED=true
+#   USER=<name> + geo missing/(0,0)           MLAT_USER=<name>  (MLAT_ENABLED dropped)
+#   USER="" + geo complete                    MLAT_USER="",     MLAT_ENABLED=true
 #   USER=0 / USER=disable                     MLAT_USER="",     MLAT_ENABLED=false
+#   PRIVACY=--privacy                         MLAT_PRIVATE=true
+#   PRIVACY="" / no / false / 0               MLAT_PRIVATE=false
+#   PRIVACY=<other>                           MLAT_PRIVATE unchanged
 #   MLAT_MARKER=no                            MLAT_PRIVATE=true   (inverted polarity)
-#   MLAT_MARKER=<other>                       MLAT_PRIVATE=false
-#   PRIVACY=yes|true|1                        MLAT_PRIVATE=true
-#   PRIVACY=<other>                           MLAT_PRIVATE=false
-#   GAIN                                      preserved as-is
-#   UAT_INPUT / DUMP978_SDR_SERIAL / DUMP978_GAIN   preserved as-is
+#   MLAT_MARKER=yes / true / 1                MLAT_PRIVATE=false
+#   MLAT_MARKER=<other>                       MLAT_PRIVATE unchanged
+#   GAIN                                      preserved as-is (validated)
+#   UAT_INPUT / DUMP978_SDR_SERIAL / DUMP978_GAIN   preserved as-is (validated)
 #
 # Permissive by design: an unparseable legacy value is silently dropped
 # rather than failing the import — the failure mode on a legacy box
