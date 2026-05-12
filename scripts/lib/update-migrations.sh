@@ -420,6 +420,12 @@ migrate_seed_feed_meta_json() {
     fi
     chown --reference="$feed_env" "$tmp" 2>/dev/null || true
     chmod 0664 "$tmp" 2>/dev/null || true
+    # Refuse if the sidecar path somehow exists as a directory (would silently
+    # accumulate tmp.XXXXXX inside it).
+    if [[ -d "$meta_path" ]]; then
+        rm -f "$tmp"
+        return 0
+    fi
     mv -f "$tmp" "$meta_path" 2>/dev/null || rm -f "$tmp"
     return 0
 }

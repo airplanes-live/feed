@@ -529,6 +529,14 @@ _apl_feed_apply_write_meta() {
         chown --reference="$feed_env_for_owner" "$tmp" 2>/dev/null || true
     fi
     chmod 0664 "$tmp" 2>/dev/null || true
+    # Refuse if the target somehow exists as a directory — `mv -f tmp dir`
+    # would silently move tmp INTO dir on GNU coreutils, leaving the
+    # expected file path absent and the directory accumulating tmp.XXXXXX
+    # entries. Caller treats this as a sidecar-write failure.
+    if [[ -d "$meta_path" ]]; then
+        rm -f "$tmp"
+        return 1
+    fi
     mv -f "$tmp" "$meta_path" || { rm -f "$tmp"; return 1; }
     return 0
 }
@@ -720,9 +728,33 @@ apl_feed_apply() {
     done
 
     if (( ${#payload[@]} == 0 )); then
+        # An empty payload with stale incoming metadata is suspicious — a
+        # caller using the lib directly may have forgotten to clear the
+        # globals between calls. Refuse rather than silently apply.
+        if (( ${#_meta_in_by[@]} > 0 )); then
+            local _stray
+            for _stray in "${!_meta_in_by[@]}"; do
+                APL_APPLY_ERRORS[$_stray]="incoming metadata refers to a key not in this payload"
+                break
+            done
+            APL_APPLY_STATUS=rejected
+            return 2
+        fi
         APL_APPLY_STATUS=no_change
         return 0
     fi
+
+    # Every key with explicit incoming metadata must also appear in the
+    # payload — otherwise a stale global from a previous call could rewrite
+    # the sidecar tuple for a key the caller never intended to touch.
+    local _meta_payload_key
+    for _meta_payload_key in "${!_meta_in_by[@]}"; do
+        if [[ -z "${payload[$_meta_payload_key]+set}" ]]; then
+            APL_APPLY_ERRORS[$_meta_payload_key]="incoming metadata refers to a key not in this payload"
+            APL_APPLY_STATUS=rejected
+            return 2
+        fi
+    done
 
     # Per-key validation on the payload values themselves.
     for key in "${!payload[@]}"; do
@@ -913,7 +945,13 @@ apl_feed_apply() {
         done
 
         if ! _apl_feed_apply_write_meta "$meta_path" "$feed_env" merged_at merged_by; then
-            APL_APPLY_PENDING_META_WARNING="sidecar write failed; feed.env updated, feed.meta.json stale"
+            if (( ${#APL_APPLY_CHANGED[@]} > 0 )); then
+                APL_APPLY_PENDING_META_WARNING="sidecar write failed; feed.env updated, feed.meta.json stale"
+            else
+                # Metadata-only reconciliation path: feed.env was not touched,
+                # so the warning should not claim otherwise.
+                APL_APPLY_PENDING_META_WARNING="sidecar write failed; feed.meta.json could not be updated"
+            fi
         fi
     fi
 

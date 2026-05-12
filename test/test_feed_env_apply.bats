@@ -655,6 +655,50 @@ EOF
     [ ! -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
 }
 
+@test "stale INCOMING_META for a key not in payload is rejected" {
+    # Codex-flagged footgun: a long-lived shell could leave INCOMING_META
+    # set from a previous call and silently rewrite metadata for an
+    # unintended field. Subset check makes that an explicit reject.
+    seed_feed_env
+    cp "$FEED_ENV" "$FEED_ENV.before"
+    APL_APPLY_INCOMING_META_EDITED_AT=([ALTITUDE]="2026-05-12T10:00:00Z")
+    APL_APPLY_INCOMING_META_EDITED_BY=([ALTITUDE]="website")
+    do_apply --no-restart MLAT_USER=bob
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    [ -n "${APL_APPLY_ERRORS[ALTITUDE]:-}" ]
+    diff -u "$FEED_ENV.before" "$FEED_ENV"
+    [ ! -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+    APL_APPLY_INCOMING_META_EDITED_AT=()
+    APL_APPLY_INCOMING_META_EDITED_BY=()
+}
+
+@test "stale INCOMING_META with empty payload is rejected (not silently applied)" {
+    seed_feed_env
+    APL_APPLY_INCOMING_META_EDITED_AT=([MLAT_USER]="2026-05-12T10:00:00Z")
+    APL_APPLY_INCOMING_META_EDITED_BY=([MLAT_USER]="website")
+    do_apply --no-restart
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    APL_APPLY_INCOMING_META_EDITED_AT=()
+    APL_APPLY_INCOMING_META_EDITED_BY=()
+}
+
+@test "sidecar write fails cleanly when meta_path exists as a directory" {
+    seed_feed_env
+    META_DIR="$ROOT_DIR/etc/airplanes/feed.meta.json"
+    mkdir -p "$META_DIR"
+    do_apply --no-restart MLAT_USER=kate
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    # feed.env still updated.
+    grep -q '^MLAT_USER="kate"$' "$FEED_ENV"
+    # The directory wasn't replaced and no tmp file was orphaned inside it.
+    [ -d "$META_DIR" ]
+    [ "$(find "$META_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)" = "0" ]
+    [ -n "$APL_APPLY_PENDING_META_WARNING" ]
+}
+
 @test "INCOMING_META survives across two consecutive apply calls in the same shell" {
     seed_feed_env
     APL_APPLY_INCOMING_META_EDITED_AT=([MLAT_USER]="2026-05-12T11:00:00Z")
