@@ -220,16 +220,7 @@ run_uninstall() {
     [ "$before_listing" = "$after_listing" ]
 }
 
-# --- Known install↔uninstall drift -------------------------------------------
-#
-# The tests below assert the install→uninstall round-trip contract for paths
-# the current uninstall.sh DOES NOT clean up. Each is skipped today; remove
-# the skip line when the corresponding uninstall.sh patch lands. Skip rather
-# than delete so the failures surface as a concrete TODO list rather than
-# slipping out of memory.
-
-@test "(known leak) after install footprint, uninstall removes /usr/local/bin/apl-feed CLI wrapper" {
-    skip "Known drift: update.sh:545 installs the apl-feed CLI to /usr/local/bin/apl-feed; uninstall.sh does not rm it. Manual-install scope; surfaces as a finding."
+@test "after install footprint, uninstall removes /usr/local/bin/apl-feed CLI wrapper" {
     stage_install_footprint
     run_uninstall
 
@@ -237,8 +228,7 @@ run_uninstall() {
     [ ! -e "$ROOT_DIR/usr/local/bin/apl-feed" ]
 }
 
-@test "(known leak) after build-mode install footprint, uninstall removes /etc/airplanes/image-install marker" {
-    skip "Known drift: update.sh:769 writes /etc/airplanes/image-install in build mode; uninstall.sh does not rm it. Build-mode scope; surfaces as a finding."
+@test "after build-mode footprint, uninstall removes /etc/airplanes/image-install marker" {
     stage_install_footprint
     : > "$ROOT_DIR/etc/airplanes/image-install"
     run_uninstall
