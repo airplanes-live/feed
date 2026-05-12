@@ -69,29 +69,38 @@ if [[ -z "$MLAT_USER" ]]; then
     unset _mlat_user_short_id
 fi
 
-# Legacy PRIVACY read fallback. update.sh's migrate_privacy_to_mlat_private
-# converts PRIVACY=--privacy to MLAT_PRIVATE=true on every run; this in-
-# memory derivation handles a daemon restart that races ahead of the next
-# update.sh. Validation of MLAT_PRIVATE happens in the classifier below
-# so an invalid hand-edit fails loud.
-if [[ ! -v MLAT_PRIVATE && -v PRIVACY ]]; then
-    case "$PRIVACY" in
-        --privacy) MLAT_PRIVATE="true" ;;
-        *)         MLAT_PRIVATE="false" ;;
-    esac
+# Legacy PRIVACY / MLAT_MARKER read fallback. update.sh's
+# migrate_privacy_to_mlat_private converts these to canonical
+# MLAT_PRIVATE on every update; this in-memory derivation handles a
+# daemon restart that races ahead of the next update.sh. The single
+# source of truth for the parsing rules lives in
+# scripts/lib/legacy-mlat-translation.sh; the daemon sources it
+# defensively (a partial install where this script is in place but the
+# lib isn't yet must not take down the daemon — same pattern as the
+# state-writer source below). Unrecognised values leave MLAT_PRIVATE
+# unset so MLAT_MARKER can fall through, and ultimately the default
+# false applies.
+LEGACY_MLAT_TR="$(airplanes_path /usr/local/share/airplanes/lib/legacy-mlat-translation.sh)"
+if [[ -r "$LEGACY_MLAT_TR" ]]; then
+    # shellcheck source=lib/legacy-mlat-translation.sh
+    source "$LEGACY_MLAT_TR"
+else
+    derive_mlat_private_from_privacy() { return 1; }
+    derive_mlat_private_from_marker()  { return 1; }
 fi
+unset LEGACY_MLAT_TR
 
-# Legacy MLAT_MARKER read fallback. PHP webconfig still writes MLAT_MARKER
-# in /boot/airplanes-config.txt via its yes/no dropdown — inverted polarity
-# where "no" means privacy ON. Without this fallback a legacy-image feeder
-# would silently lose privacy on first daemon start under the new schema,
-# even though their stored preference says "private". The webconfig-side
-# migrator translation closes the window on the next save/update.
+if [[ ! -v MLAT_PRIVATE && -v PRIVACY ]]; then
+    if _v="$(derive_mlat_private_from_privacy "$PRIVACY")"; then
+        MLAT_PRIVATE="$_v"
+    fi
+    unset _v
+fi
 if [[ ! -v MLAT_PRIVATE && -v MLAT_MARKER ]]; then
-    case "$MLAT_MARKER" in
-        no) MLAT_PRIVATE="true" ;;
-        *)  MLAT_PRIVATE="false" ;;
-    esac
+    if _v="$(derive_mlat_private_from_marker "$MLAT_MARKER")"; then
+        MLAT_PRIVATE="$_v"
+    fi
+    unset _v
 fi
 MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
 

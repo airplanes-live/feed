@@ -341,6 +341,8 @@ fi
 # function definitions and the migration ordering contract.
 # shellcheck source=scripts/lib/update-migrations.sh
 source "$GIT/scripts/lib/update-migrations.sh"
+# shellcheck source=scripts/lib/legacy-mlat-translation.sh
+source "$GIT/scripts/lib/legacy-mlat-translation.sh"
 
 # Pre-config retirements run before the config-incomplete setup.sh dispatch
 # below: an operator with a stale legacy unit but missing config still gets
@@ -406,10 +408,10 @@ if [[ "$IMAGE_INSTALL" == "1" ]]; then
     # this fallback, a legacy-image feeder updating to the new schema
     # would silently lose its stored privacy preference.
     if [[ ! -v MLAT_PRIVATE && -v MLAT_MARKER ]]; then
-        case "$MLAT_MARKER" in
-            no) MLAT_PRIVATE="true" ;;
-            *)  MLAT_PRIVATE="false" ;;
-        esac
+        if _v="$(derive_mlat_private_from_marker "$MLAT_MARKER")"; then
+            MLAT_PRIVATE="$_v"
+        fi
+        unset _v
     fi
     MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
     # Legacy GEO_CONFIGURED fallback. Both coords numerically zero (or
@@ -437,10 +439,10 @@ else
     MLAT_USER="${MLAT_USER-}"
     MLAT_ENABLED="${MLAT_ENABLED:-true}"
     if [[ ! -v MLAT_PRIVATE && -v MLAT_MARKER ]]; then
-        case "$MLAT_MARKER" in
-            no) MLAT_PRIVATE="true" ;;
-            *)  MLAT_PRIVATE="false" ;;
-        esac
+        if _v="$(derive_mlat_private_from_marker "$MLAT_MARKER")"; then
+            MLAT_PRIVATE="$_v"
+        fi
+        unset _v
     fi
     MLAT_PRIVATE="${MLAT_PRIVATE:-false}"
     if [[ ! -v GEO_CONFIGURED ]]; then
@@ -530,6 +532,7 @@ historical_daemon_libs=(
     configure-validators.sh
     feed-env-apply.sh
     feed-env-keys.sh
+    legacy-mlat-translation.sh
     state-reader.sh
     state-writer.sh
 )

@@ -202,6 +202,7 @@ SH
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
     mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    install_legacy_mlat_translation_lib "$root"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -326,6 +327,7 @@ SH
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
     mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    install_legacy_mlat_translation_lib "$root"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -406,6 +408,7 @@ SH
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
     mkdir -p "$root/boot" "$root/usr/bin" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    install_legacy_mlat_translation_lib "$root"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
     chmod +x "$root/usr/bin/airplanes-feeder"
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
@@ -564,6 +567,16 @@ install_state_writer_lib() {
     install -d -m 0755 "$root/usr/local/share/airplanes/lib"
     install -m 0644 "$BATS_TEST_DIRNAME/../scripts/lib/state-writer.sh" \
         "$root/usr/local/share/airplanes/lib/state-writer.sh"
+}
+
+# Same as install_state_writer_lib but for the legacy-key translation
+# helpers airplanes-mlat.sh sources defensively when deriving MLAT_PRIVATE
+# from PRIVACY / MLAT_MARKER.
+install_legacy_mlat_translation_lib() {
+    local root="$1"
+    install -d -m 0755 "$root/usr/local/share/airplanes/lib"
+    install -m 0644 "$BATS_TEST_DIRNAME/../scripts/lib/legacy-mlat-translation.sh" \
+        "$root/usr/local/share/airplanes/lib/legacy-mlat-translation.sh"
 }
 
 # Set up an mlat run with stubbed nc/sleep/mlat-client so the daemon
