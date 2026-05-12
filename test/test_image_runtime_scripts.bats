@@ -570,6 +570,7 @@ write_feed_env() {
     grep -qx 'mlat_user=alice' "$root/run/airplanes-mlat/state"
     grep -qx 'latitude=52' "$root/run/airplanes-mlat/state"
     grep -qx 'longitude=13' "$root/run/airplanes-mlat/state"
+    grep -qx 'altitude=35m' "$root/run/airplanes-mlat/state"
     grep -qE '^decided_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$root/run/airplanes-mlat/state"
     # mlat-client was invoked.
     [ -f "$arg_log" ]
@@ -924,6 +925,59 @@ EOF
     [[ "$output" == *"Update Webconfig"* ]]
     # State file is not written: we exit before classifier runs.
     [ ! -f "$root/run/airplanes-mlat/state" ]
+}
+
+@test "airplanes-mlat.sh exits 64 with state=misconfigured when ALTITUDE empty + MLAT_ENABLED=true" {
+    # mlat-client requires --alt; passing an empty value silently fails at
+    # connect time. The classifier fails loud here so the operator sees
+    # reason=altitude_empty in the state file + journal and knows what
+    # to fix.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=""' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 64 ]
+    grep -qx 'state=misconfigured' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=altitude_empty' "$root/run/airplanes-mlat/state"
+    grep -qx 'altitude=' "$root/run/airplanes-mlat/state"
+    [[ "$output" == *"ALTITUDE is empty"* ]]
+}
+
+@test "airplanes-mlat.sh: geo_not_configured wins over empty ALTITUDE (disabled, not misconfigured)" {
+    # If the feeder hasn't been configured (GEO_CONFIGURED false, either
+    # explicit or derived from the (0,0) placeholder pair), it's the
+    # default fresh-feeder state — state=disabled, reason=geo_not_configured.
+    # ALTITUDE empty here is a side-effect of being unconfigured, not an
+    # operator misconfiguration to scream about.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=0' \
+        'LONGITUDE=0' \
+        'ALTITUDE=""' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.live:31090"'
+
+    run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
 }
 
 @test "airplanes-mlat.sh exits 64 with reason=mlat_private_invalid for hand-edited bad MLAT_PRIVATE" {

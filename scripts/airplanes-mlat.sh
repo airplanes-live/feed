@@ -153,10 +153,13 @@ fi
 # defaulting), then explicit MLAT_ENABLED disable (so a user who turns
 # MLAT off on a fresh feeder before configuring geo sees reason=
 # mlat_enabled_false rather than reason=geo_not_configured), then the
-# explicit geo flag. MLAT_USER is no longer a classifier input — empty
-# values are substituted with a per-device Anonymous-<short-id> fallback
-# above, so the only "misconfigured" branch left is the strict
-# MLAT_PRIVATE shape.
+# explicit geo flag, then the empty-ALTITUDE strict-fail. MLAT_USER is
+# no longer a classifier input — empty values are substituted with a
+# per-device Anonymous-<short-id> fallback above. ALTITUDE has no
+# fallback: mlat-client gets `--alt ""` if we let an empty value
+# through and would silently fail at connect time; fail loud at
+# classify time so the state file + journalctl tell the operator
+# what's actually missing.
 _mlat_classify() {
     case "$MLAT_PRIVATE" in
         true|false) ;;
@@ -164,6 +167,7 @@ _mlat_classify() {
     esac
     if [[ "$MLAT_ENABLED" != "true" ]]; then printf 'disabled mlat_enabled_false\n'; return; fi
     if [[ "$GEO_CONFIGURED" != "true" ]]; then printf 'disabled geo_not_configured\n'; return; fi
+    if [[ -z "$ALTITUDE" ]]; then printf 'misconfigured altitude_empty\n'; return; fi
     printf 'enabled ok\n'
 }
 
@@ -180,7 +184,8 @@ airplanes_write_state "$STATE_FILE" \
     "mlat_private=${MLAT_PRIVATE:-}" \
     "geo_configured=${GEO_CONFIGURED:-}" \
     "latitude=${LATITUDE:-}" \
-    "longitude=${LONGITUDE:-}" || true
+    "longitude=${LONGITUDE:-}" \
+    "altitude=${ALTITUDE:-}" || true
 
 case "$STATE" in
     disabled)
@@ -194,6 +199,9 @@ case "$STATE" in
         case "$REASON" in
             mlat_private_invalid)
                 echo "MLAT_PRIVATE must be 'true' or 'false' (got: '${MLAT_PRIVATE:-}'); refusing to start mlat-client." >&2
+                ;;
+            altitude_empty)
+                echo "MLAT_ENABLED=true but ALTITUDE is empty; refusing to start mlat-client." >&2
                 ;;
             *)
                 echo "Misconfigured ($REASON); refusing to start mlat-client." >&2
