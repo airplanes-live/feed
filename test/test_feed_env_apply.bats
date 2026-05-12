@@ -169,6 +169,13 @@ EOF
     grep -q '^ALTITUDE="120.5m"$' "$FEED_ENV"
 }
 
+@test "ALTITUDE canonicalizes 120 (no suffix) to 120m on disk" {
+    seed_feed_env
+    do_apply --no-restart ALTITUDE=120
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q '^ALTITUDE="120m"$' "$FEED_ENV"
+}
+
 @test "ALTITUDE rejects 10001 (out of range)" {
     seed_feed_env
     do_apply --no-restart ALTITUDE=10001m
@@ -201,8 +208,12 @@ EOF
 }
 
 @test "MLAT_ENABLED change restarts airplanes-mlat" {
+    # The library skips host-service restarts when --feed-env != the
+    # canonical /etc/airplanes/feed.env. Override the comparison via
+    # APL_FEED_APPLY_HOST_PATH so the test can exercise the restart
+    # fan-out against the scratch tree.
     seed_feed_env
-    do_apply MLAT_ENABLED=false
+    APL_FEED_APPLY_HOST_PATH="$FEED_ENV" do_apply MLAT_ENABLED=false
     [ "$APL_APPLY_RC" -eq 0 ]
     [ "$APL_APPLY_STATUS" = "applied" ]
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
@@ -210,7 +221,7 @@ EOF
 
 @test "LATITUDE change restarts the full geo fan-out" {
     seed_feed_env
-    do_apply LATITUDE=48.13
+    APL_FEED_APPLY_HOST_PATH="$FEED_ENV" do_apply LATITUDE=48.13
     [ "$APL_APPLY_RC" -eq 0 ]
     grep -q '^systemctl restart readsb$' "$SYSTEMCTL_LOG"
     grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
@@ -224,7 +235,7 @@ LATITUDE="1"
 LONGITUDE="1"
 GEO_CONFIGURED=false
 EOF
-    do_apply GEO_CONFIGURED=true
+    APL_FEED_APPLY_HOST_PATH="$FEED_ENV" do_apply GEO_CONFIGURED=true
     [ "$APL_APPLY_RC" -eq 0 ]
     [ "$APL_APPLY_STATUS" = "applied" ]
     [ ! -s "$SYSTEMCTL_LOG" ]
@@ -332,4 +343,84 @@ EOF
     do_apply --no-restart ALTITUDE=150m
     [ "$APL_APPLY_RC" -eq 0 ]
     grep -q '^GEO_CONFIGURED="true"$' "$FEED_ENV"
+}
+
+@test "missing feed.env is rejected (no silent bootstrap)" {
+    rm -f "$FEED_ENV"
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 3 ]
+    [ "$APL_APPLY_STATUS" = "filesystem_error" ]
+    [ ! -f "$FEED_ENV" ]
+}
+
+@test "preserved value with forbidden character is rejected" {
+    # Hand-edited feed.env with a shell metachar in a preserved key.
+    # Re-emitting it during a normal save would bake it into the new
+    # file; the library must reject instead.
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="52.5"
+LONGITUDE="13.4"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+GAIN="auto"
+EOF
+    # Append a dangerous preserved value that bypasses the per-key
+    # validator path because we are not touching that key in the payload.
+    printf 'DUMP978_SDR_SERIAL="bad`payload`"\n' >> "$FEED_ENV"
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    [ -n "${APL_APPLY_ERRORS[DUMP978_SDR_SERIAL]}" ]
+}
+
+@test "non-host feed.env path skips service restarts" {
+    seed_feed_env
+    : > "$SYSTEMCTL_LOG"
+    do_apply MLAT_ENABLED=false
+    [ "$APL_APPLY_RC" -eq 0 ]
+    # Default seeds feed_env under $ROOT_DIR/etc/airplanes (not the host
+    # /etc path), so restart_set must be suppressed.
+    [ ! -s "$SYSTEMCTL_LOG" ]
+}
+
+@test "malformed feed.env lines silently dropped" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="52.5"
+GARBAGE_LINE_WITHOUT_EQUALS
+LONGITUDE="13.4"
+GEO_CONFIGURED=true
+ALTITUDE="100m"
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+9_BAD_LEADING_DIGIT_KEY="x"
+EOF
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    grep -q '^MLAT_PRIVATE="true"$' "$FEED_ENV"
+    # Malformed keys/lines do not survive the rewrite.
+    ! grep -q '^GARBAGE_LINE' "$FEED_ENV"
+    ! grep -q '^9_BAD' "$FEED_ENV"
+}
+
+@test "comment after bare value rejected as malformed" {
+    cat > "$FEED_ENV" <<'EOF'
+LATITUDE="52.5"
+LONGITUDE="13.4"
+GEO_CONFIGURED=true
+ALTITUDE="100m"
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+GAIN=auto # this is a comment
+EOF
+    do_apply --no-restart MLAT_PRIVATE=true
+    # The malformed GAIN line is dropped, so the merged map sees no
+    # GAIN key. That's fine — the payload only touches MLAT_PRIVATE.
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    # The rewritten file must NOT contain the broken comment-tail.
+    ! grep -q 'this is a comment' "$FEED_ENV"
 }

@@ -35,19 +35,31 @@ APL_FEED_APPLY_LOCK_DEFAULT="${APL_FEED_APPLY_LOCK_DEFAULT:-/run/airplanes/feed-
 APL_FEED_APPLY_LOCK_TIMEOUT_DEFAULT="${APL_FEED_APPLY_LOCK_TIMEOUT_DEFAULT:-30}"
 
 # Universal-reject character set. Mirrors Go configspec.universalReject.
-# Each char in this list, if present in a candidate value, fails the
-# universal-reject scan regardless of per-key shape. Defense-in-depth: a
-# regex-passing value containing a metachar cannot reach feed.env.
+# Defense-in-depth: a regex-passing value containing a shell metachar
+# cannot reach feed.env (which gets `source`d by airplanes-feed.sh and
+# -mlat.sh). Bash strings cannot carry an embedded NUL, so NUL is
+# rejected by checking the byte count of the value matches a NUL-free
+# `tr -d` of itself. The other rejected bytes are kept in a single
+# string and scanned by `[[ == *X* ]]`.
 #   "  double quote     \   backslash
 #   $  dollar           `   backtick
 #   ;  statement sep    &   background
 #   |  pipe             <   redirect-in
 #   >  redirect-out     #   comment
-#   LF / CR / NUL       '   single quote
-_APL_FEED_APPLY_UNIVERSAL_REJECT_CHARS=$'\"\\$\x60;&|<>#\n\r\0\047'
+#   LF / CR             '   single quote
+_APL_FEED_APPLY_UNIVERSAL_REJECT_CHARS=$'\"\\$\x60;&|<>#\n\r\047'
 
 _apl_feed_apply_universal_reject() {
     local value="$1" i ch
+    # Reject embedded NUL up front. Bash variable assignment via $(...) /
+    # read silently strips NUL bytes, so by the time a value reaches this
+    # function it should be NUL-free. The byte-count check below is the
+    # belt-and-braces guard for the case where it isn't.
+    local stripped
+    stripped="$(printf '%s' "$value" | tr -d '\0')"
+    if [[ "$stripped" != "$value" ]]; then
+        return 1
+    fi
     for (( i = 0; i < ${#_APL_FEED_APPLY_UNIVERSAL_REJECT_CHARS}; i++ )); do
         ch="${_APL_FEED_APPLY_UNIVERSAL_REJECT_CHARS:$i:1}"
         if [[ "$value" == *"$ch"* ]]; then
@@ -225,39 +237,51 @@ _apl_feed_apply_read() {
 
     [[ -f "$feed_env" ]] || return 0
 
+    # Strict line shapes accepted (mirrors Go apply-config's keyLine):
+    #   KEY=value                  (bare value runs to end of line; no `#` comment splitting)
+    #   KEY="value"                (double-quoted; trailing whitespace tolerated)
+    #   KEY='value'                (single-quoted; trailing whitespace tolerated)
+    # Anything else (mid-line `#`, unterminated quote, malformed key) is
+    # silently dropped so the merged map cannot inherit a corrupt state.
     local line raw_key value
     while IFS= read -r line || [[ -n "$line" ]]; do
-        # Strip leading whitespace.
         line="${line#"${line%%[![:space:]]*}"}"
-        # Skip comments and blank lines.
+        line="${line%$'\r'}"
         [[ -z "$line" ]] && continue
         [[ "${line:0:1}" == "#" ]] && continue
-        # Match KEY=value (key up to first =).
-        if [[ "$line" != *=* ]]; then
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            raw_key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+        else
             continue
         fi
-        raw_key="${line%%=*}"
-        value="${line#*=}"
-        # Trim trailing CR if present.
-        value="${value%$'\r'}"
-        # Strip a single trailing newline if present (read -r already strips).
-        # Strip wrapping quotes (single OR double) when balanced.
-        if [[ ${#value} -ge 2 ]]; then
-            if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
-                value="${value:1:-1}"
-                # Unescape Go-style \" \\ \$ \` inside double-quoted value.
+        # Quote handling: only accept genuinely-terminated quoted forms.
+        # An unterminated `"foo` or `'foo` is dropped rather than treated
+        # as a bare value (which would silently swallow the wrong byte).
+        if [[ "${value:0:1}" == '"' ]]; then
+            if [[ "$value" =~ ^\"(([^\"\\\\]|\\\\.)*)\"[[:space:]]*$ ]]; then
+                value="${BASH_REMATCH[1]}"
                 value="${value//\\\\/$'\x01'}"
                 value="${value//\\\"/\"}"
                 value="${value//\\\$/\$}"
                 value="${value//\\\`/\`}"
                 value="${value//$'\x01'/\\}"
-            elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
-                value="${value:1:-1}"
+            else
+                continue
             fi
+        elif [[ "${value:0:1}" == "'" ]]; then
+            if [[ "$value" =~ ^\'([^\']*)\'[[:space:]]*$ ]]; then
+                value="${BASH_REMATCH[1]}"
+            else
+                continue
+            fi
+        else
+            # Bare value: trim trailing whitespace; refuse a mid-line `#`
+            # (Go also treats `KEY=auto # note` as a malformed line, not
+            # `auto`).
+            value="${value%"${value##*[![:space:]]}"}"
+            [[ "$value" == *' #'* || "$value" == *$'\t#'* ]] && continue
         fi
-        # Only keep alpha/digit/underscore keys; ignore anything weird so a
-        # malformed line doesn't pollute the merged map.
-        [[ "$raw_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
 
         if [[ -z "${out_ref[$raw_key]+set}" ]]; then
             APL_APPLY_KEY_ORDER+=("$raw_key")
@@ -354,6 +378,17 @@ _apl_feed_apply_restart_services() {
         fi
     done
     (( ${#APL_APPLY_PENDING_RESTART[@]} == 0 ))
+}
+
+# ALTITUDE canonicalization: ensure an explicit `m`/`ft` suffix on disk.
+# Mirrors Go configspec.Canonicalize. Validate must succeed first.
+_apl_feed_apply_canonicalize_altitude() {
+    local v="$1"
+    case "$v" in
+        *m) printf '%s' "$v" ;;
+        *ft) printf '%s' "$v" ;;
+        *) printf '%sm' "$v" ;;
+    esac
 }
 
 # Reset the result globals to a clean slate.
@@ -468,6 +503,13 @@ apl_feed_apply() {
             APL_APPLY_STATUS=rejected
             return 2
         fi
+        # Canonicalize: ALTITUDE always carries an explicit `m`/`ft`
+        # suffix on disk. Mirrors Go configspec.Canonicalize so a
+        # webconfig-validated `120` and a CLI-validated `120` produce
+        # the same on-disk byte sequence.
+        if [[ "$key" == "ALTITUDE" ]]; then
+            payload[$key]="$(_apl_feed_apply_canonicalize_altitude "${payload[$key]}")"
+        fi
     done
 
     # Acquire lock (skipped in build mode where /run/airplanes/ may not exist).
@@ -492,6 +534,17 @@ apl_feed_apply() {
         fi
     fi
 
+    # feed.env must exist. apl-feed apply does not bootstrap a fresh
+    # config from a single-key POST — that would silently produce a
+    # half-formed file. Matches Go apply-config's behavior of treating
+    # a missing file as an internal error.
+    if [[ ! -f "$feed_env" ]]; then
+        APL_APPLY_STATUS=filesystem_error
+        APL_APPLY_ERROR_MESSAGE="feed.env not found at $feed_env"
+        [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
+        return 3
+    fi
+
     # Read current feed.env into merged, then overlay payload.
     if ! _apl_feed_apply_read "$feed_env" merged; then
         APL_APPLY_STATUS=filesystem_error
@@ -499,6 +552,20 @@ apl_feed_apply() {
         [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
         return 3
     fi
+
+    # Re-scan every preserved value through universal-reject. If a
+    # hand-edited feed.env contains a forbidden byte, the per-key payload
+    # validation would have left it untouched; without this check, the
+    # rewriter would re-emit it verbatim and bake it into the new file.
+    local pk
+    for pk in "${!merged[@]}"; do
+        if ! _apl_feed_apply_universal_reject "${merged[$pk]}"; then
+            APL_APPLY_ERRORS[$pk]="existing on-disk value contains a forbidden character; edit feed.env by hand"
+            APL_APPLY_STATUS=rejected
+            [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
+            return 2
+        fi
+    done
 
     APL_APPLY_CHANGED=()
     for key in "${!payload[@]}"; do
@@ -555,6 +622,18 @@ apl_feed_apply() {
     [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
 
     if (( skip_restart == 1 )); then
+        APL_APPLY_STATUS=applied
+        return 0
+    fi
+
+    # Don't touch host services when writing to a non-host feed.env
+    # (--feed-env pointing somewhere under a /mnt or /tmp scratch tree).
+    # The canonical host path is /etc/airplanes/feed.env; anything else
+    # is by definition not the live system. APL_FEED_APPLY_HOST_PATH
+    # overrides the comparison for tests that want to exercise the
+    # restart fan-out against a scratch feed.env.
+    local host_path="${APL_FEED_APPLY_HOST_PATH:-/etc/airplanes/feed.env}"
+    if [[ "$feed_env" != "$host_path" ]]; then
         APL_APPLY_STATUS=applied
         return 0
     fi
