@@ -17,6 +17,8 @@ FEEDER_ID="$(airplanes_path /etc/airplanes/feeder-id)"
 LEGACY_UUID="$IPATH/airplanes-uuid"
 SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
 TAR1090_DIR="$(airplanes_path /usr/local/share/tar1090)"
+LOCAL_BIN_APL_FEED="$(airplanes_path /usr/local/bin/apl-feed)"
+IMAGE_INSTALL_MARKER="$(airplanes_path /etc/airplanes/image-install)"
 
 systemctl disable --now airplanes-mlat
 systemctl disable --now airplanes-mlat2 &>/dev/null
@@ -33,6 +35,11 @@ rm -f "$SYSTEMD_DIR/airplanes-mlat.service"
 rm -f "$SYSTEMD_DIR/airplanes-mlat2.service"
 rm -f "$SYSTEMD_DIR/airplanes-feed.service"
 systemctl daemon-reload || true
+
+# Named-path artifacts written by update.sh outside $IPATH. The IPATH wipe
+# below handles everything inside it.
+rm -f "$LOCAL_BIN_APL_FEED"
+rm -f "$IMAGE_INSTALL_MARKER"
 
 # Preserve the legacy fallback in memory before wiping IPATH so the canonical
 # feeder-id can be materialized from it if no canonical copy exists. The
