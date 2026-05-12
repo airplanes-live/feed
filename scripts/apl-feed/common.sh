@@ -155,11 +155,11 @@ feed_env_write_path() {
 # so this is satisfied in production) with --no-restart, since writer
 # callers own the post-write restart themselves.
 #
-# Errors from the bootstrap propagate to the caller so the writer can
-# decide whether to continue with a fresh canonical or abort. Returns 0
-# in the non-bridged-legacy case so a manual-install box with a missing
-# feed.env hits apl_feed_apply's normal filesystem_error path — the
-# operator there is expected to run setup/install first, not import.
+# Always returns 0 so bare callers under apl-feed.sh's `set -euo pipefail`
+# don't exit before _mlat_emit_result / _uat_emit_result can surface a
+# structured error. A failed bootstrap is logged to stderr; the caller's
+# subsequent apl_feed_apply then produces a structured filesystem_error
+# because canonical still doesn't exist — the user sees both lines.
 feed_env_ensure_canonical_for_write() {
     local canonical
     canonical="$(feed_env_write_path)"
@@ -178,7 +178,12 @@ feed_env_ensure_canonical_for_write() {
     fi
 
     echo "Bootstrapping canonical feed.env from $boot_config" >&2
-    apl_feed_import_legacy_config --no-restart "$boot_config"
+    local rc=0
+    apl_feed_import_legacy_config --no-restart "$boot_config" || rc=$?
+    if (( rc != 0 )); then
+        echo "feed_env_ensure_canonical_for_write: bootstrap import failed rc=$rc; the writer's apply will surface a structured filesystem_error next" >&2
+    fi
+    return 0
 }
 
 feed_env_paths() {

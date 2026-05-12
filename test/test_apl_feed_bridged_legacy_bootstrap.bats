@@ -130,3 +130,32 @@ EOF
     feed_env_second="$(cat "$ROOT_DIR/etc/airplanes/feed.env")"
     [ "$feed_env_first" = "$feed_env_second" ]
 }
+
+@test "bootstrap failure under set -e does not exit before structured error" {
+    # apl-feed.sh runs set -euo pipefail. A bare feed_env_ensure_canonical_
+    # for_write that returned non-zero on bootstrap failure would exit the
+    # script before _mlat_emit_result could surface the structured error
+    # to the operator. Verify the helper always returns 0 so the bare-call
+    # writers stay set-e-safe.
+    rm -rf "$ROOT_DIR/etc/airplanes"
+    # Stub the import to force a failure path.
+    apl_feed_import_legacy_config() { return 1; }
+
+    run bash -c '
+set -euo pipefail
+source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/configure-validators.sh"
+source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/feed-env-keys.sh"
+source "'"$BATS_TEST_DIRNAME"'/../scripts/apl-feed/common.sh"
+ROOT='"$ROOT_DIR"'
+mkdir -p "$ROOT/usr/bin" "$ROOT/boot"
+: > "$ROOT/usr/bin/airplanes-feeder"
+chmod +x "$ROOT/usr/bin/airplanes-feeder"
+: > "$ROOT/boot/airplanes-config.txt"
+apl_feed_import_legacy_config() { return 1; }
+feed_env_ensure_canonical_for_write
+echo "survived: rc=$?"
+'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'survived: rc=0'* ]]
+    [[ "$output" == *'bootstrap import failed'* ]]
+}
