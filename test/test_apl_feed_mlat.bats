@@ -654,3 +654,59 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *'exactly three positional args'* ]]
 }
+
+# --- setup helper (single 7-key transaction) ---
+
+@test "_mlat_rewrite_feed_env_setup writes all seven keys atomically; preserves unrelated" {
+    write_feed_env_with_private "alice" "false" "false"
+    local feed_env="$ROOT_DIR/etc/airplanes/feed.env"
+
+    _mlat_rewrite_feed_env_setup "$feed_env" \
+        "48.137" "11.575" "520m" "true" "bob-99" "true" "true"
+
+    grep -qx 'LATITUDE="48.137"'    "$feed_env"
+    grep -qx 'LONGITUDE="11.575"'   "$feed_env"
+    grep -qx 'ALTITUDE="520m"'      "$feed_env"
+    grep -qx 'GEO_CONFIGURED=true'  "$feed_env"
+    grep -qx 'MLAT_USER="bob-99"'   "$feed_env"
+    grep -qx 'MLAT_ENABLED=true'    "$feed_env"
+    grep -qx 'MLAT_PRIVATE=true'    "$feed_env"
+    # The unrelated INPUT key survives unchanged.
+    grep -qx 'INPUT="127.0.0.1:30005"' "$feed_env"
+}
+
+@test "_mlat_rewrite_feed_env_setup leaves no duplicate keys after rerun" {
+    write_feed_env_with_private "alice" "false" "false"
+    local feed_env="$ROOT_DIR/etc/airplanes/feed.env"
+
+    _mlat_rewrite_feed_env_setup "$feed_env" "1" "2" "3m" "true" "u1" "true" "false"
+    _mlat_rewrite_feed_env_setup "$feed_env" "4" "5" "6m" "true" "u2" "true" "true"
+
+    [ "$(grep -c '^LATITUDE='       "$feed_env")" -eq 1 ]
+    [ "$(grep -c '^LONGITUDE='      "$feed_env")" -eq 1 ]
+    [ "$(grep -c '^ALTITUDE='       "$feed_env")" -eq 1 ]
+    [ "$(grep -c '^GEO_CONFIGURED=' "$feed_env")" -eq 1 ]
+    [ "$(grep -c '^MLAT_USER='      "$feed_env")" -eq 1 ]
+    [ "$(grep -c '^MLAT_ENABLED='   "$feed_env")" -eq 1 ]
+    [ "$(grep -c '^MLAT_PRIVATE='   "$feed_env")" -eq 1 ]
+}
+
+@test "_mlat_rewrite_feed_env_setup refuses unmigrated feed.env (no MLAT_PRIVATE=)" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+INPUT="127.0.0.1:30005"
+MLAT_USER="alice"
+MLAT_ENABLED=false
+LATITUDE="0"
+LONGITUDE="0"
+ALTITUDE="0"
+GEO_CONFIGURED=false
+EOF
+    local feed_env="$ROOT_DIR/etc/airplanes/feed.env"
+
+    run _mlat_rewrite_feed_env_setup "$feed_env" "1" "2" "3m" "true" "u" "true" "true"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'no MLAT_PRIVATE='* ]]
+    # File untouched.
+    grep -qx 'MLAT_ENABLED=false' "$feed_env"
+}

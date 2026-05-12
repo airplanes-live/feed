@@ -315,6 +315,46 @@ _mlat_rewrite_feed_env_geo() {
     mv -f "$tmp" "$feed_env"
 }
 
+# Setup-only seven-key transaction. Writes
+# LATITUDE/LONGITUDE/ALTITUDE/GEO_CONFIGURED/MLAT_USER/MLAT_ENABLED/MLAT_PRIVATE
+# in a single rewrite so a wizard run either commits the full new state or
+# fails before touching disk. Preflights every migration marker so we don't
+# enter the rewrite and then die halfway.
+_mlat_rewrite_feed_env_setup() {
+    local feed_env="$1" new_lat="$2" new_lon="$3" new_alt="$4" new_geo="$5"
+    local new_user="$6" new_enabled="$7" new_private="$8"
+
+    [[ -f "$feed_env" ]] || die "feed.env not found at $feed_env; run setup first"
+    local key
+    for key in MLAT_USER MLAT_ENABLED MLAT_PRIVATE GEO_CONFIGURED; do
+        if ! grep -qE "^${key}=" "$feed_env"; then
+            die "feed.env at $feed_env appears unmigrated (no ${key}= line); run \`sudo /usr/local/share/airplanes/update.sh\` first"
+        fi
+    done
+
+    local tmp escaped
+    tmp="$(mktemp "${feed_env}.XXXXXX")"
+    grep -vE '^(LATITUDE|LONGITUDE|ALTITUDE|GEO_CONFIGURED|MLAT_USER|MLAT_ENABLED|MLAT_PRIVATE)=' "$feed_env" > "$tmp" || true
+    # MLAT_USER may contain operator-supplied characters even after our
+    # regex check — escape the same way migrate_user_to_mlat_split does.
+    escaped="${new_user//\\/\\\\}"
+    escaped="${escaped//\$/\\\$}"
+    escaped="${escaped//\`/\\\`}"
+    escaped="${escaped//\"/\\\"}"
+    {
+        printf 'LATITUDE="%s"\n'  "$new_lat"
+        printf 'LONGITUDE="%s"\n' "$new_lon"
+        printf 'ALTITUDE="%s"\n'  "$new_alt"
+        printf 'GEO_CONFIGURED=%s\n' "$new_geo"
+        printf 'MLAT_USER="%s"\n'   "$escaped"
+        printf 'MLAT_ENABLED=%s\n'  "$new_enabled"
+        printf 'MLAT_PRIVATE=%s\n'  "$new_private"
+    } >> "$tmp"
+    chmod --reference="$feed_env" "$tmp" 2>/dev/null || true
+    chown --reference="$feed_env" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$feed_env"
+}
+
 apl_feed_mlat_user() {
     local clear=0 name="" name_set=0
     while [[ $# -gt 0 ]]; do
@@ -416,8 +456,8 @@ apl_feed_mlat_geo() {
 
 # Interactive setup. Collects every input first (cancel-aware via Ctrl-C
 # at any prompt; no partial writes), validates each before any disk mutation,
-# then performs a single atomic geo write + a single MLAT_USER write +
-# enable, with one final service restart. The `read -r -p` pattern matches
+# then commits the full new state in a single atomic seven-key rewrite, with
+# one final service restart. The `read -r -p` pattern matches
 # `apl-feed 978 setup` — no whiptail dependency on standalone-feed boxes.
 apl_feed_mlat_setup() {
     local opt_rc
@@ -434,6 +474,13 @@ apl_feed_mlat_setup() {
         die "mlat setup is interactive; for non-interactive use, run \`apl-feed mlat geo <lat> <lon> <alt>\` then \`apl-feed mlat user <name>\` (optional) then \`apl-feed mlat enable\`"
     fi
 
+    # Precheck that configure-validators.sh is actually present (not stubbed)
+    # so we don't drop the operator into a forever-loop where every input is
+    # "Invalid; try again" because the validator returned 2.
+    if ! valid_latitude "0" >/dev/null 2>&1; then
+        die "configure-validators.sh missing from \$APL_FEED_DAEMON_LIB_DIR; reinstall feed before running \`apl-feed mlat setup\`"
+    fi
+
     local feed_env
     feed_env="$(feed_env_path)"
     [[ -f "$feed_env" ]] || die "feed.env not found at $feed_env; run setup first"
@@ -446,11 +493,12 @@ apl_feed_mlat_setup() {
     echo
 
     local lat lon alt name reply
-    local current_lat current_lon current_alt current_user
+    local current_lat current_lon current_alt current_user current_private
     current_lat="$(feed_env_get LATITUDE 2>/dev/null || true)"
     current_lon="$(feed_env_get LONGITUDE 2>/dev/null || true)"
     current_alt="$(feed_env_get ALTITUDE 2>/dev/null || true)"
     current_user="$(feed_env_get MLAT_USER 2>/dev/null || true)"
+    current_private="$(feed_env_get MLAT_PRIVATE 2>/dev/null || true)"
 
     while :; do
         read -r -p "Latitude  (decimal, -90..90)${current_lat:+ [$current_lat]}: " lat
@@ -474,12 +522,31 @@ apl_feed_mlat_setup() {
         echo "  Invalid; try again (e.g. 120m or 400ft)." >&2
     done
 
+    # MLAT name prompt. Blank input keeps the current value only when the
+    # current value already passes the strict regex — otherwise the prompt
+    # forces the operator to either supply a valid name or `-` to clear.
+    # This prevents a legacy `sanitize_mlat_user`-mangled name (spaces,
+    # brackets) from quietly round-tripping through setup.
+    local current_user_valid=0
+    if [[ -z "$current_user" || "$current_user" =~ $_MLAT_USER_RE ]]; then
+        current_user_valid=1
+    fi
     while :; do
-        local default_user="${current_user:-<empty — daemon picks Anonymous-<short-feeder-id>>}"
-        read -r -p "MLAT name (1-64 chars in [A-Za-z0-9_-], blank to keep empty) [$default_user]: " name
+        local default_user_display
+        if (( current_user_valid )); then
+            default_user_display="${current_user:-<empty — daemon picks Anonymous-<short-feeder-id>>}"
+        else
+            default_user_display="<current \"$current_user\" is invalid; supply a new name or '-' to clear>"
+        fi
+        read -r -p "MLAT name (1-64 chars in [A-Za-z0-9_-], blank to keep current, '-' to clear) [$default_user_display]: " name
         if [[ -z "$name" ]]; then
-            name="$current_user"
-            break
+            if (( current_user_valid )); then
+                name="$current_user"
+                break
+            else
+                echo "  Current MLAT_USER is invalid; please type a new name or '-' to clear." >&2
+                continue
+            fi
         elif [[ "$name" == "-" ]]; then
             name=""
             break
@@ -491,17 +558,41 @@ apl_feed_mlat_setup() {
         fi
     done
 
-    local private="false"
-    read -r -p "Hide name on the public MLAT map? [y/N] " reply
-    case "${reply,,}" in
-        y|yes) private="true" ;;
+    # Privacy prompt. Default matches the current on-disk value so pressing
+    # Enter is idempotent — a feeder running MLAT_PRIVATE=true is not flipped
+    # back to public just because the operator re-ran setup and didn't read
+    # the prompt closely.
+    local private="${current_private:-false}"
+    case "$private" in
+        true|false) ;;
+        *) private="false" ;;
     esac
+    local privacy_prompt_default privacy_prompt_yes_no
+    if [[ "$private" == "true" ]]; then
+        privacy_prompt_default="Y"
+        privacy_prompt_yes_no="[Y/n]"
+    else
+        privacy_prompt_default="N"
+        privacy_prompt_yes_no="[y/N]"
+    fi
+    read -r -p "Hide name on the public MLAT map? $privacy_prompt_yes_no " reply
+    case "${reply,,}" in
+        ""|"${privacy_prompt_default,,}") ;;  # keep current default
+        y|yes) private="true" ;;
+        n|no)  private="false" ;;
+        *)
+            echo "  Unrecognized answer; keeping MLAT_PRIVATE=$private." >&2
+            ;;
+    esac
+
+    local norm_alt
+    norm_alt="$(normalize_altitude "$alt")"
 
     echo
     echo "About to write:"
     echo "  LATITUDE=$lat"
     echo "  LONGITUDE=$lon"
-    echo "  ALTITUDE=$(normalize_altitude "$alt")"
+    echo "  ALTITUDE=$norm_alt"
     echo "  GEO_CONFIGURED=true"
     echo "  MLAT_USER=\"$name\""
     echo "  MLAT_PRIVATE=$private"
@@ -512,18 +603,11 @@ apl_feed_mlat_setup() {
         *) echo "Aborted — no changes written."; return 0 ;;
     esac
 
-    # Pre-checks done. Mutate disk: geo first, then user, then private,
-    # then enable. Each helper grabs its own temp+rename critical section.
-    local norm_alt
-    norm_alt="$(normalize_altitude "$alt")"
-    _mlat_rewrite_feed_env_geo "$feed_env" "$lat" "$lon" "$norm_alt" "true"
-    _mlat_rewrite_feed_env_user "$feed_env" "$name"
-    _mlat_rewrite_feed_env_private "$feed_env" "$private"
-    # Enable last so an earlier failure can't leave a partially-configured
-    # MLAT_ENABLED=true state.
-    local current
-    current="$(feed_env_get MLAT_USER 2>/dev/null || true)"
-    _mlat_rewrite_feed_env "$feed_env" "$current" "true"
+    # Single seven-key transaction: pre-flight every migration marker, then
+    # one atomic rewrite. Avoids the half-configured state that a sequence
+    # of single-key rewrites would leave if any intermediate write failed.
+    _mlat_rewrite_feed_env_setup \
+        "$feed_env" "$lat" "$lon" "$norm_alt" "true" "$name" "true" "$private"
     echo "feed.env updated; MLAT enabled."
 
     if _mlat_restart_service; then
