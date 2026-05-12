@@ -14,6 +14,8 @@ setup() {
     export TMPDIR
 
     bats_exit_trap="$(trap -p EXIT)"
+    # shellcheck source=../scripts/lib/configure-validators.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/configure-validators.sh"
     # shellcheck source=../scripts/apl-feed/common.sh
     source "$LIB_DIR/common.sh"
     # shellcheck source=../scripts/apl-feed/mlat.sh
@@ -47,6 +49,7 @@ MLAT_PRIVATE=false
 LATITUDE="52.52"
 LONGITUDE="13.40"
 ALTITUDE="35m"
+GEO_CONFIGURED=true
 EOF
 }
 
@@ -59,6 +62,42 @@ MLAT_PRIVATE=$3
 LATITUDE="52.52"
 LONGITUDE="13.40"
 ALTITUDE="35m"
+GEO_CONFIGURED=true
+EOF
+}
+
+# Variants used by GEO-gate tests on `apl_feed_mlat_enable`.
+write_feed_env_no_geo_flag() {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+INPUT="127.0.0.1:30005"
+MLAT_USER="$1"
+MLAT_ENABLED=$2
+MLAT_PRIVATE=false
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35m"
+GEO_CONFIGURED=false
+EOF
+}
+
+write_feed_env_no_axis() {
+    # $1 user, $2 enabled, $3 axis-to-blank (LATITUDE|LONGITUDE|ALTITUDE)
+    local user="$1" enabled="$2" blank="$3"
+    local lat='"52.52"' lon='"13.40"' alt='"35m"'
+    case "$blank" in
+        LATITUDE)  lat='""' ;;
+        LONGITUDE) lon='""' ;;
+        ALTITUDE)  alt='""' ;;
+    esac
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+INPUT="127.0.0.1:30005"
+MLAT_USER="$user"
+MLAT_ENABLED=$enabled
+MLAT_PRIVATE=false
+LATITUDE=$lat
+LONGITUDE=$lon
+ALTITUDE=$alt
+GEO_CONFIGURED=true
 EOF
 }
 
@@ -118,7 +157,7 @@ EOF
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
 }
 
-@test "enable with empty MLAT_USER fills in Anonymous default" {
+@test "enable preserves empty MLAT_USER — daemon Anonymous-<short-id> fallback owns the runtime name" {
     write_feed_env "" "false"
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
@@ -127,8 +166,7 @@ EOF
     run apl_feed_mlat_enable
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *'MLAT_USER was empty; filling in with default "Anonymous"'* ]]
-    grep -q '^MLAT_USER="Anonymous"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^MLAT_USER=""$' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^MLAT_ENABLED=true$' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
@@ -353,4 +391,266 @@ EOF
     grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
     [ ! -f "$SYSTEMCTL_LOG" ] || ! grep -q 'restart' "$SYSTEMCTL_LOG"
     [[ "$output" == *'AIRPLANES_BUILD_MODE'* ]]
+}
+
+# --- mlat enable geo gate (α: belt-and-braces; canonical source GEO_CONFIGURED) ---
+
+@test "enable refuses when GEO_CONFIGURED=false" {
+    write_feed_env_no_geo_flag "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_enable
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'location not configured'* ]]
+    [[ "$output" == *'apl-feed mlat setup'* ]]
+    # File untouched.
+    grep -qx 'MLAT_ENABLED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "enable refuses when GEO_CONFIGURED is missing" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+INPUT="127.0.0.1:30005"
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35m"
+EOF
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_enable
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'location not configured'* ]]
+}
+
+@test "enable refuses when LATITUDE is empty (belt-and-braces)" {
+    write_feed_env_no_axis "alice" "false" LATITUDE
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_enable
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'LATITUDE is empty'* ]]
+}
+
+@test "enable refuses when ALTITUDE is empty (belt-and-braces)" {
+    write_feed_env_no_axis "alice" "false" ALTITUDE
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_enable
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'ALTITUDE is empty'* ]]
+}
+
+# --- mlat user ---
+
+@test "mlat user <name>: writes MLAT_USER, preserves MLAT_ENABLED, restarts service" {
+    write_feed_env "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_user bob-123
+
+    grep -qx 'MLAT_USER="bob-123"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'MLAT_ENABLED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
+}
+
+@test "mlat user --clear: writes empty MLAT_USER" {
+    write_feed_env "alice" "true"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_user --clear
+
+    grep -qx 'MLAT_USER=""' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'MLAT_ENABLED=true' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "mlat user: rejects name with space" {
+    write_feed_env "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_user "alice rabbit"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'MLAT_USER must match'* ]]
+    grep -qx 'MLAT_USER="alice"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "mlat user: rejects name >64 chars" {
+    write_feed_env "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    local long
+    long="$(printf 'a%.0s' {1..65})"
+    run apl_feed_mlat_user "$long"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'MLAT_USER must match'* ]]
+}
+
+@test "mlat user: rejects shell-metachar even when regex-passing" {
+    # The regex prevents most metas anyway, but assert that universal-reject
+    # catches the cross-cutting cases (\\ would actually fail the regex too).
+    write_feed_env "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_user 'bad$name'
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'MLAT_USER must match'* ]] || [[ "$output" == *'forbidden shell metacharacter'* ]]
+}
+
+@test "mlat user: --clear with a positional name dies" {
+    write_feed_env "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_user --clear bob
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'mutually exclusive'* ]]
+}
+
+@test "mlat user: no args dies" {
+    write_feed_env "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_user
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'provide a name or use --clear'* ]]
+}
+
+# --- mlat geo ---
+
+@test "mlat geo writes four keys, derives GEO_CONFIGURED=true for non-zero coords, restarts" {
+    write_feed_env_no_geo_flag "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_geo 48.137 11.575 520m
+
+    grep -qx 'LATITUDE="48.137"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'LONGITUDE="11.575"' "$ROOT_DIR/etc/airplanes/feed.env"
+    # normalize_altitude is a no-op for the `m` suffix; only `ft` gets converted.
+    grep -qx 'ALTITUDE="520m"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'GEO_CONFIGURED=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
+}
+
+@test "mlat geo at (0, 0) derives GEO_CONFIGURED=false (Atlantic placeholder)" {
+    write_feed_env_no_geo_flag "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_geo 0 0 0m
+
+    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "mlat geo at (0.0, 0) still derives false (decimal-zero forms)" {
+    write_feed_env_no_geo_flag "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_mlat_geo 0.0 -0 0m
+
+    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "mlat geo rejects invalid latitude" {
+    write_feed_env_no_geo_flag "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_geo 91 0 0m
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'LATITUDE must be'* ]]
+    # File untouched.
+    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "mlat geo rejects wrong arg count" {
+    write_feed_env "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_mlat_geo 52.5 13.4
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'exactly three positional args'* ]]
+
+    run apl_feed_mlat_geo 52.5 13.4 120m extra
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'exactly three positional args'* ]]
+}
+
+# --- mlat setup ---
+
+@test "mlat setup: dies on non-TTY stdin with a guidance message" {
+    write_feed_env "alice" "false"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    # bats's run captures stdin from a pipe so [[ -t 0 ]] is false.
+    run apl_feed_mlat_setup
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'mlat setup is interactive'* ]]
+    [[ "$output" == *'apl-feed mlat geo'* ]]
+}
+
+# --- dispatch_mlat new subcommands ---
+
+@test "dispatch_mlat user routes to apl_feed_mlat_user (no name → die)" {
+    run bash -c "
+        set -euo pipefail
+        source '$LIB_DIR/common.sh'
+        source '$LIB_DIR/mlat.sh'
+        dispatch_mlat user
+    "
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'provide a name or use --clear'* ]]
+}
+
+@test "dispatch_mlat geo routes to apl_feed_mlat_geo (no args → die)" {
+    run bash -c "
+        set -euo pipefail
+        source '$LIB_DIR/common.sh'
+        source '$LIB_DIR/mlat.sh'
+        dispatch_mlat geo
+    "
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'exactly three positional args'* ]]
 }

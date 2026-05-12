@@ -483,6 +483,12 @@ install -d -m 0755 "$IPATH/lib"
 # and are NOT installed at $IPATH; copy selectively rather than wildcard.
 install -m 0644 "$GIT"/scripts/lib/state-writer.sh "$IPATH/lib"
 install -m 0644 "$GIT"/scripts/lib/state-reader.sh "$IPATH/lib"
+# configure-validators.sh is a pure-function lib (regex + range checks for
+# lat/lon/altitude/mlat-user). configure.sh consumes it at install time
+# under $GIT/scripts/lib; apl-feed sources it at runtime to share validation
+# with the interactive setup path. Installed at $IPATH/lib so the CLI works
+# the same on standalone-feed installs and image installs.
+install -m 0644 "$GIT"/scripts/lib/configure-validators.sh "$IPATH/lib"
 
 # Historical-ship manifests for the wildcard cp/install above. Each entry is
 # a script we have ever shipped to $IPATH (top-level) or $IPATH/apl-feed/.
@@ -512,6 +518,7 @@ historical_apl_feed_modules=(
     uat.sh
 )
 historical_daemon_libs=(
+    configure-validators.sh
     state-reader.sh
     state-writer.sh
 )
