@@ -410,3 +410,43 @@ EOF
     # The rewritten file must NOT contain the broken comment-tail.
     ! grep -q 'this is a comment' "$FEED_ENV"
 }
+
+@test "missing feed.env without --create-if-missing returns filesystem_error" {
+    [ ! -e "$FEED_ENV" ]
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 3 ]
+    [ "$APL_APPLY_STATUS" = "filesystem_error" ]
+    [ ! -e "$FEED_ENV" ]
+}
+
+@test "missing feed.env with --create-if-missing: file created inside lock, payload applied" {
+    [ ! -e "$FEED_ENV" ]
+    do_apply --no-restart --create-if-missing MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ -f "$FEED_ENV" ]
+    grep -qE '^MLAT_PRIVATE="?true"?$' "$FEED_ENV"
+}
+
+@test "--create-if-missing + rejected payload leaves no file behind" {
+    # The library creates the canonical file inside the lock only after
+    # the payload passes per-key validation. A rejected payload should
+    # not leak an empty file onto disk where a status reader would see
+    # it instead of the legacy fallback.
+    [ ! -e "$FEED_ENV" ]
+    do_apply --no-restart --create-if-missing LATITUDE=999
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    [ ! -e "$FEED_ENV" ]
+}
+
+@test "--create-if-missing is idempotent when feed.env already exists" {
+    seed_feed_env
+    cp "$FEED_ENV" "$FEED_ENV.before"
+    do_apply --no-restart --create-if-missing MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    grep -qE '^MLAT_PRIVATE="?true"?$' "$FEED_ENV"
+    # Original keys preserved.
+    grep -q '^MLAT_USER="alice"$' "$FEED_ENV"
+}
