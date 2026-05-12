@@ -359,6 +359,11 @@ _apl_feed_apply_restart_set() {
 
 # systemctl restart with build-mode / non-root skip. Sets
 # APL_APPLY_PENDING_RESTART to the services that failed.
+#
+# A unit that doesn't exist (image-only daemons like dump978-fa on a
+# standalone-feed install) is silently skipped — that matches the
+# pre-refactor _uat_unit_exists gate. The library does not consider
+# absent-unit cases a failure.
 _apl_feed_apply_restart_services() {
     local services=("$@")
     APL_APPLY_PENDING_RESTART=()
@@ -373,6 +378,11 @@ _apl_feed_apply_restart_services() {
 
     local svc
     for svc in "${services[@]}"; do
+        # Skip units that aren't installed. `systemctl cat` returns 0 iff
+        # the unit (or a generator-emitted instance) is known to systemd.
+        if ! systemctl cat "$svc" >/dev/null 2>&1; then
+            continue
+        fi
         if ! systemctl restart "$svc" 2>/dev/null; then
             APL_APPLY_PENDING_RESTART+=("$svc")
         fi

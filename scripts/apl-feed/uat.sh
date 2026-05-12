@@ -113,7 +113,8 @@ _uat_apply() {
         args+=(--no-restart)
         echo "Skipping service restart (--root=$ROOT, not the host root)" >&2
     fi
-    apl_feed_apply "${args[@]}" "$@"
+    UAT_APPLY_RC=0
+    apl_feed_apply "${args[@]}" "$@" || UAT_APPLY_RC=$?
 }
 
 apl_feed_uat_enable() {

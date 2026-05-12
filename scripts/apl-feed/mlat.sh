@@ -58,8 +58,11 @@ _mlat_emit_result() {
     esac
 }
 
-# Wrap apl_feed_apply with the canonical CLI paths and ROOT/build-mode
-# restart-skip decision.
+# Wrap apl_feed_apply with the canonical CLI paths and the ROOT-based
+# restart-skip decision. Captures the library's exit code into MLAT_APPLY_RC
+# rather than returning it directly — public callers run under `set -e` from
+# apl-feed.sh, so a non-zero return here would exit before _mlat_emit_result
+# can surface the structured error to the operator.
 _mlat_apply() {
     local -a args=()
     args+=(--feed-env "$(feed_env_path)")
@@ -68,7 +71,8 @@ _mlat_apply() {
         args+=(--no-restart)
         echo "Skipping service restart (--root=$ROOT, not the host root)" >&2
     fi
-    apl_feed_apply "${args[@]}" "$@"
+    MLAT_APPLY_RC=0
+    apl_feed_apply "${args[@]}" "$@" || MLAT_APPLY_RC=$?
 }
 
 # Friendly pre-check for `apl-feed mlat enable`. The library enforces the

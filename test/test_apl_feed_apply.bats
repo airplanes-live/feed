@@ -104,9 +104,11 @@ run_apply() {
     [ "$(jq -r '.errors.INPUT' <<<"$APPLY_OUT")" != "null" ]
 }
 
-@test "apply changes restart matching services (no --no-restart)" {
+@test "apply --root implicitly skips restarts (no host service touch)" {
     run_apply '{"updates":{"MLAT_PRIVATE":"true"}}'
     [ "$APPLY_RC" -eq 0 ]
     [ "$(jq -r .status <<<"$APPLY_OUT")" = "applied" ]
-    grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
+    # --root != "/" forces --no-restart through the adapter so the test
+    # runner's stubbed systemctl is never called.
+    [ ! -s "$SYSTEMCTL_LOG" ]
 }
