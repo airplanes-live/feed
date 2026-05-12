@@ -130,6 +130,18 @@ feed_env_path() {
     root_path '/etc/airplanes/feed.env'
 }
 
+# Canonical write target for feed.env. Always /etc/airplanes/feed.env
+# under ROOT, regardless of what's currently on disk. Distinct from
+# feed_env_path() — which has a bridged-legacy fallback to
+# /boot/airplanes-config.txt for status readers when no canonical file
+# exists yet. Writers must NOT use that fallback: translating the legacy
+# source file into itself never produces the canonical feed.env that
+# the new daemons source. apl-feed/import.sh, apl-feed/mlat.sh, and
+# apl-feed/uat.sh all pass this to apl_feed_apply via --feed-env.
+feed_env_write_path() {
+    root_path '/etc/airplanes/feed.env'
+}
+
 feed_env_paths() {
     if [[ -f "$(root_path '/etc/airplanes/feed.env')" ]]; then
         root_path '/etc/airplanes/feed.env'

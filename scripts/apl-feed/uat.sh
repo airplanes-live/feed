@@ -107,7 +107,7 @@ _uat_emit_result() {
 
 _uat_apply() {
     local -a args=()
-    args+=(--feed-env "$(feed_env_path)")
+    args+=(--feed-env "$(feed_env_write_path)")
     args+=(--lock-file "$(feed_env_lock_path)")
     if [[ "$ROOT" != "/" ]]; then
         args+=(--no-restart)

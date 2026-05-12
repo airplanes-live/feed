@@ -124,6 +124,7 @@ EOF
     write_feed_env
     ROOT="/"  # exercise systemctl path; PATH-stub captures it
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_uat_enable
     [ "$status" -eq 0 ]
@@ -135,6 +136,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     mark_unit_installed dump978-fa
     mark_unit_installed airplanes-978
 
@@ -148,6 +150,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     # INSTALLED_UNITS_FILE is empty — neither dump978-fa nor airplanes-978
     # is present. The restart for those must be skipped (not attempted).
 
@@ -167,6 +170,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_uat_enable --serial "00000978" --gain "40.0"
     [ "$status" -eq 0 ]
@@ -178,6 +182,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     # Seed both knobs so we can confirm disable doesn't wipe them.
     apl_feed_uat_enable --serial "00000978" --gain "40.0"
     : > "$SYSTEMCTL_LOG"
@@ -195,6 +200,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_uat_enable --serial "978" --gain "42.1"
 
@@ -208,6 +214,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     apl_feed_uat_enable
     apl_feed_uat_enable
@@ -222,6 +229,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_uat_enable --serial 'evil;rm -rf /'
     [ "$status" -ne 0 ]
@@ -235,6 +243,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_uat_enable --serial "$(printf 'a%.0s' {1..33})"
     [ "$status" -ne 0 ]
@@ -245,6 +254,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_uat_enable --gain "61"
     [ "$status" -ne 0 ]
@@ -259,6 +269,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
 
     run apl_feed_uat_enable --serial "00000978"
     [ "$status" -eq 0 ]
@@ -299,6 +310,7 @@ EOF
     write_feed_env
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
     apl_feed_uat_enable --serial "00000978" --gain "40.0"
 
@@ -317,4 +329,32 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *'dump978-fa'*'not installed (image-only)'* ]]
     [[ "$output" == *'airplanes-978'*'not installed (image-only)'* ]]
+}
+
+@test "bridged-legacy: _uat_apply targets canonical feed.env, not boot config" {
+    # Same shape as the mlat bridged-legacy regression — guards against
+    # the writer side resolving via feed_env_path()'s reader fallback
+    # when feed.env doesn't exist yet on a bridged box.
+    rm -rf "$ROOT_DIR/etc/airplanes"
+    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
+DUMP978=yes
+EOF
+    local before
+    before="$(cat "$ROOT_DIR/boot/airplanes-config.txt")"
+
+    APPLY_ARGS=""
+    apl_feed_apply() {
+        APPLY_ARGS="$*"
+        APL_APPLY_STATUS=no_change
+        return 0
+    }
+
+    apl_feed_uat_disable
+
+    [[ "$APPLY_ARGS" == *"--feed-env $ROOT_DIR/etc/airplanes/feed.env"* ]]
+    [[ "$APPLY_ARGS" != *"--feed-env $ROOT_DIR/boot/airplanes-config.txt"* ]]
+    [ "$before" = "$(cat "$ROOT_DIR/boot/airplanes-config.txt")" ]
 }
