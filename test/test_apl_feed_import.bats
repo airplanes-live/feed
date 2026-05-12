@@ -468,3 +468,61 @@ EOF
     # GAIN was skipped, never written.
     ! grep -q '^GAIN=' "$ROOT_DIR/etc/airplanes/feed.env"
 }
+
+@test "USER=alice with missing geo: MLAT_USER set, MLAT_ENABLED dropped" {
+    # Regression for the disable-blocked-by-auto-import case: previously,
+    # USER=alice always set MLAT_ENABLED=true. On a legacy file missing
+    # LATITUDE/LONGITUDE/ALTITUDE, the apply consistency check rejected
+    # the whole bootstrap and the operator couldn't even `apl-feed mlat
+    # disable` to recover. Now USER=alice with incomplete geo sets
+    # MLAT_USER only; MLAT_ENABLED stays at its disk default (false).
+    cat > "$ROOT_DIR/airplanes-config.txt" <<NESTED
+USER=alice
+NESTED
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -q '^MLAT_USER="alice"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -qE '^MLAT_ENABLED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "USER=alice with (0,0) coords: MLAT_USER set, MLAT_ENABLED dropped" {
+    # Default legacy boot config ships LATITUDE=0/LONGITUDE=0 placeholders
+    # until the operator fills them in. USER=alice + (0,0) used to fail
+    # the import via apply's GEO_CONFIGURED-derives-false consistency
+    # check. Same gate applies: MLAT_ENABLED stays off until real coords.
+    cat > "$ROOT_DIR/airplanes-config.txt" <<NESTED
+LATITUDE=0.00000
+LONGITUDE=0.00000
+ALTITUDE=1090ft
+USER=alice
+NESTED
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -q '^MLAT_USER="alice"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -qE '^MLAT_ENABLED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "USER=disable still drops MLAT_ENABLED=false even without geo" {
+    # Explicit disable doesn't need geo to apply. Verify the geo-complete
+    # gate only affects the enable side.
+    cat > "$ROOT_DIR/airplanes-config.txt" <<NESTED
+USER=disable
+NESTED
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -qE '^MLAT_ENABLED=(false|"false")$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "legacy MLAT_ENABLED=true with missing geo is dropped" {
+    # A hand-edited or previously-broken legacy file could carry
+    # MLAT_ENABLED=true directly. Same gate — only honor it when geo
+    # is complete. MLAT_ENABLED=false is always honored.
+    cat > "$ROOT_DIR/airplanes-config.txt" <<NESTED
+MLAT_USER=alice
+MLAT_ENABLED=true
+NESTED
+    import "$ROOT_DIR/airplanes-config.txt"
+    [ "$IMPORT_RC" -eq 0 ]
+    grep -q '^MLAT_USER="alice"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -qE '^MLAT_ENABLED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
