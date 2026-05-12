@@ -64,6 +64,7 @@ _mlat_emit_result() {
 # apl-feed.sh, so a non-zero return here would exit before _mlat_emit_result
 # can surface the structured error to the operator.
 _mlat_apply() {
+    feed_env_ensure_canonical_for_write
     local -a args=()
     args+=(--feed-env "$(feed_env_write_path)")
     args+=(--lock-file "$(feed_env_lock_path)")
@@ -120,6 +121,12 @@ apl_feed_mlat_enable() {
             0) die "unknown flag for mlat enable: $1" ;;
         esac
     done
+
+    # Bootstrap canonical feed.env first so the geo-gate below reads
+    # imported state on a bridged-legacy box rather than firing
+    # "feed.env not found" or "GEO_CONFIGURED=<unset>" against the
+    # never-canonicalised legacy file.
+    feed_env_ensure_canonical_for_write
 
     local feed_env
     feed_env="$(feed_env_path)"

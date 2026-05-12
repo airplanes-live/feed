@@ -106,6 +106,7 @@ _uat_emit_result() {
 }
 
 _uat_apply() {
+    feed_env_ensure_canonical_for_write
     local -a args=()
     args+=(--feed-env "$(feed_env_write_path)")
     args+=(--lock-file "$(feed_env_lock_path)")
