@@ -509,6 +509,7 @@ historical_apl_feed_modules=(
     id.sh
     mlat.sh
     status.sh
+    uat.sh
 )
 historical_daemon_libs=(
     state-reader.sh
