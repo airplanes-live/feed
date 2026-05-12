@@ -33,10 +33,12 @@ setup() {
     APL_TEST_LOCK_FILE="$ROOT_DIR/feed-env.lock"
     feed_env_lock_path() { printf '%s\n' "$APL_TEST_LOCK_FILE"; }
 
-    # Default: dump978-fa + airplanes-978 units NOT installed (standalone-feed
-    # install). Tests can `mark_unit_installed dump978-fa` to flip
-    # to the image-host shape.
+    # Default: airplanes-feed always installed (feed daemon, present on
+    # both standalone and image installs). dump978-fa + airplanes-978
+    # are NOT installed by default — those are image-only. Tests can
+    # `mark_unit_installed dump978-fa` to flip to the image-host shape.
     : > "$INSTALLED_UNITS_FILE"
+    printf '%s\n' airplanes-feed > "$INSTALLED_UNITS_FILE"
 
     cat > "$STUB_DIR/systemctl" <<STUB
 #!/usr/bin/env bash
@@ -151,8 +153,13 @@ EOF
 
     run apl_feed_uat_enable
     [ "$status" -eq 0 ]
-    ! grep -q '^systemctl restart dump978-fa$' "$SYSTEMCTL_LOG"
-    ! grep -q '^systemctl restart airplanes-978$' "$SYSTEMCTL_LOG"
+    # `! grep -q ...` is a tested context where set -e is suppressed; that
+    # would silently mask a real regression. `run` + status check is the
+    # reliable form.
+    run grep -q '^systemctl restart dump978-fa$' "$SYSTEMCTL_LOG"
+    [ "$status" -ne 0 ]
+    run grep -q '^systemctl restart airplanes-978$' "$SYSTEMCTL_LOG"
+    [ "$status" -ne 0 ]
     grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
 }
 
