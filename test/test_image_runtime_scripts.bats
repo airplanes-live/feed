@@ -38,6 +38,63 @@ RESULTS="--results beast,connect,localhost:30104"
 EOF
 }
 
+@test "airplanes-feed.sh skips the uat_in connector when UAT_INPUT is empty (978 opt-in)" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/args-uat-off.log"
+    write_image_config "$root"
+    # Explicitly clear UAT_INPUT in the operator-data file. (The default
+    # fixture from write_image_config doesn't set it either, but being
+    # explicit makes the intent unmistakable to future readers.)
+    mkdir -p "$root/etc/airplanes"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35m"
+MLAT_USER="image-feeder"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+UAT_INPUT=""
+EOF
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+    [ "$status" -eq 0 ]
+    if grep -q -- 'uat_in' "$arg_log"; then
+        return 1
+    fi
+}
+
+@test "airplanes-feed.sh adds the uat_in connector when UAT_INPUT is set" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/args-uat-on.log"
+    write_image_config "$root"
+    mkdir -p "$root/etc/airplanes"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35m"
+MLAT_USER="image-feeder"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+UAT_INPUT="127.0.0.1:30978"
+EOF
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -q -- '--net-connector 127.0.0.1,30978,uat_in,silent_fail' "$arg_log"
+}
+
 @test "airplanes-feed.sh uses image feed defaults without decoder NET_OPTIONS" {
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/args.log"

@@ -39,13 +39,19 @@ INPUT_IP=$(echo $INPUT | cut -d: -f1)
 INPUT_PORT=$(echo $INPUT | cut -d: -f2)
 SOURCE="--net-connector $INPUT_IP,$INPUT_PORT,beast_in,silent_fail"
 
-if [[ -z $UAT_INPUT ]]; then
-    UAT_INPUT="127.0.0.1:30978"
+# 978 is opt-in: empty/unset UAT_INPUT means "don't even wire up the
+# uat_in net-connector." The previous always-on default ("127.0.0.1:30978")
+# meant a 1090-only feeder still asked the feeder binary to keep an idle
+# connector around (silent_fail kept it harmless on the wire), but it also
+# hid the user's intent and tripped the image-side dump978-fa wrapper into
+# a restart loop on hardware without a 978 SDR. Opt in via `apl-feed 978
+# enable` (CLI) or the 978 section in webconfig (image users).
+UAT_SOURCE=""
+if [[ -n ${UAT_INPUT-} ]]; then
+    UAT_IP=$(echo $UAT_INPUT | cut -d: -f1)
+    UAT_PORT=$(echo $UAT_INPUT | cut -d: -f2)
+    UAT_SOURCE="--net-connector $UAT_IP,$UAT_PORT,uat_in,silent_fail"
 fi
-
-UAT_IP=$(echo $UAT_INPUT | cut -d: -f1)
-UAT_PORT=$(echo $UAT_INPUT | cut -d: -f2)
-UAT_SOURCE="--net-connector $UAT_IP,$UAT_PORT,uat_in,silent_fail"
 
 REDUCE_INTERVAL="${REDUCE_INTERVAL:-0.5}"
 JSON_OPTIONS="${JSON_OPTIONS:-"--max-range 450 --json-location-accuracy 2 --range-outline-hours 24"}"
