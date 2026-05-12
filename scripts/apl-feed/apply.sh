@@ -120,6 +120,25 @@ apl_feed_apply_cli() {
         _apl_feed_apply_emit_error parse_error "$schema_check"
         return 5
     fi
+    # Defense-in-depth: refuse any KEY containing characters that would
+    # escape the bash "KEY=value" line protocol used by the inner library.
+    # Without this, a payload key like "GAIN=42.5\nMLAT_USER" would split
+    # into two pairs after the jq -r conversion, and a key containing NUL
+    # would silently collapse (Bash strips NUL from command substitution).
+    # The library's writable-key whitelist would still reject the malformed
+    # halves, but rejecting structurally-broken keys here keeps the
+    # parse_error envelope honest.
+    local bad_key
+    if ! bad_key="$(jq -r '
+        [.updates | to_entries[].key |
+          select(test("[^A-Za-z0-9_]"))][0] // ""' <<<"$payload" 2>/dev/null)"; then
+        _apl_feed_apply_emit_error parse_error "key validation failed"
+        return 5
+    fi
+    if [[ -n "$bad_key" ]]; then
+        _apl_feed_apply_emit_error parse_error "key contains forbidden character (only [A-Za-z0-9_] allowed): $bad_key"
+        return 5
+    fi
     # Defense-in-depth: refuse any value containing LF / CR / NUL before
     # converting to KEY=value pairs. `jq -r | read` would otherwise split
     # an embedded newline into a fake second pair (and Bash silently

@@ -186,3 +186,30 @@ META_FILE_FOR_ROOT() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.meta.json"; }
     [ "$APPLY_RC" -eq 5 ]
     [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
 }
+
+@test "apply rejects keys with embedded newline (key-injection guard)" {
+    # Without the key validator, jq -r '\(.key)=\(.value)' would split this
+    # crafted key into two pairs after the newline.
+    PAYLOAD='{"updates":{"GAIN=42.5\nMLAT_USER":"bob"}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+    # feed.env unchanged.
+    grep -q '^GAIN=auto$' "$FEED_ENV"
+    grep -q '^MLAT_USER="alice"$' "$FEED_ENV"
+}
+
+@test "apply rejects keys with embedded space (regex allows only A-Za-z0-9_)" {
+    # Any non-alphanumeric/underscore byte in a key is rejected up front.
+    PAYLOAD='{"updates":{"MLAT@USER":"bob"}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+}
+
+@test "apply rejects keys with `=` (would-be pair injection)" {
+    PAYLOAD='{"updates":{"MLAT_USER=bob":"carol"}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+}
