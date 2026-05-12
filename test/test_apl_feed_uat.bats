@@ -1,0 +1,301 @@
+#!/usr/bin/env bats
+
+# Per-module tests for scripts/apl-feed/uat.sh. Mirrors test_apl_feed_mlat.bats
+# in shape: source common.sh + uat.sh, stub systemctl, point ROOT at a
+# scratch tree containing /etc/airplanes/feed.env.
+
+setup() {
+    LIB_DIR="$BATS_TEST_DIRNAME/../scripts/apl-feed"
+    ROOT_DIR="$(mktemp -d)"
+    TMPDIR="$ROOT_DIR/tmp"
+    STUB_DIR="$ROOT_DIR/bin"
+    SYSTEMCTL_LOG="$ROOT_DIR/systemctl.log"
+    INSTALLED_UNITS_FILE="$ROOT_DIR/installed-units"
+    mkdir -p "$TMPDIR" "$STUB_DIR" "$ROOT_DIR/etc/airplanes"
+    export TMPDIR
+
+    bats_exit_trap="$(trap -p EXIT)"
+    # shellcheck source=../scripts/apl-feed/common.sh
+    source "$LIB_DIR/common.sh"
+    # shellcheck source=../scripts/apl-feed/uat.sh
+    source "$LIB_DIR/uat.sh"
+    eval "$bats_exit_trap"
+    ROOT="$ROOT_DIR"
+
+    # Default: dump978-fa + airplanes-978 units NOT installed (standalone-feed
+    # install). Tests can `mark_unit_installed dump978-fa.service` to flip
+    # to the image-host shape.
+    : > "$INSTALLED_UNITS_FILE"
+
+    cat > "$STUB_DIR/systemctl" <<STUB
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "\$*" >> "$SYSTEMCTL_LOG"
+case "\$1" in
+    cat)
+        unit="\${@: -1}"
+        if grep -Fxq "\$unit" "$INSTALLED_UNITS_FILE" 2>/dev/null; then
+            printf '# %s\n' "\$unit"
+            exit 0
+        fi
+        exit 1
+        ;;
+    is-active) echo active ;;
+    restart)
+        # If the unit isn't in the installed list, fail like real systemctl
+        # would. _uat_restart_services has separate handling for ALWAYS vs
+        # OPTIONAL units, but the OPTIONAL path gates on cat first.
+        unit="\${@: -1}"
+        if [[ "\$unit" == "airplanes-feed.service" ]]; then exit 0; fi
+        if grep -Fxq "\$unit" "$INSTALLED_UNITS_FILE" 2>/dev/null; then exit 0; fi
+        echo "Unit \$unit not found." >&2
+        exit 5
+        ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_DIR/systemctl"
+    PATH="$STUB_DIR:$PATH"
+    export PATH
+
+    # USB probe surface for setup-tests that exercise _uat_probe_serial.
+    USB_ROOT="$ROOT_DIR/usb-devices"
+    mkdir -p "$USB_ROOT"
+    APL_FEED_UAT_USB_SERIAL_GLOB="$USB_ROOT/*/serial"
+    export APL_FEED_UAT_USB_SERIAL_GLOB
+}
+
+teardown() {
+    rm -rf "$ROOT_DIR"
+}
+
+mark_unit_installed() {
+    printf '%s\n' "$1" >> "$INSTALLED_UNITS_FILE"
+}
+
+plug_sdr() {
+    local serial="$1" devname="${2:-usb1-dev0}"
+    mkdir -p "$USB_ROOT/$devname"
+    printf '%s' "$serial" > "$USB_ROOT/$devname/serial"
+}
+
+write_feed_env() {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+MLAT_USER="Anonymous"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35m"
+EOF
+}
+
+# --- dispatch_uat ---
+
+@test "dispatch_uat: missing subcommand dies" {
+    run dispatch_uat
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'978 requires a subcommand'* ]]
+}
+
+@test "dispatch_uat: unknown subcommand dies" {
+    run dispatch_uat frobnitz
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'unknown 978 subcommand: frobnitz'* ]]
+}
+
+# --- 978 enable / disable round-trip ---
+
+@test "enable: writes UAT_INPUT and restarts airplanes-feed" {
+    write_feed_env
+    ROOT="/"  # exercise systemctl path; PATH-stub captures it
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_uat_enable
+    [ "$status" -eq 0 ]
+    grep -q '^UAT_INPUT="127.0.0.1:30978"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^systemctl restart airplanes-feed.service$' "$SYSTEMCTL_LOG"
+}
+
+@test "enable: image-only units are restarted when present" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    mark_unit_installed dump978-fa.service
+    mark_unit_installed airplanes-978.service
+
+    run apl_feed_uat_enable
+    [ "$status" -eq 0 ]
+    grep -q '^systemctl restart dump978-fa.service$' "$SYSTEMCTL_LOG"
+    grep -q '^systemctl restart airplanes-978.service$' "$SYSTEMCTL_LOG"
+}
+
+@test "enable: image-only units are skipped on standalone-feed host" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    # INSTALLED_UNITS_FILE is empty — neither dump978-fa nor airplanes-978
+    # is present. The restart for those must be skipped (not attempted).
+
+    run apl_feed_uat_enable
+    [ "$status" -eq 0 ]
+    ! grep -q '^systemctl restart dump978-fa.service$' "$SYSTEMCTL_LOG"
+    ! grep -q '^systemctl restart airplanes-978.service$' "$SYSTEMCTL_LOG"
+    grep -q '^systemctl restart airplanes-feed.service$' "$SYSTEMCTL_LOG"
+}
+
+@test "enable --serial / --gain pin the wrapper defaults in feed.env" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_uat_enable --serial "00000978" --gain "40.0"
+    [ "$status" -eq 0 ]
+    grep -q '^DUMP978_SDR_SERIAL="00000978"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^DUMP978_GAIN="40.0"$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "disable: clears UAT_INPUT, preserves DUMP978_SDR_SERIAL / DUMP978_GAIN" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    # Seed both knobs so we can confirm disable doesn't wipe them.
+    apl_feed_uat_enable --serial "00000978" --gain "40.0"
+    : > "$SYSTEMCTL_LOG"
+
+    run apl_feed_uat_disable
+    [ "$status" -eq 0 ]
+    grep -q '^UAT_INPUT=""$' "$ROOT_DIR/etc/airplanes/feed.env"
+    # Disable uses the `-` sentinel so the serial/gain lines stay verbatim.
+    grep -q '^DUMP978_SDR_SERIAL="00000978"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^DUMP978_GAIN="40.0"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^systemctl restart airplanes-feed.service$' "$SYSTEMCTL_LOG"
+}
+
+@test "enable preserves unrelated keys (MLAT_USER, LATITUDE, etc.)" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_uat_enable --serial "978" --gain "42.1"
+
+    grep -q '^MLAT_USER="Anonymous"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^MLAT_ENABLED=true$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^MLAT_PRIVATE=false$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^LATITUDE="52.52"$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "enable twice is idempotent on UAT_INPUT (no duplicate line)" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    apl_feed_uat_enable
+    apl_feed_uat_enable
+    local count
+    count="$(grep -c '^UAT_INPUT=' "$ROOT_DIR/etc/airplanes/feed.env")"
+    [ "$count" -eq 1 ]
+}
+
+# --- validation ---
+
+@test "enable --serial with shell metacharacters dies" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_uat_enable --serial 'evil;rm -rf /'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'DUMP978_SDR_SERIAL'* ]]
+    # feed.env must NOT have been touched.
+    ! grep -q '^DUMP978_SDR_SERIAL=' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -q '^UAT_INPUT="127.0.0.1:30978"$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "enable --serial that's too long dies" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_uat_enable --serial "$(printf 'a%.0s' {1..33})"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'DUMP978_SDR_SERIAL'* ]]
+}
+
+@test "enable --gain out of range dies" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_uat_enable --gain "61"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'DUMP978_GAIN'* ]]
+
+    run apl_feed_uat_enable --gain "auto"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'DUMP978_GAIN'* ]]
+}
+
+@test "enable --serial accepts the canonical 8-char hex form" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_uat_enable --serial "00000978"
+    [ "$status" -eq 0 ]
+    grep -q '^DUMP978_SDR_SERIAL="00000978"$' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+# --- _uat_probe_serial ---
+
+@test "probe: returns 0 when /sys reports a matching serial" {
+    plug_sdr "978" "usb1-dev1"
+    run _uat_probe_serial "978"
+    [ "$status" -eq 0 ]
+}
+
+@test "probe: returns 1 when no device has the requested serial" {
+    plug_sdr "1090" "usb1-dev1"
+    run _uat_probe_serial "978"
+    [ "$status" -ne 0 ]
+}
+
+@test "probe: returns 1 when /sys is empty" {
+    run _uat_probe_serial "978"
+    [ "$status" -ne 0 ]
+}
+
+# --- status ---
+
+@test "status: reports disabled when UAT_INPUT is empty" {
+    write_feed_env  # has no UAT_INPUT line at all
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_uat_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'978: disabled'* ]]
+}
+
+@test "status: reports enabled and shows the configured serial / gain" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    apl_feed_uat_enable --serial "00000978" --gain "40.0"
+
+    run apl_feed_uat_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'978: enabled'* ]]
+    [[ "$output" == *'DUMP978_SDR_SERIAL: 00000978'* ]]
+    [[ "$output" == *'DUMP978_GAIN:       40.0'* ]]
+}
+
+@test "status: marks image-only units as 'not installed' on standalone-feed" {
+    write_feed_env
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+
+    run apl_feed_uat_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'dump978-fa.service'*'not installed (image-only)'* ]]
+    [[ "$output" == *'airplanes-978.service'*'not installed (image-only)'* ]]
+}
