@@ -18,11 +18,18 @@ Both `update.sh` (long block before `airplanes_enable_build_mode_from_args "$@"`
 
 ## `AIRPLANES_FEED_BRANCH` release-channel mechanism
 
-In `update.sh`'s fallback block, the variable defaults via `/etc/airplanes/release-channel`:
+`update.sh` and `install-update-common.sh` resolve `AIRPLANES_FEED_BRANCH` via `/etc/airplanes/release-channel`:
 
-- `update.sh` reads that file to pin the runtime-update branch on image-built feeders. Allowlist is `{main, dev}`. Invalid value aborts (intentional — silent fallback to `main` on a `dev` image is a sticky regression).
-- An **explicit `AIRPLANES_FEED_BRANCH` env var bypasses the allowlist** — the env var wins. There's a corresponding test in `test_install_update_common.bats` that pins this.
-- **`install.sh`'s standalone fallback hardcodes `AIRPLANES_FEED_BRANCH=main`** and does NOT read the release-channel file. Only `update.sh` does. (Fine in practice: `install.sh` runs once at install time on a fresh box that has no release-channel marker yet.)
+- Allowlist is `{stable, dev, main}`. `main` is a **legacy alias for `stable`** — pre-stable-release images may have written `main` to the file before tag resolution existed; treating it as `stable` keeps those images updatable without re-flashing. Invalid value aborts (intentional — silent fallback to `main` on a `dev` image is a sticky regression).
+- `stable` is a **sentinel**, not a branch name. After bootstrap deps install, `airplanes_resolve_feed_branch` calls `airplanes_resolve_latest_stable_tag` (which runs `git ls-remote --tags`) to resolve `stable` → the latest `v[MAJOR].[MINOR].[PATCH]` tag. Strict semver only; leading zeroes and prereleases are filtered out. Resolution happens **after** the `apt`/`dnf` step so curl-pipe-bash can reach deps install before any network resolution. Resolved value is exported so the resolved tag survives `update.sh`'s self-replace re-exec — without that, a transient `ls-remote` failure between invocations could thrash between tags.
+- An **explicit `AIRPLANES_FEED_BRANCH` env var bypasses this entire mechanism**. Operators can pin any ref for testing/recovery; the bridge can override; image build tooling can pin a specific branch. Pinned in `test_install_update_common.bats`.
+- **`install.sh`'s standalone fallback is rendered at release time.** `__FEED_REF__` (line 25) is a substitution marker; the release pipeline (`.github/workflows/release.yml`) replaces it with the tag string at build time, so the published `install.sh` pins to a specific tag. Unrendered (e.g. running raw from a clone) it falls back to `main`. The inline fallback does **not** read the release-channel file; only `update.sh` does. Fine in practice — `install.sh` runs once at install time on a fresh box.
+
+### Legacy bridge gap — DEV-375
+
+**The tag-resolution mechanism above is feed-side only.** The legacy bridge in `airplanes-update/update-airplanes.sh` still pins `AIRPLANES_FEED_BRANCH` to a concrete branch name (`main` or `dev`, auto-detected from its own checkout). That bypasses the release-channel allowlist entirely — legacy-image feeders updating via the bridge today track `main` HEAD, not the latest stable tag, even after a tagged release is cut.
+
+DEV-375 closes this in `airplanes-update/`: the bridge should write `release-channel=stable` (if absent) and unset its own `AIRPLANES_FEED_BRANCH`, deferring to the feed-side resolution. Until that ships, anyone debugging "why didn't this tagged release land on legacy feeders?" can stop looking in `feed/` — the resolution code is in place, but the bridge isn't routing through it yet.
 
 ## `scripts/lib/` extraction discipline
 
