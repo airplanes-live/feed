@@ -520,6 +520,7 @@ historical_apl_feed_modules=(
     common.sh
     http.sh
     id.sh
+    import.sh
     mlat.sh
     schema.sh
     status.sh

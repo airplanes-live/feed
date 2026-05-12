@@ -95,6 +95,8 @@ source "$APL_FEED_LIB_DIR/uat.sh"
 source "$APL_FEED_LIB_DIR/apply.sh"
 # shellcheck source=scripts/apl-feed/schema.sh
 source "$APL_FEED_LIB_DIR/schema.sh"
+# shellcheck source=scripts/apl-feed/import.sh
+source "$APL_FEED_LIB_DIR/import.sh"
 
 main() {
     local cmd="${1:-}"
@@ -134,6 +136,10 @@ main() {
         schema)
             shift
             apl_feed_schema_cli "$@"
+            ;;
+        import)
+            shift
+            dispatch_import "$@"
             ;;
         -h|--help|'')
             usage
