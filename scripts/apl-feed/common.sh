@@ -39,6 +39,10 @@ Usage:
   apl-feed mlat disable
   apl-feed mlat private enable
   apl-feed mlat private disable
+  apl-feed 978 enable [--serial SERIAL] [--gain GAIN]
+  apl-feed 978 disable
+  apl-feed 978 setup
+  apl-feed 978 status
   apl-feed backup <file>
   apl-feed restore <file>
   apl-feed restore --check <file>
