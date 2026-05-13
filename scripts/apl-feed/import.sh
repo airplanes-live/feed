@@ -300,6 +300,12 @@ apl_feed_import_legacy_config() {
             echo "Skipping service restart (--root=$ROOT, not the host root)" >&2
         fi
     fi
+    # Audit gating is orthogonal to restart gating — a host-rootfs
+    # --no-restart (airplanes-first-run) still audits; only scratch
+    # rootfs invocations skip audit.
+    if [[ "$ROOT" != "/" ]]; then
+        args+=(--no-audit)
+    fi
     for k in "${!payload[@]}"; do
         args+=("$k=${payload[$k]}")
     done

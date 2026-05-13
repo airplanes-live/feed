@@ -981,6 +981,11 @@ apl_feed_apply() {
         for _audit_k in "${APL_APPLY_CHANGED[@]}"; do
             _audit_kvs+=("${_audit_k}=\"${merged[$_audit_k]}\"")
         done
+        # Pin IFS for the array expansion: this lib is sourced and a
+        # caller-mutated IFS could otherwise produce multi-line or
+        # no-separator output. `local` scopes the override to the
+        # function; the caller's IFS is restored on return.
+        local IFS=' '
         logger -t apl-feed-apply -p user.info -- "applied: ${_audit_kvs[*]}" 2>/dev/null || true
     fi
 
