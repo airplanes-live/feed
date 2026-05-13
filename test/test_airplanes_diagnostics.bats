@@ -377,10 +377,40 @@ SH
     [ "$output" = '-58' ]
 }
 
-@test "POST body omits pi_health when vcgencmd is absent" {
+@test "POST body omits pi_health when both vcgencmd and timedatectl are absent" {
+    # Block both probes by stubbing them to fail. The default setup
+    # doesn't ship vcgencmd or timedatectl stubs, but the dev host
+    # likely has timedatectl on PATH (it's installed by systemd) which
+    # would otherwise produce a pi_health.ntp_synchronized field.
+    cat > "$STUB_DIR/timedatectl" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+    chmod +x "$STUB_DIR/timedatectl"
     run_script
     [ "$status" -eq 0 ]
     run jq '.pi_health // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "pi_health throttle survives a broken timedatectl (sub-probes independent)" {
+    cat > "$STUB_DIR/vcgencmd" <<'SH'
+#!/usr/bin/env bash
+[[ "$1" == "get_throttled" ]] && printf 'throttled=0x0\n'
+SH
+    chmod +x "$STUB_DIR/vcgencmd"
+    cat > "$STUB_DIR/timedatectl" <<'SH'
+#!/usr/bin/env bash
+exit 1  # simulate a D-Bus / timedated failure
+SH
+    chmod +x "$STUB_DIR/timedatectl"
+    run_script
+    [ "$status" -eq 0 ]
+    # throttle block is present, all bits false
+    run jq -er '.pi_health.throttle.throttled_now' "$BODY_LOG"
+    [ "$output" = 'false' ]
+    # ntp_synchronized is dropped (broken probe)
+    run jq '.pi_health.ntp_synchronized // empty' "$BODY_LOG"
     [ -z "$output" ]
 }
 

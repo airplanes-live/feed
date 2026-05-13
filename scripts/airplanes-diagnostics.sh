@@ -335,36 +335,46 @@ build_service_json() {
          | with_entries(select(.value != null and .value != ""))'
 }
 
-# Build the pi_health block as JSON, or print "null" if probes don't run.
+# Build the pi_health block as JSON, or print "null" if neither sub-probe
+# produced data. Sub-probes are independent — a missing/broken
+# `timedatectl` doesn't suppress vcgencmd throttle data and vice versa.
 build_pi_health_json() {
-    command -v vcgencmd >/dev/null 2>&1 || { printf 'null'; return; }
-    command -v timedatectl >/dev/null 2>&1 || { printf 'null'; return; }
+    local throttle_json='null' ntp_json='null'
     local pi_undervoltage_now=0 pi_freq_capped_now=0 pi_throttled_now=0 pi_soft_temp_limit_now=0
     local pi_undervoltage_ever=0 pi_freq_capped_ever=0 pi_throttled_ever=0 pi_soft_temp_limit_ever=0
-    collect_pi_throttle || { printf 'null'; return; }
-    local ntp_sync
-    ntp_sync="$(collect_pi_ntp_sync)" || { printf 'null'; return; }
+    if command -v vcgencmd >/dev/null 2>&1 && collect_pi_throttle; then
+        throttle_json="$(jq -nc \
+            --argjson uv_now "$pi_undervoltage_now" \
+            --argjson fc_now "$pi_freq_capped_now" \
+            --argjson th_now "$pi_throttled_now" \
+            --argjson st_now "$pi_soft_temp_limit_now" \
+            --argjson uv_ever "$pi_undervoltage_ever" \
+            --argjson fc_ever "$pi_freq_capped_ever" \
+            --argjson th_ever "$pi_throttled_ever" \
+            --argjson st_ever "$pi_soft_temp_limit_ever" \
+            '{undervoltage_now: ($uv_now == 1),
+              freq_capped_now: ($fc_now == 1),
+              throttled_now: ($th_now == 1),
+              soft_temp_limit_now: ($st_now == 1),
+              undervoltage_ever: ($uv_ever == 1),
+              freq_capped_ever: ($fc_ever == 1),
+              throttled_ever: ($th_ever == 1),
+              soft_temp_limit_ever: ($st_ever == 1)}')"
+    fi
+    if command -v timedatectl >/dev/null 2>&1; then
+        local ntp
+        if ntp="$(collect_pi_ntp_sync)"; then
+            ntp_json="$ntp"
+        fi
+    fi
+    if [[ "$throttle_json" == 'null' && "$ntp_json" == 'null' ]]; then
+        printf 'null'
+        return
+    fi
     jq -nc \
-        --argjson uv_now "$pi_undervoltage_now" \
-        --argjson fc_now "$pi_freq_capped_now" \
-        --argjson th_now "$pi_throttled_now" \
-        --argjson st_now "$pi_soft_temp_limit_now" \
-        --argjson uv_ever "$pi_undervoltage_ever" \
-        --argjson fc_ever "$pi_freq_capped_ever" \
-        --argjson th_ever "$pi_throttled_ever" \
-        --argjson st_ever "$pi_soft_temp_limit_ever" \
-        --argjson ntp "$ntp_sync" \
-        '{throttle: {
-            undervoltage_now: ($uv_now == 1),
-            freq_capped_now: ($fc_now == 1),
-            throttled_now: ($th_now == 1),
-            soft_temp_limit_now: ($st_now == 1),
-            undervoltage_ever: ($uv_ever == 1),
-            freq_capped_ever: ($fc_ever == 1),
-            throttled_ever: ($th_ever == 1),
-            soft_temp_limit_ever: ($st_ever == 1)
-          },
-          ntp_synchronized: $ntp}'
+        --argjson throttle "$throttle_json" \
+        --argjson ntp "$ntp_json" \
+        '{throttle: $throttle, ntp_synchronized: $ntp}'
 }
 
 # nullable_num VALUE — echoes the value if non-empty, otherwise "null".
@@ -566,14 +576,18 @@ main() {
             },
             pi_health: $pi_health
         }
-        | walk(
+        | def _prune:
             if type == "object" then
-                with_entries(select(.value != null and .value != ""))
+                with_entries(.value |= _prune)
+                | with_entries(select(.value != null and .value != ""))
             elif type == "array" then
-                map(select(. != null))
-            else . end
-          )
+                map(_prune) | map(select(. != null))
+            else . end;
+          _prune
         ')"
+    # The inline _prune def avoids jq 1.5 packagings that omit `walk`
+    # (Debian Buster). Post-order recursion: drops null and empty-string
+    # entries from objects, null entries from arrays.
 
     # 5. POST. Bearer = alv1.<uuid>.<secret>. The bearer goes into a 0600
     # curl --config file (not argv) so the token can't be inspected via

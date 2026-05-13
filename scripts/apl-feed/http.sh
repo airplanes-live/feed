@@ -38,7 +38,13 @@ post_json_bearer() {
     # embedded backslashes or double quotes in the token before substitution.
     local escaped="${token//\\/\\\\}"
     escaped="${escaped//\"/\\\"}"
-    printf 'header = "Authorization: Bearer %s"\n' "$escaped" > "$cfg"
+    # Fail loud (not unauthenticated) if the config write fails — curl with
+    # an empty --config would still issue the POST without the Authorization
+    # header, which the backend would reject as `malformed_authorization`
+    # rather than the actual local I/O error.
+    if ! printf 'header = "Authorization: Bearer %s"\n' "$escaped" > "$cfg"; then
+        return 1
+    fi
 
     printf '%s' "$body" | curl --silent --show-error \
         --connect-timeout 10 --max-time 30 \
