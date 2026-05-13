@@ -208,6 +208,13 @@ apl_feed_apply_cli() {
     if (( skip_restart == 1 )) || [[ "$ROOT" != "/" ]]; then
         apply_args+=(--no-restart)
     fi
+    # Implicit --no-audit when writing to a non-host rootfs: a scratch
+    # rootfs save is not an event worth logging to the host's journal.
+    # Audit gating is independent of restart gating — a deliberate
+    # --no-restart on the host (e.g., import.sh first-run) still audits.
+    if [[ "$ROOT" != "/" ]]; then
+        apply_args+=(--no-audit)
+    fi
     [[ -n "$lock_timeout" ]] && apply_args+=(--lock-timeout "$lock_timeout")
     apply_args+=(--feed-env "$feed_env" --lock-file "$lock_path")
     apply_args+=(--meta-file "$(root_path '/etc/airplanes/feed.meta.json')")

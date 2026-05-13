@@ -589,6 +589,7 @@ apl_feed_apply() {
     local lock_timeout="$APL_FEED_APPLY_LOCK_TIMEOUT_DEFAULT"
     local meta_path=""
     local skip_restart=0
+    local skip_audit=0
     local create_if_missing=0
     local explicit_geo_in_payload=0
     local touched_lat=0 touched_lon=0
@@ -613,6 +614,10 @@ apl_feed_apply() {
         case "$1" in
             --no-restart)
                 skip_restart=1
+                shift
+                ;;
+            --no-audit)
+                skip_audit=1
                 shift
                 ;;
             --create-if-missing)
@@ -956,8 +961,28 @@ apl_feed_apply() {
     fi
 
     # Release lock before service restarts so a slow systemctl call cannot
-    # block subsequent writers.
+    # block subsequent writers. The audit log fires after release for the
+    # same reason — a stuck logger(1) must not hold up other writers.
     [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
+
+    # Best-effort journald audit. The feeder owner is the only journalctl
+    # reader on a normal Pi install; values are already in feed.env on disk.
+    # Skipped in build mode (image chroot has no journald), when logger(1)
+    # is missing, and when the caller passed --no-audit (e.g., scratch
+    # rootfs invocations from tests; apply.sh sets this when ROOT != "/").
+    # The redirect-or-true guard prevents a transient logger failure from
+    # aborting the apply — the write already succeeded.
+    if (( skip_audit == 0 )) \
+        && ! _apl_feed_apply_is_build_mode \
+        && command -v logger >/dev/null 2>&1 \
+        && (( ${#APL_APPLY_CHANGED[@]} > 0 )); then
+        local -a _audit_kvs=()
+        local _audit_k
+        for _audit_k in "${APL_APPLY_CHANGED[@]}"; do
+            _audit_kvs+=("${_audit_k}=\"${merged[$_audit_k]}\"")
+        done
+        logger -t apl-feed-apply -p user.info -- "applied: ${_audit_kvs[*]}" 2>/dev/null || true
+    fi
 
     if (( skip_restart == 1 )); then
         APL_APPLY_STATUS=applied
