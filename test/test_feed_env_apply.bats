@@ -32,6 +32,13 @@ printf 'systemctl %s\n' "\$*" >> "$SYSTEMCTL_LOG"
 exit 0
 STUB
     chmod +x "$STUB_DIR/systemctl"
+    # No-op logger stub so the apply-time journald audit (added in the
+    # journal-audit feature) doesn't reach the host's real /dev/log.
+    cat > "$STUB_DIR/logger" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+    chmod +x "$STUB_DIR/logger"
     PATH="$STUB_DIR:$PATH"
     export PATH
 }
