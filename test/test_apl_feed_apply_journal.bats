@@ -141,11 +141,22 @@ do_apply() {
 
 @test "missing logger(1) does not abort the apply" {
     seed_feed_env
+    # Removing the stub alone isn't enough — PATH still falls through
+    # to /usr/bin/logger on a real Debian/Ubuntu host. Shadow `command`
+    # so the lib's `command -v logger` returns false, while leaving
+    # every other `command -v` lookup unchanged.
     rm -f "$STUB_DIR/logger"
+    command() {
+        if [[ "$1" == "-v" && "$2" == "logger" ]]; then
+            return 1
+        fi
+        builtin command "$@"
+    }
     do_apply MLAT_USER=grace
+    unset -f command
     [ "$APL_APPLY_RC" -eq 0 ]
     [ "$APL_APPLY_STATUS" = "applied" ]
-    # No log file to check; the absence of an abort is the assertion.
+    [ ! -s "$LOGGER_LOG" ]
 }
 
 @test "logger exiting non-zero does not abort the apply" {

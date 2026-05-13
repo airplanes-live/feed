@@ -112,7 +112,7 @@ _uat_apply() {
     args+=(--feed-env "$(feed_env_write_path)")
     args+=(--lock-file "$(feed_env_lock_path)")
     if [[ "$ROOT" != "/" ]]; then
-        args+=(--no-restart)
+        args+=(--no-restart --no-audit)
         echo "Skipping service restart (--root=$ROOT, not the host root)" >&2
     fi
     UAT_APPLY_RC=0
