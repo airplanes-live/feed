@@ -512,6 +512,7 @@ install -m 0644 "$GIT"/scripts/lib/feed-env-apply.sh "$IPATH/lib"
 historical_top_level_scripts=(
     airplanes-feed.sh
     airplanes-mlat.sh
+    airplanes-diagnostics.sh
     apl-feed.sh
     second-mlat.sh
 )
@@ -597,6 +598,8 @@ echo 50
 mkdir -p "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-mlat.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-feed.service "$SYSTEMD_DIR"
+cp "$GIT"/scripts/airplanes-diagnostics.service "$SYSTEMD_DIR"
+cp "$GIT"/scripts/airplanes-diagnostics.timer "$SYSTEMD_DIR"
 
 if ! airplanes_is_build_mode; then
     systemctl daemon-reload >> "$LOGFILE" || true
@@ -705,6 +708,22 @@ if ! airplanes_is_build_mode; then
     }
 
     register_claim_secret
+fi
+
+# Diagnostics push: enable the timer so airplanes-diagnostics.sh fires every
+# 5 min once a claim secret is present. The collector self-gates on
+# REPORT_STATUS in feed.env and silently exits when the feeder is not yet
+# claimed, so wiring the timer here (after register_claim_secret in the
+# manual-install branch above) is safe on a fresh box.
+if airplanes_is_build_mode; then
+    # In build mode there's no live systemd; just record the enable so the
+    # baked rootfs comes up with the timer wired into default.target.
+    systemctl enable airplanes-diagnostics.timer >> "$LOGFILE" || true
+elif is_unit_masked airplanes-diagnostics.timer; then
+    echo "airplanes-diagnostics.timer is masked; skipping enable."
+else
+    systemctl enable --now airplanes-diagnostics.timer >> "$LOGFILE" 2>&1 || \
+        echo "airplanes-diagnostics.timer could not be enabled; diagnostics push will not run until 'systemctl enable --now airplanes-diagnostics.timer'."
 fi
 
 RC_LOCAL="$(airplanes_path /etc/rc.local)"

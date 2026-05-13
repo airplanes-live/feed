@@ -4,8 +4,14 @@ setup() {
     SCRIPT="$BATS_TEST_DIRNAME/../scripts/apl-feed.sh"
     CONTRACT="$BATS_TEST_DIRNAME/contracts/feeder-api-v1.json"
     ROOT_DIR="$(mktemp -d)"
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes" "$ROOT_DIR/etc/airplanes"
+    mkdir -p "$ROOT_DIR/usr/local/share/airplanes" "$ROOT_DIR/etc/airplanes" \
+             "$ROOT_DIR/var/lib/airplanes"
     echo "11111111-2222-3333-4444-555555555555" > "$ROOT_DIR/etc/airplanes/feeder-id"
+    # Stage a fresh diagnostics-push timestamp so diagnostics_status_line
+    # reads "ok" rather than the default "no successful push observed yet"
+    # warn (the default-healthy fixture state assumes the timer has fired
+    # at least once).
+    touch "$ROOT_DIR/var/lib/airplanes/diagnostics-last-success"
     MOCK_PORT_FILE="$(mktemp)"
     MOCK_PID_FILE="$(mktemp)"
 

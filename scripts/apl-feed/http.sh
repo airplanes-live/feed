@@ -14,6 +14,43 @@ post_json() {
         "$SERVER_URL$path"
 }
 
+# post_json_bearer <token> <path> <body> <response_file>
+#
+# Same shape as post_json, but adds an "Authorization: Bearer <token>"
+# header. The token is written to a 0600 tempfile and passed to curl via
+# --config so it never lands in argv (which /proc/<pid>/cmdline and `ps`
+# expose). The tempfile is registered in TMP_FILES so common.sh's EXIT
+# trap removes it when the caller exits.
+#
+# Returns curl's exit code; echoes the HTTP status to stdout (or empty
+# on transport failure).
+post_json_bearer() {
+    local token="$1"
+    local path="$2"
+    local body="$3"
+    local response_file="$4"
+
+    local cfg
+    cfg="$(mktemp -t apl-feed-curlcfg.XXXXXX)" || return 1
+    chmod 0600 "$cfg" || { rm -f "$cfg"; return 1; }
+    TMP_FILES+=("$cfg")
+    # `curl --config` reads `key = "value"` lines; backslash-escape any
+    # embedded backslashes or double quotes in the token before substitution.
+    local escaped="${token//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    printf 'header = "Authorization: Bearer %s"\n' "$escaped" > "$cfg"
+
+    printf '%s' "$body" | curl --silent --show-error \
+        --connect-timeout 10 --max-time 30 \
+        --request POST \
+        --header 'Content-Type: application/json' \
+        --config "$cfg" \
+        --data-binary @- \
+        --output "$response_file" \
+        --write-out '%{http_code}' \
+        "$SERVER_URL$path"
+}
+
 body_preview() {
     local file="$1"
     head -c 200 "$file" || true

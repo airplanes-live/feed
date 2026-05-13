@@ -97,6 +97,14 @@ stage_install_footprint() {
     mkdir -p "$ROOT_DIR/lib/systemd/system"
     : > "$ROOT_DIR/lib/systemd/system/airplanes-feed.service"
     : > "$ROOT_DIR/lib/systemd/system/airplanes-mlat.service"
+    : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.service"
+    : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer"
+
+    # Diagnostics state directory — systemd's StateDirectory=airplanes
+    # creates /var/lib/airplanes owned by the diagnostics user on first
+    # timer fire. uninstall.sh wipes the whole directory.
+    mkdir -p "$ROOT_DIR/var/lib/airplanes"
+    : > "$ROOT_DIR/var/lib/airplanes/diagnostics-last-success"
 
     # CLI wrapper at /usr/local/bin — installed by update.sh:545.
     mkdir -p "$ROOT_DIR/usr/local/bin"
@@ -134,6 +142,16 @@ run_uninstall() {
     [ "$status" -eq 0 ]
     [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-feed.service" ]
     [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-mlat.service" ]
+    [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.service" ]
+    [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer" ]
+}
+
+@test "after install footprint, uninstall removes /var/lib/airplanes diagnostics state dir" {
+    stage_install_footprint
+    run_uninstall
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes" ]
 }
 
 @test "after install footprint, uninstall wipes IPATH and leaves only the legacy UUID symlink" {
