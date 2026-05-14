@@ -57,11 +57,17 @@ teardown() {
     rm -rf "$ROOT_DIR"
 }
 
-# Stage a maximally-realistic post-install state at AIRPLANES_ROOT.
+# Stage a maximally-realistic post-install state at AIRPLANES_ROOT. The
+# optional first argument selects the systemd unit layout:
+#   - "manual" (default) — units in /lib/systemd/system, no marker.
+#   - "image" — units in /etc/systemd/system, /etc/airplanes/image-install
+#     marker present. Mirrors what update.sh produces when IMAGE_SERVICE_LAYOUT
+#     is set (either IMAGE_INSTALL=1 or AIRPLANES_BUILD_MODE=1).
 #
 # Path enumeration sourced from update.sh's install steps:
 #   - $IPATH contents: update.sh:474-497, 545, 569-589, 644-651, 716
-#   - systemd units in /lib/systemd/system: update.sh:594-596 (manual install)
+#   - systemd units: /lib/systemd/system (manual, update.sh:594-596) or
+#     /etc/systemd/system (image, update.sh:336 + 594-596)
 #   - /usr/local/bin/apl-feed: update.sh:545
 #   - /etc/airplanes/ artifacts: update.sh:428,472,569,704; create-uuid.sh;
 #     claim-registration.sh:register_claim_secret
@@ -71,6 +77,12 @@ teardown() {
 # the entire directory wholesale, so per-file enumeration there has no
 # additional signal.
 stage_install_footprint() {
+    local systemd_layout="${1:-manual}"
+    case "$systemd_layout" in
+        manual|image) ;;
+        *) echo "stage_install_footprint: invalid systemd_layout '$systemd_layout'" >&2; return 2 ;;
+    esac
+
     # $IPATH (= /usr/local/share/airplanes) — wiped wholesale by uninstall.
     local ipath="$ROOT_DIR/usr/local/share/airplanes"
     mkdir -p "$ipath/git"
@@ -90,15 +102,33 @@ stage_install_footprint() {
     : > "$ipath/feed-airplanes"
     : > "$ipath/lastlog"
 
-    # Manual-install systemd unit layout — /lib/systemd/system. The image-
-    # install layout (/etc/systemd/system) is intentionally out of scope here;
-    # uninstall.sh is the manual-install uninstaller. See known-leaks tests
-    # below for the image-install gap.
-    mkdir -p "$ROOT_DIR/lib/systemd/system"
-    : > "$ROOT_DIR/lib/systemd/system/airplanes-feed.service"
-    : > "$ROOT_DIR/lib/systemd/system/airplanes-mlat.service"
-    : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.service"
-    : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer"
+    # /etc/airplanes/ — canonical config + identity. feed.env and the claim
+    # secret are intentionally preserved across uninstall (user-config and
+    # re-claim continuity); feeder-id is explicitly preserved by uninstall.sh.
+    # Staged before the systemd block so the image-install marker has a
+    # parent directory when systemd_layout=image.
+    mkdir -p "$ROOT_DIR/etc/airplanes"
+    printf 'canonical-uuid-content\n' > "$ROOT_DIR/etc/airplanes/feeder-id"
+    printf 'LATITUDE=0\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    printf 'secret-token\n' > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    # Systemd unit layout — manual (/lib/systemd/system) or image
+    # (/etc/systemd/system, gated by IMAGE_SERVICE_LAYOUT in update.sh).
+    # Image layout also stages the /etc/airplanes/image-install marker.
+    if [[ "$systemd_layout" == "image" ]]; then
+        mkdir -p "$ROOT_DIR/etc/systemd/system"
+        : > "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
+        : > "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
+        : > "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.service"
+        : > "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.timer"
+        : > "$ROOT_DIR/etc/airplanes/image-install"
+    else
+        mkdir -p "$ROOT_DIR/lib/systemd/system"
+        : > "$ROOT_DIR/lib/systemd/system/airplanes-feed.service"
+        : > "$ROOT_DIR/lib/systemd/system/airplanes-mlat.service"
+        : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.service"
+        : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer"
+    fi
 
     # Diagnostics state directory — systemd's StateDirectory=airplanes
     # creates /var/lib/airplanes owned by the diagnostics user on first
@@ -109,14 +139,6 @@ stage_install_footprint() {
     # CLI wrapper at /usr/local/bin — installed by update.sh:545.
     mkdir -p "$ROOT_DIR/usr/local/bin"
     : > "$ROOT_DIR/usr/local/bin/apl-feed"
-
-    # /etc/airplanes/ — canonical config + identity. feed.env and the claim
-    # secret are intentionally preserved across uninstall (user-config and
-    # re-claim continuity); feeder-id is explicitly preserved by uninstall.sh.
-    mkdir -p "$ROOT_DIR/etc/airplanes"
-    printf 'canonical-uuid-content\n' > "$ROOT_DIR/etc/airplanes/feeder-id"
-    printf 'LATITUDE=0\n' > "$ROOT_DIR/etc/airplanes/feed.env"
-    printf 'secret-token\n' > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
     # Legacy symlink at /etc/default/airplanes → /etc/airplanes/feed.env,
     # materialized by finalize_legacy_feed_env_migration on manual installs.
@@ -252,5 +274,85 @@ run_uninstall() {
     run_uninstall
 
     [ "$status" -eq 0 ]
+    [ ! -e "$ROOT_DIR/etc/airplanes/image-install" ]
+}
+
+@test "after image-install footprint, uninstall removes image-layout systemd units" {
+    stage_install_footprint image
+    run_uninstall
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-feed.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.timer" ]
+    [ ! -e "$ROOT_DIR/etc/airplanes/image-install" ]
+}
+
+@test "image-layout systemd units are removed even without the image-install marker" {
+    # Regression guard: cleanup must not be gated on /etc/airplanes/image-install.
+    # update.sh routes units to /etc/systemd/system whenever IMAGE_SERVICE_LAYOUT
+    # is set, which includes AIRPLANES_BUILD_MODE=1 builds that may not write
+    # the marker — uninstall has to clean those too.
+    mkdir -p "$ROOT_DIR/etc/systemd/system"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.service"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.timer"
+
+    run_uninstall
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-feed.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.timer" ]
+}
+
+@test "after mixed-layout footprint, uninstall removes units and wants symlinks from both layouts" {
+    # Defends a feeder caught mid-migration (units staged in both layouts) and
+    # exercises the explicit wants-target cleanup that handles
+    # chroot/build-mode/stubbed-systemctl environments where `systemctl disable`
+    # can't run.
+    stage_install_footprint manual
+    mkdir -p "$ROOT_DIR/etc/systemd/system"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-mlat2.service"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.service"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.timer"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
+
+    mkdir -p "$ROOT_DIR/etc/systemd/system/default.target.wants"
+    mkdir -p "$ROOT_DIR/etc/systemd/system/multi-user.target.wants"
+    mkdir -p "$ROOT_DIR/etc/systemd/system/timers.target.wants"
+    ln -sfn '/etc/systemd/system/airplanes-feed.service' \
+        "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-feed.service"
+    ln -sfn '/etc/systemd/system/airplanes-mlat.service' \
+        "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-mlat.service"
+    ln -sfn '/etc/systemd/system/airplanes-mlat2.service' \
+        "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-mlat2.service"
+    ln -sfn '/etc/systemd/system/airplanes-mlat2.service' \
+        "$ROOT_DIR/etc/systemd/system/multi-user.target.wants/airplanes-mlat2.service"
+    ln -sfn '/etc/systemd/system/airplanes-diagnostics.timer' \
+        "$ROOT_DIR/etc/systemd/system/timers.target.wants/airplanes-diagnostics.timer"
+
+    run_uninstall
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-feed.service" ]
+    [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-mlat.service" ]
+    [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.service" ]
+    [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-feed.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-mlat2.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.timer" ]
+    [ ! -L "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-feed.service" ]
+    [ ! -L "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-mlat.service" ]
+    [ ! -L "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-mlat2.service" ]
+    [ ! -L "$ROOT_DIR/etc/systemd/system/multi-user.target.wants/airplanes-mlat2.service" ]
+    [ ! -L "$ROOT_DIR/etc/systemd/system/timers.target.wants/airplanes-diagnostics.timer" ]
     [ ! -e "$ROOT_DIR/etc/airplanes/image-install" ]
 }

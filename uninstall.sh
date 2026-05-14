@@ -15,7 +15,15 @@ airplanes_path() {
 IPATH="$(airplanes_path /usr/local/share/airplanes)"
 FEEDER_ID="$(airplanes_path /etc/airplanes/feeder-id)"
 LEGACY_UUID="$IPATH/airplanes-uuid"
-SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
+# Unit-file directories: manual install (/lib/systemd/system, update.sh
+# default) and image-install / build-mode (/etc/systemd/system, set by
+# update.sh when IMAGE_SERVICE_LAYOUT=1). Iterate both unconditionally; unit
+# names are airplanes-specific and rm -f is a no-op when absent.
+SYSTEMD_UNIT_DIRS=(
+    "$(airplanes_path /lib/systemd/system)"
+    "$(airplanes_path /etc/systemd/system)"
+)
+SYSTEMD_ETC="$(airplanes_path /etc/systemd/system)"
 TAR1090_DIR="$(airplanes_path /usr/local/share/tar1090)"
 LOCAL_BIN_APL_FEED="$(airplanes_path /usr/local/bin/apl-feed)"
 IMAGE_INSTALL_MARKER="$(airplanes_path /etc/airplanes/image-install)"
@@ -33,11 +41,26 @@ if [[ -d "$TAR1090_DIR/html-airplanes" ]]; then
     bash "$TAR1090_DIR/uninstall.sh" airplanes
 fi
 
-rm -f "$SYSTEMD_DIR/airplanes-mlat.service"
-rm -f "$SYSTEMD_DIR/airplanes-mlat2.service"
-rm -f "$SYSTEMD_DIR/airplanes-feed.service"
-rm -f "$SYSTEMD_DIR/airplanes-diagnostics.service"
-rm -f "$SYSTEMD_DIR/airplanes-diagnostics.timer"
+for _systemd_dir in "${SYSTEMD_UNIT_DIRS[@]}"; do
+    rm -f "$_systemd_dir/airplanes-mlat.service"
+    rm -f "$_systemd_dir/airplanes-mlat2.service"
+    rm -f "$_systemd_dir/airplanes-feed.service"
+    rm -f "$_systemd_dir/airplanes-diagnostics.service"
+    rm -f "$_systemd_dir/airplanes-diagnostics.timer"
+done
+unset _systemd_dir
+
+# Wants-target symlinks. `systemctl disable --now` above removes these in
+# production; this explicit cleanup handles chroot/build-mode/stubbed-systemctl
+# cases where disable can't run and would otherwise leave dangling symlinks
+# pointing at now-removed unit files. Mirrors update-migrations.sh's mlat2
+# retirement cleanup.
+rm -f "$SYSTEMD_ETC/default.target.wants/airplanes-feed.service"
+rm -f "$SYSTEMD_ETC/default.target.wants/airplanes-mlat.service"
+rm -f "$SYSTEMD_ETC/default.target.wants/airplanes-mlat2.service"
+rm -f "$SYSTEMD_ETC/multi-user.target.wants/airplanes-mlat2.service"
+rm -f "$SYSTEMD_ETC/timers.target.wants/airplanes-diagnostics.timer"
+
 systemctl daemon-reload || true
 
 # Named-path artifacts written by update.sh outside $IPATH. The IPATH wipe
