@@ -99,6 +99,24 @@ SH
     [ -e "$ROOT_DIR/lib/systemd/system/keep-this.service" ]
 }
 
+@test "uninstall.sh does not touch image-baked airplanes-first-run.service" {
+    # airplanes-first-run.service ships in the image rootfs (airplanes-live/image),
+    # not from feed. Feed's units only declare After=airplanes-first-run.service
+    # for ordering. A regression here would brick first-boot on image feeders
+    # whose user has run uninstall.
+    mkdir -p "$ROOT_DIR/etc/systemd/system"
+    : > "$ROOT_DIR/etc/systemd/system/airplanes-first-run.service"
+    mkdir -p "$ROOT_DIR/etc/systemd/system/default.target.wants"
+    ln -sfn '/etc/systemd/system/airplanes-first-run.service' \
+        "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-first-run.service"
+
+    run_uninstall
+
+    [ "$status" -eq 0 ]
+    [ -e "$ROOT_DIR/etc/systemd/system/airplanes-first-run.service" ]
+    [ -L "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-first-run.service" ]
+}
+
 @test "uninstall.sh wipes IPATH contents and recreates the directory" {
     mkdir -p "$ROOT_DIR/usr/local/share/airplanes/git/sub"
     mkdir -p "$ROOT_DIR/usr/local/share/airplanes/.cache"
