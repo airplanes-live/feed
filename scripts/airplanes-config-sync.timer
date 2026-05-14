@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync feeder remote configuration with airplanes.live every 60 seconds
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=60s
+RandomizedDelaySec=30s
+Unit=airplanes-config-sync.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -111,6 +111,8 @@ source "$APL_FEED_LIB_DIR/apply.sh"
 source "$APL_FEED_LIB_DIR/schema.sh"
 # shellcheck source=scripts/apl-feed/import.sh
 source "$APL_FEED_LIB_DIR/import.sh"
+# shellcheck source=scripts/apl-feed/config.sh
+source "$APL_FEED_LIB_DIR/config.sh"
 
 main() {
     local cmd="${1:-}"
@@ -158,6 +160,10 @@ main() {
         import)
             shift
             dispatch_import "$@"
+            ;;
+        config)
+            shift
+            dispatch_config "$@"
             ;;
         -h|--help|'')
             usage

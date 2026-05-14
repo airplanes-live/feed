@@ -51,6 +51,7 @@ Usage:
   apl-feed diagnostics disable
   apl-feed apply [--no-restart] [--lock-timeout SECS]
   apl-feed schema
+  apl-feed config sync [--dry-run] [--no-restart]
   apl-feed import legacy-config [--no-restart] <path>
   apl-feed backup <file>
   apl-feed restore <file>

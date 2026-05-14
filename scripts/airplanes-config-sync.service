@@ -1,0 +1,16 @@
+[Unit]
+Description=airplanes.live feeder remote-config sync
+Wants=network-online.target
+After=network-online.target airplanes-feed.service
+ConditionPathExists=/etc/airplanes/feeder-claim-secret
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/apl-feed config sync
+TimeoutStartSec=60s
+SyslogIdentifier=airplanes-config-sync
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/airplanes /etc/airplanes /run
