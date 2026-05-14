@@ -130,7 +130,21 @@ class H(http.server.BaseHTTPRequestHandler):
             self.wfile.write(secret_body.encode())
             return
         if self.path == "/api/feeders/status":
-            current = body.get("current_secret")
+            # /status moved to Authorization: Bearer alv1.<uuid>.<secret>;
+            # the body now only carries the UUID. Parse the bearer
+            # against the body uuid the way the production server does:
+            # malformed token → no auth (soft-fail to minimal),
+            # token_uuid != body uuid → no auth (real server returns
+            # 400 uuid_mismatch, but the feed-side test cases never
+            # exercise that branch so soft-failing here is fine).
+            current = ""
+            body_uuid = body.get("uuid")
+            auth = self.headers.get("Authorization", "")
+            if auth.startswith("Bearer alv1.") and body_uuid:
+                rest = auth[len("Bearer alv1."):]
+                parts = rest.split(".", 1)
+                if len(parts) == 2 and parts[0] == body_uuid:
+                    current = parts[1]
             if current == active_secret:
                 out = {
                     "registered": True,

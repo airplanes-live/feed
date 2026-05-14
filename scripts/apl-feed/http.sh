@@ -30,9 +30,18 @@ post_json_bearer() {
     local body="$3"
     local response_file="$4"
 
-    local cfg
+    local cfg rc
     cfg="$(mktemp -t apl-feed-curlcfg.XXXXXX)" || return 1
     chmod 0600 "$cfg" || { rm -f "$cfg"; return 1; }
+    # Primary cleanup is the explicit `rm -f "$cfg"` at function return.
+    # TMP_FILES is only a safety net for DIRECT callers — i.e., not the
+    # `status=$(post_json_bearer ...)` pattern every current caller uses,
+    # because bash resets EXIT traps in command-substitution subshells
+    # AND TMP_FILES mutations don't propagate out. Direct callers get
+    # the EXIT-trap reap for signal-kills between mktemp and the rm
+    # below; $() callers only get the explicit rm. Residual leak window
+    # for $() callers is the few microseconds between mktemp and the rm
+    # — accepted.
     TMP_FILES+=("$cfg")
     # `curl --config` reads `key = "value"` lines; backslash-escape any
     # embedded backslashes or double quotes in the token before substitution.
@@ -43,6 +52,7 @@ post_json_bearer() {
     # header, which the backend would reject as `malformed_authorization`
     # rather than the actual local I/O error.
     if ! printf 'header = "Authorization: Bearer %s"\n' "$escaped" > "$cfg"; then
+        rm -f "$cfg"
         return 1
     fi
 
@@ -55,6 +65,9 @@ post_json_bearer() {
         --output "$response_file" \
         --write-out '%{http_code}' \
         "$SERVER_URL$path"
+    rc=$?
+    rm -f "$cfg"
+    return "$rc"
 }
 
 body_preview() {
@@ -65,11 +78,13 @@ body_preview() {
 status_probe_version() {
     local uuid="$1"
     local secret="$2"
-    local response_file status curl_rc version body
+    local response_file status curl_rc version body token
     response_file="$(mktemp)"
-    body="$(printf '{"uuid":"%s","current_secret":"%s"}' "$uuid" "$secret")"
+    # Body carries only the UUID; auth is in the Bearer header.
+    body="$(printf '{"uuid":"%s"}' "$uuid")"
+    token="alv1.${uuid}.${secret}"
     set +e
-    status="$(post_json '/api/feeders/status' "$body" "$response_file")"
+    status="$(post_json_bearer "$token" '/api/feeders/status' "$body" "$response_file")"
     curl_rc=$?
     set -e
     if [[ "$curl_rc" -ne 0 || "$status" != "200" ]]; then

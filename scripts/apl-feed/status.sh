@@ -372,7 +372,7 @@ website_feed_status_line() {
 claim_registration_status_line() {
     require_jq
 
-    local uuid final pending secret response_file body status curl_rc
+    local uuid final pending secret response_file body status curl_rc token
     local registered version owner_present reset_until error preview
     local last_seen_present last_seen_at last_seen_age
 
@@ -401,9 +401,11 @@ claim_registration_status_line() {
     fi
 
     response_file="$(new_tmp_file)"
-    body="$(printf '{"uuid":"%s","current_secret":"%s"}' "$uuid" "$secret")"
+    # Body carries only the UUID; auth is in the Bearer header.
+    body="$(printf '{"uuid":"%s"}' "$uuid")"
+    token="alv1.${uuid}.${secret}"
     set +e
-    status="$(post_json '/api/feeders/status' "$body" "$response_file")"
+    status="$(post_json_bearer "$token" '/api/feeders/status' "$body" "$response_file")"
     curl_rc=$?
     set -e
     if [[ "$curl_rc" -ne 0 ]]; then

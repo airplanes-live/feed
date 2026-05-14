@@ -65,17 +65,19 @@ teardown() {
     rm -rf "$ROOT_DIR"
 }
 
-# Stub `post_json` to write a prepared response and return a chosen
-# code. Defines the function in the current shell so the next call to
-# claim_registration_status_line / status_probe_version uses it.
+# Stub `post_json_bearer` to write a prepared response and return a
+# chosen code. Defines the function in the current shell so the next
+# call to claim_registration_status_line / status_probe_version uses it.
+# DEV-427: /status migrated from post_json to post_json_bearer; the stub
+# matches the new helper's 4-arg signature (response_file is $4).
 stub_post_json() {
     # stub_post_json <http-status-code> <response-body-json>
     # On rc=99 sentinel, simulates network failure (curl rc != 0).
     local code="$1"
     local body="$2"
     eval "
-post_json() {
-    local response_file=\"\$3\"
+post_json_bearer() {
+    local response_file=\"\$4\"
     if [[ '$code' == '99' ]]; then
         return 7
     fi
