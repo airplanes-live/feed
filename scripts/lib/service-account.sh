@@ -65,6 +65,22 @@ ensure_airplanes_feed_account() {
         fi
     fi
 
+    # Pi hardware needs the daemon user in the `video` group so /dev/vchiq
+    # is readable for `vcgencmd get_throttled` (airplanes-diagnostics push).
+    # Gate on vcgencmd-presence AND the `video` group existing so the
+    # membership lands only where it will be used. The `video` group exists
+    # on most Debian/Ubuntu hosts regardless of Pi userland; the vcgencmd
+    # guard keeps non-Pi systems out of the group.
+    if command -v vcgencmd >/dev/null 2>&1 && getent group video >/dev/null 2>&1
+    then
+        if ! id -nG "$uname" 2>/dev/null | tr ' ' '\n' | grep -qx video
+        then
+            usermod -aG video "$uname" 2>/dev/null \
+                || gpasswd -a "$uname" video 2>/dev/null \
+                || echo "WARNING: could not add $uname to video group; airplanes-diagnostics throttle fields will stay null until manually fixed" >&2
+        fi
+    fi
+
     # heal_claim_state_ownership runs after account setup so its chown
     # target group exists. Defaults to airplanes-feed:airplanes-feed; the
     # uname/gname args here are not threaded through because the heal
