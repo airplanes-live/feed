@@ -62,6 +62,14 @@ APL_FEED_APPLY_EDITED_AT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]
 declare -gA APL_APPLY_INCOMING_META_EDITED_AT=()
 declare -gA APL_APPLY_INCOMING_META_EDITED_BY=()
 
+# Caller-input scalar: server-supplied "now" timestamp (RFC 3339 UTC)
+# used as the reference for the LWW gate's bogus-future-heal check.
+# Set by callers like `apl-feed config sync` to the server_time field of
+# the response so a feeder with a fast local clock cannot self-mask its
+# own corrupt on-disk metadata. Empty string => fall back to local now()
+# (acceptable for callers that don't have a trusted external clock).
+APL_APPLY_INCOMING_SERVER_TIME="${APL_APPLY_INCOMING_SERVER_TIME:-}"
+
 # Result global: indexed array of payload keys whose write was skipped
 # because the incoming metadata's edited_at was older-or-equal to the
 # on-disk edited_at recorded in feed.meta.json. The skip is per-key —
@@ -918,9 +926,35 @@ apl_feed_apply() {
     # clock-skew rejection that produced the heal payload in the first
     # place (rejected_fields response from /api/feeders/config/sync).
     local _lww_key _on_disk _incoming _on_disk_n _incoming_n _now_skew_n
-    _now_skew_n="$(_apl_feed_apply_normalize_iso_for_compare \
-        "$(_apl_feed_apply_iso_plus_seconds \
-            "$APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS")")"
+    # Bogus-future-heal reference: prefer the caller-supplied server time
+    # over the local clock so a feeder with a fast NTP offset cannot mark
+    # its own already-corrupt metadata as legitimately newer than the
+    # server response and re-skip the heal indefinitely. Empty
+    # APL_APPLY_INCOMING_SERVER_TIME (most callers) falls back to local
+    # now() — matches the previous behavior for non-sync writers.
+    local _now_ref
+    if [[ -n "$APL_APPLY_INCOMING_SERVER_TIME" \
+        && "$APL_APPLY_INCOMING_SERVER_TIME" =~ $APL_FEED_APPLY_EDITED_AT_RE ]]; then
+        _now_ref="$APL_APPLY_INCOMING_SERVER_TIME"
+    else
+        _now_ref="$(_apl_feed_apply_iso_plus_seconds 0)"
+    fi
+    # Compute "_now_ref + CLOCK_SKEW_MAX" by re-using iso_plus_seconds for
+    # the local-now path and accepting the trade-off that a server-time
+    # path adds the skew by string-extension (we'd need a date -d that
+    # parses ISO 8601 reliably). For server-time, normalize then bolt on
+    # the skew by re-rendering through GNU date.
+    if [[ -n "$APL_APPLY_INCOMING_SERVER_TIME" \
+        && "$APL_APPLY_INCOMING_SERVER_TIME" =~ $APL_FEED_APPLY_EDITED_AT_RE ]]; then
+        _now_skew_n="$(date -u -d "$_now_ref +${APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS} seconds" \
+            +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || _apl_feed_apply_iso_plus_seconds "$APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS")"
+        _now_skew_n="$(_apl_feed_apply_normalize_iso_for_compare "$_now_skew_n")"
+    else
+        _now_skew_n="$(_apl_feed_apply_normalize_iso_for_compare \
+            "$(_apl_feed_apply_iso_plus_seconds \
+                "$APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS")")"
+    fi
     for _lww_key in "${!_meta_in_at[@]}"; do
         # Only gate keys actually in the payload — `_meta_in_at` may
         # contain stray entries already rejected by the payload-coverage

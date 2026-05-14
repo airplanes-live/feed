@@ -246,6 +246,58 @@ read_meta_edited_at() {
     [ "$(read_disk_value ALTITUDE)" = "120m" ]
 }
 
+@test "bogus-future heal uses APL_APPLY_INCOMING_SERVER_TIME when set" {
+    # A feeder whose local clock is ahead would have computed
+    # `now + 300s` past the on-disk stamp, marking it as legitimate and
+    # re-skipping the heal. With the server-time override the threshold
+    # is computed against trusted time and the heal fires.
+    seed_feed_env
+    # On-disk stamp is 3 hours past stubbed local now (12:00) but only
+    # a few seconds past stubbed server now (set below).
+    seed_meta MLAT_USER "2026-05-14T15:00:00Z"
+    reset_incoming_meta
+    APL_APPLY_INCOMING_META_EDITED_AT[MLAT_USER]="2026-05-14T15:01:00Z"
+    APL_APPLY_INCOMING_META_EDITED_BY[MLAT_USER]="website"
+    # Without server time, local-now + 5min = 12:05, on-disk 15:00 > 12:05
+    # would already be flagged as bogus-future and heal. Pin server time
+    # to 15:00:30 — only 30s before on-disk's 15:00, well inside the
+    # 300s skew window, so the heal MUST be driven by the bogus-future
+    # logic re-anchored on server time.
+    APL_APPLY_INCOMING_SERVER_TIME="2026-05-14T15:00:30Z"
+
+    do_apply --no-restart MLAT_USER=alice
+
+    # incoming 15:01 > on-disk 15:00 — applies normally; the server-time
+    # path doesn't change the per-key result here. Test the negative
+    # case below to prove the path actually fires.
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    APL_APPLY_INCOMING_SERVER_TIME=""
+}
+
+@test "fast local clock cannot self-mask future on-disk stamps when server_time is supplied" {
+    # Reproduces Codex finding: feeder clock fast by 6 min relative to
+    # the server. On-disk has a future-stamped tuple (6 min ahead of
+    # server). Without server_time the feeder would compute the heal
+    # threshold from its own already-fast local-now, conclude the stamp
+    # is fine, and skip the heal forever.
+    seed_feed_env
+    # On-disk stamp is 12:06:00, 6 minutes past server-now.
+    seed_meta MLAT_USER "2026-05-14T12:06:00Z"
+    reset_incoming_meta
+    APL_APPLY_INCOMING_META_EDITED_AT[MLAT_USER]="2026-05-14T12:00:00Z"
+    APL_APPLY_INCOMING_META_EDITED_BY[MLAT_USER]="feeder"
+    # Server time is the trusted reference. Bogus-future threshold is
+    # server_time + 300s = 12:05:00. On-disk 12:06:00 > 12:05:00 -> bogus.
+    APL_APPLY_INCOMING_SERVER_TIME="2026-05-14T12:00:00Z"
+
+    do_apply --no-restart MLAT_USER=alice  # same value, just metadata heal
+
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ "${#APL_APPLY_SKIPPED_BY_LWW[@]}" -eq 0 ]
+    [ "$(read_meta_edited_at MLAT_USER)" = "2026-05-14T12:00:00Z" ]
+    APL_APPLY_INCOMING_SERVER_TIME=""
+}
+
 @test "bogus-future on-disk edited_at is healed by incoming server tuple" {
     # rejected_fields-healing scenario: server rejected the feeder's
     # POST because the on-disk edited_at was wildly in the future

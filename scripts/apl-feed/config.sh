@@ -74,6 +74,15 @@ _config_sync_read_bool() {
 # associative arrays via nameref. Missing / corrupt / non-v1 schema all
 # leave the maps empty without erroring — callers fall back to the
 # legacy tuple per-key.
+#
+# Per-entry shape is filtered to enforce:
+#   - edited_at matches the RFC 3339 UTC regex (mirrors the apply lib's
+#     APL_FEED_APPLY_EDITED_AT_RE)
+#   - edited_by ∈ {feeder, website, legacy}
+# Invalid entries are dropped silently. The next call to apl_feed_apply
+# overwrites the sidecar from clean state, so a one-off corrupt entry
+# heals itself; meanwhile we never propagate the bad metadata to the
+# server and stay out of a 400 validation_failed loop.
 _config_sync_load_meta() {
     local meta_path="$1"
     local -n at_out="$2"
@@ -88,6 +97,8 @@ _config_sync_load_meta() {
             select(.value | type == "object") |
             select(.value.edited_at | type == "string") |
             select(.value.edited_by | type == "string") |
+            select(.value.edited_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?Z$")) |
+            select(.value.edited_by | IN("feeder", "website", "legacy")) |
             "\(.key)\t\(.value.edited_at)\t\(.value.edited_by)"
         else empty end
     ' "$meta_path" 2>/dev/null)"; then
@@ -152,7 +163,14 @@ _config_sync_build_payload() {
     local lat_at="${meta_at[LATITUDE]:-}"
     local lon_at="${meta_at[LONGITUDE]:-}"
     if [[ -n "$lat_at" && -n "$lon_at" ]]; then
-        if [[ "$lat_at" < "$lon_at" ]]; then
+        # Atomic-group edited_at = MAX of the two axes' stamps. apl_feed_apply
+        # writes both axes in a single locked transaction with the same
+        # stamp, so MIN and MAX are equal in the normal case. In the
+        # divergent-stamps edge case (legacy seed + a partial hand-edit
+        # that touched only one axis), MAX reflects when the position
+        # *state* was last changed, not the older lagging stamp. The
+        # symmetric LWW gate in _config_sync_apply_response uses MAX too.
+        if [[ "$lat_at" > "$lon_at" ]]; then
             position_at="$lat_at"
         else
             position_at="$lon_at"
@@ -371,6 +389,7 @@ _config_sync_apply_response() {
         _config_sync_log error "reason=apply_translate body=$(body_preview "$response_file")"
         APL_APPLY_INCOMING_META_EDITED_AT=()
         APL_APPLY_INCOMING_META_EDITED_BY=()
+        APL_APPLY_INCOMING_SERVER_TIME=""
         return 1
     fi
     if (( ${#apply_args[@]} == 0 )); then
@@ -379,7 +398,95 @@ _config_sync_apply_response() {
         _config_sync_log info "reason=empty_fields_payload"
         APL_APPLY_INCOMING_META_EDITED_AT=()
         APL_APPLY_INCOMING_META_EDITED_BY=()
+        APL_APPLY_INCOMING_SERVER_TIME=""
         return 0
+    fi
+
+    # Pass the server's authoritative `server_time` to the apply lib so
+    # its bogus-future-heal threshold is computed against trusted time
+    # rather than a possibly-fast local clock.
+    APL_APPLY_INCOMING_SERVER_TIME="$(parse_field_from "$response_file" '.server_time')"
+
+    # Atomic position-group LWW decision. The server treats position as
+    # a single field, but the apply lib gates per feed.env key. Without
+    # this pre-check, a feeder whose on-disk LATITUDE/LONGITUDE stamps
+    # have somehow diverged could apply one axis from the server tuple
+    # and skip the other — producing a hybrid position. Compute the
+    # group decision against the OLDER of the two on-disk stamps so a
+    # stale half can't masquerade as the whole.
+    local _have_lat_arg=0 _have_lon_arg=0
+    local _arg
+    for _arg in "${apply_args[@]}"; do
+        case "$_arg" in
+            LATITUDE=*) _have_lat_arg=1 ;;
+            LONGITUDE=*) _have_lon_arg=1 ;;
+        esac
+    done
+    if (( _have_lat_arg == 1 && _have_lon_arg == 1 )); then
+        local _meta_path
+        _meta_path="$(feed_env_write_path)"
+        _meta_path="${_meta_path%/feed.env}/feed.meta.json"
+        local -A _on_at=() _on_by=()
+        _config_sync_load_meta "$_meta_path" _on_at _on_by
+        local _lat_at="${_on_at[LATITUDE]:-}"
+        local _lon_at="${_on_at[LONGITUDE]:-}"
+        local _pos_group_at=""
+        if [[ -n "$_lat_at" && -n "$_lon_at" ]]; then
+            # MAX-of-pair: see comment in _config_sync_build_payload.
+            # If LAT was edited fresh but LON's stamp is stale, the
+            # position state was effectively newly edited at the LAT
+            # time — incoming must beat MAX to apply atomically.
+            if [[ "$_lat_at" > "$_lon_at" ]]; then
+                _pos_group_at="$_lat_at"
+            else
+                _pos_group_at="$_lon_at"
+            fi
+        elif [[ -n "$_lat_at" ]]; then
+            _pos_group_at="$_lat_at"
+        elif [[ -n "$_lon_at" ]]; then
+            _pos_group_at="$_lon_at"
+        fi
+        local _incoming_pos_at="${APL_APPLY_INCOMING_META_EDITED_AT[LATITUDE]:-}"
+        if [[ -n "$_pos_group_at" && -n "$_incoming_pos_at" ]]; then
+            # Use the same bogus-future-heal carve-out the lib applies.
+            # If on-disk is wildly in server-future, the heal path must
+            # run — keep both axes in the payload.
+            local _heal_threshold
+            if [[ -n "$APL_APPLY_INCOMING_SERVER_TIME" \
+                && "$APL_APPLY_INCOMING_SERVER_TIME" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?Z$ ]]; then
+                _heal_threshold="$(date -u -d "$APL_APPLY_INCOMING_SERVER_TIME +300 seconds" \
+                    +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+            fi
+            local _is_bogus_future=0
+            if [[ -n "$_heal_threshold" && "$_pos_group_at" > "$_heal_threshold" ]]; then
+                _is_bogus_future=1
+            fi
+            if (( _is_bogus_future == 0 )) && [[ ! "$_incoming_pos_at" > "$_pos_group_at" ]]; then
+                # Drop both LATITUDE and LONGITUDE from apply_args and
+                # the incoming-meta arrays so the lib's gate has nothing
+                # to decide for position. Other fields apply as usual.
+                local -a _filtered=()
+                for _arg in "${apply_args[@]}"; do
+                    case "$_arg" in
+                        LATITUDE=*|LONGITUDE=*) ;;
+                        *) _filtered+=("$_arg") ;;
+                    esac
+                done
+                apply_args=("${_filtered[@]}")
+                unset 'APL_APPLY_INCOMING_META_EDITED_AT[LATITUDE]'
+                unset 'APL_APPLY_INCOMING_META_EDITED_AT[LONGITUDE]'
+                unset 'APL_APPLY_INCOMING_META_EDITED_BY[LATITUDE]'
+                unset 'APL_APPLY_INCOMING_META_EDITED_BY[LONGITUDE]'
+                _config_sync_log info "reason=position_group_skipped_by_lww"
+            fi
+        fi
+        if (( ${#apply_args[@]} == 0 )); then
+            _config_sync_log info "reason=all_keys_skipped_after_pos_group"
+            APL_APPLY_INCOMING_META_EDITED_AT=()
+            APL_APPLY_INCOMING_META_EDITED_BY=()
+            APL_APPLY_INCOMING_SERVER_TIME=""
+            return 0
+        fi
     fi
 
     feed_env_ensure_canonical_for_write
@@ -398,6 +505,7 @@ _config_sync_apply_response() {
     # the timer's next tick) starts from a clean slate.
     APL_APPLY_INCOMING_META_EDITED_AT=()
     APL_APPLY_INCOMING_META_EDITED_BY=()
+    APL_APPLY_INCOMING_SERVER_TIME=""
 
     case "$APL_APPLY_STATUS" in
         applied|no_change)
@@ -501,7 +609,16 @@ apl_feed_config_sync() {
         _config_sync_log error "reason=unreadable_claim_secret path=$secret_path"
         return "$CONFIG_SYNC_EXIT_BAD_CONFIG"
     fi
-    secret="$(read_secret_file "$secret_path")"
+    # read_secret_file calls `die` (exit 1) on a malformed secret.
+    # Without the `||` capture, set -e would propagate that exit 1 out
+    # of this function — masking it as a generic transient failure
+    # instead of the hard-config error it actually is.
+    local _secret_rc=0
+    secret="$(read_secret_file "$secret_path" 2>/dev/null)" || _secret_rc=$?
+    if (( _secret_rc != 0 )) || [[ -z "$secret" ]]; then
+        _config_sync_log error "reason=invalid_claim_secret path=$secret_path"
+        return "$CONFIG_SYNC_EXIT_BAD_CONFIG"
+    fi
 
     local feed_env meta_path feeder_time payload response_file
     feed_env="$(root_path '/etc/airplanes/feed.env')"

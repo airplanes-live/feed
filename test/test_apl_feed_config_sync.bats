@@ -190,14 +190,18 @@ EOF
     [ "$(jq -r '.fields.position.value' <<<"$SYNC_OUT")" = "null" ]
 }
 
-@test "position edited_at is min of LATITUDE and LONGITUDE stamps" {
+@test "position edited_at is max of LATITUDE and LONGITUDE stamps (atomic group)" {
+    # apl_feed_apply stamps both axes with the same now() in the normal
+    # case (MIN == MAX). In the divergent-stamps edge case, MAX reflects
+    # when the position state was last changed — the symmetric LWW gate
+    # in _config_sync_apply_response uses MAX too so atomicity holds.
     seed_feed_env
     seed_feed_meta LATITUDE "2026-05-14T12:00:00Z" LONGITUDE "2026-05-10T08:00:00Z"
 
     run_sync --dry-run
 
     [ "$SYNC_RC" -eq 0 ]
-    [ "$(jq -r '.fields.position.edited_at' <<<"$SYNC_OUT")" = "2026-05-10T08:00:00Z" ]
+    [ "$(jq -r '.fields.position.edited_at' <<<"$SYNC_OUT")" = "2026-05-14T12:00:00Z" ]
 }
 
 @test "empty MLAT_USER emits null tombstone" {
@@ -356,4 +360,78 @@ EOF
 
     [ "$SYNC_RC" -eq 64 ]
     echo "$SYNC_ERR" | grep -F 'reason=missing_claim_secret'
+}
+
+@test "corrupt claim secret exits 64 (not 1 from die-in-substitution)" {
+    seed_feed_env
+    # Wrong format — validate_secret requires 16 chars [A-Z0-9].
+    printf 'not-a-valid-secret\n' \
+        > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+
+    run_sync
+
+    [ "$SYNC_RC" -eq 64 ]
+    echo "$SYNC_ERR" | grep -F 'reason=invalid_claim_secret'
+}
+
+@test "corrupt feed.meta.json edited_at falls back to legacy tuple" {
+    seed_feed_env
+    cat > "$ROOT_DIR/etc/airplanes/feed.meta.json" <<EOF
+{"schema_version":1,"fields":{"MLAT_USER":{"edited_at":"this is not RFC 3339","edited_by":"feeder"}}}
+EOF
+
+    run_sync --dry-run
+
+    [ "$SYNC_RC" -eq 0 ]
+    [ "$(jq -r '.fields.mlat_user.edited_at' <<<"$SYNC_OUT")" = "2020-01-01T00:00:00Z" ]
+    [ "$(jq -r '.fields.mlat_user.edited_by' <<<"$SYNC_OUT")" = "legacy" ]
+}
+
+@test "unknown edited_by value in sidecar falls back to legacy tuple" {
+    seed_feed_env
+    cat > "$ROOT_DIR/etc/airplanes/feed.meta.json" <<EOF
+{"schema_version":1,"fields":{"MLAT_USER":{"edited_at":"2026-05-12T10:00:00Z","edited_by":"attacker"}}}
+EOF
+
+    run_sync --dry-run
+
+    [ "$SYNC_RC" -eq 0 ]
+    [ "$(jq -r '.fields.mlat_user.edited_by' <<<"$SYNC_OUT")" = "legacy" ]
+    [ "$(jq -r '.fields.mlat_user.edited_at' <<<"$SYNC_OUT")" = "2020-01-01T00:00:00Z" ]
+}
+
+@test "position group skips atomically when only one axis is newer locally" {
+    # Hand-divergent on-disk stamps: LATITUDE was edited locally just
+    # now, LONGITUDE is still on the 2020 legacy seed. Server returns a
+    # position tuple older than LATITUDE but newer than LONGITUDE — a
+    # naive per-key gate would apply LON (server) while skipping LAT
+    # (local). The atomic position-group decision in config.sh must
+    # skip both axes together.
+    seed_feed_env
+    cat > "$ROOT_DIR/etc/airplanes/feed.meta.json" <<EOF
+{
+  "schema_version": 1,
+  "fields": {
+    "LATITUDE":  {"edited_at": "2026-05-14T11:59:00Z", "edited_by": "feeder"},
+    "LONGITUDE": {"edited_at": "2020-01-01T00:00:00Z", "edited_by": "legacy"}
+  }
+}
+EOF
+    # Server returns a position older than LATITUDE but newer than LONGITUDE.
+    set_canned 200 '{
+        "schema_version": 1,
+        "server_time": "2026-05-14T12:00:00Z",
+        "owned": true,
+        "fields": {
+            "position": {"value": {"lat": 99.9, "lon": 99.9}, "edited_at": "2026-05-14T11:30:00Z", "edited_by": "website"}
+        }
+    }'
+
+    run_sync --no-restart
+
+    [ "$SYNC_RC" -eq 0 ]
+    # Position must NOT be partially applied. LATITUDE stays 47.0, LONGITUDE stays 8.0.
+    grep -F 'LATITUDE="47.0"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -F 'LONGITUDE="8.0"' "$ROOT_DIR/etc/airplanes/feed.env"
+    echo "$SYNC_ERR" | grep -F 'reason=position_group_skipped_by_lww'
 }
