@@ -531,7 +531,10 @@ diagnostics_status_line() {
     STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS="$age"
     local age_text
     age_text="$(human_duration_ago "$age")"
-    if (( age <= 600 )); then
+    # Cadence: 10 min ± 30 s jitter, plus a tail-latency tolerance for the
+    # 90 s start-timeout. Treat one missed tick as OK (≤ 20 min), and up
+    # to ~5 missed ticks as a warn (≤ 60 min); beyond that, stale.
+    if (( age <= 1200 )); then
         status_line ok "$label" "$toggle_text, last push $age_text"
     elif (( age <= 3600 )); then
         status_line warn "$label" "$toggle_text, last push $age_text"

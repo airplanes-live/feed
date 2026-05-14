@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # airplanes-diagnostics.sh — collect feeder diagnostics and POST them to
-# the airplanes.live backend. Invoked every 5 min by airplanes-diagnostics.timer.
+# the airplanes.live backend. Invoked every 10 min by airplanes-diagnostics.timer.
 #
 # Exit codes
 #   0   success, REPORT_STATUS=false (deliberate skip), not-yet-claimed,
@@ -457,7 +457,7 @@ main() {
     esac
 
     # 2. Read identity. Either piece missing means the feeder isn't claimed
-    # yet; the timer will fire again in 5 min once claim has run.
+    # yet; the timer will fire again in 10 min once claim has run.
     local uuid secret
     uuid="$(read_uuid 2>/dev/null)" || {
         log info "status=not_configured reason=no_uuid"

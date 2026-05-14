@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 # Tests for scripts/airplanes-diagnostics.sh — the feeder diagnostics
-# push script invoked every 5 min by airplanes-diagnostics.timer.
+# push script invoked every 10 min by airplanes-diagnostics.timer.
 
 setup() {
     REPO_ROOT="$BATS_TEST_DIRNAME/.."
