@@ -510,10 +510,11 @@ main() {
     local ts
     ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-    # 4. Build the payload. jq's `del(.. | nulls?)` recursively drops
-    # null values, so omitted optional fields disappear from the JSON.
-    # Services array is filtered to drop nulls (missing units).
-    local payload
+    # 4. Build the payload via jq. If jq fails (binary missing, an
+    # --argjson value the parser rejected, transient I/O), $payload would
+    # otherwise carry partial bytes and curl would loop on 4xx every 10
+    # minutes. Capture jq's rc explicitly and skip the POST.
+    local payload payload_rc=0
     payload="$(jq -nc \
         --arg ts "$ts" \
         --arg uuid "$uuid" \
@@ -584,10 +585,14 @@ main() {
                 map(_prune) | map(select(. != null))
             else . end;
           _prune
-        ')"
+        ')" || payload_rc=$?
     # The inline _prune def avoids jq 1.5 packagings that omit `walk`
     # (Debian Buster). Post-order recursion: drops null and empty-string
     # entries from objects, null entries from arrays.
+    if (( payload_rc != 0 )) || [[ -z "$payload" ]]; then
+        log warn "status=payload_build_failed rc=$payload_rc"
+        exit "$EXIT_OK"
+    fi
 
     # 5. Re-check REPORT_STATUS right before the POST. The initial check at
     # the top of main() runs before ~seconds of probe work; an operator
