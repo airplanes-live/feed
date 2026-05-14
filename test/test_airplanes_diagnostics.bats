@@ -240,6 +240,29 @@ run_script() {
     [ ! -f "$COMMAND_LOG" ]
 }
 
+@test "late REPORT_STATUS=false (set mid-run) skips the POST without exiting non-zero" {
+    # Simulate the operator running `apl-feed diagnostics disable` between
+    # the initial REPORT_STATUS read and the POST: the systemctl stub
+    # rewrites feed.env on every call. By the time the collector reaches
+    # the pre-POST re-check, REPORT_STATUS has flipped to false.
+    cat > "$STUB_DIR/systemctl" <<SH
+#!/usr/bin/env bash
+printf 'REPORT_STATUS=false\n' > '$ROOT_DIR/etc/airplanes/feed.env'
+case "\$*" in
+    "show airplanes-feed "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-mlat "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show dump978-fa "*) printf 'LoadState=not-found\nUnitFileState=\nActiveState=inactive\nSubState=dead\nNRestarts=0\n' ;;
+esac
+exit 0
+SH
+    chmod +x "$STUB_DIR/systemctl"
+    run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"status=disabled_during_run"* ]]
+    [ ! -f "$COMMAND_LOG" ]
+    [ ! -f "$LAST_SUCCESS" ]
+}
+
 @test "REPORT_STATUS=foo (garbage) exits 64 with bad_config log" {
     printf 'REPORT_STATUS=foo\n' > "$ROOT_DIR/etc/airplanes/feed.env"
     run_script

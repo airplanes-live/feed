@@ -589,7 +589,28 @@ main() {
     # (Debian Buster). Post-order recursion: drops null and empty-string
     # entries from objects, null entries from arrays.
 
-    # 5. POST. Bearer = alv1.<uuid>.<secret>. The bearer goes into a 0600
+    # 5. Re-check REPORT_STATUS right before the POST. The initial check at
+    # the top of main() runs before ~seconds of probe work; an operator
+    # invoking `apl-feed diagnostics disable` between the two reads should
+    # have the in-flight tick honour the new state instead of pushing one
+    # last (now stale) payload.
+    local late_raw late_toggle
+    late_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
+    late_toggle="$(parse_report_status "$late_raw")"
+    case "$late_toggle" in
+        disabled)
+            log info "status=disabled_during_run"
+            exit "$EXIT_OK"
+            ;;
+        invalid)
+            # A garbage value can only land if someone hand-edited mid-run
+            # — surface it the same way the initial check does.
+            log error "status=bad_config key=REPORT_STATUS value=${late_raw}"
+            exit "$EXIT_BAD_CONFIG"
+            ;;
+    esac
+
+    # 6. POST. Bearer = alv1.<uuid>.<secret>. The bearer goes into a 0600
     # curl --config file (not argv) so the token can't be inspected via
     # `ps`.
     local response_file token status curl_rc

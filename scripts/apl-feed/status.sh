@@ -531,10 +531,13 @@ diagnostics_status_line() {
     STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS="$age"
     local age_text
     age_text="$(human_duration_ago "$age")"
-    # Cadence: 10 min ± 30 s jitter, plus a tail-latency tolerance for the
-    # 90 s start-timeout. Treat one missed tick as OK (≤ 20 min), and up
-    # to ~5 missed ticks as a warn (≤ 60 min); beyond that, stale.
-    if (( age <= 1200 )); then
+    # Cadence: OnUnitActiveSec=10min + RandomizedDelaySec=30s + systemd's
+    # default AccuracySec=1min coalescing → worst-case ~11.5 min per tick.
+    # "One missed tick stays OK" => 2 × 11.5 min = 23 min between successful
+    # pushes; add TimeoutStartSec=90s for a slow recovery run and round up
+    # to 25 min for safety margin. Beyond that, one tick has clearly been
+    # lost (warn ≤ 60 min) — past 60 min it's stale.
+    if (( age <= 1500 )); then
         status_line ok "$label" "$toggle_text, last push $age_text"
     elif (( age <= 3600 )); then
         status_line warn "$label" "$toggle_text, last push $age_text"
