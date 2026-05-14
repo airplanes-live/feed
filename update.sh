@@ -521,6 +521,7 @@ historical_apl_feed_modules=(
     backup.sh
     claim.sh
     common.sh
+    config.sh
     diagnostics.sh
     http.sh
     id.sh
@@ -601,6 +602,8 @@ cp "$GIT"/scripts/airplanes-mlat.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-feed.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-diagnostics.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-diagnostics.timer "$SYSTEMD_DIR"
+cp "$GIT"/scripts/airplanes-config-sync.service "$SYSTEMD_DIR"
+cp "$GIT"/scripts/airplanes-config-sync.timer "$SYSTEMD_DIR"
 
 if ! airplanes_is_build_mode; then
     systemctl daemon-reload >> "$LOGFILE" || true
@@ -725,6 +728,19 @@ elif is_unit_masked airplanes-diagnostics.timer; then
 else
     systemctl enable --now airplanes-diagnostics.timer >> "$LOGFILE" 2>&1 || \
         echo "airplanes-diagnostics.timer could not be enabled; diagnostics push will not run until 'systemctl enable --now airplanes-diagnostics.timer'."
+fi
+
+# Remote-config sync: enable the timer so apl-feed config sync fires every
+# ~60s once a claim secret is present. The service is gated on
+# ConditionPathExists=/etc/airplanes/feeder-claim-secret so a freshly-
+# flashed feeder leaves the timer armed but the service no-ops until claim.
+if airplanes_is_build_mode; then
+    systemctl enable airplanes-config-sync.timer >> "$LOGFILE" || true
+elif is_unit_masked airplanes-config-sync.timer; then
+    echo "airplanes-config-sync.timer is masked; skipping enable."
+else
+    systemctl enable --now airplanes-config-sync.timer >> "$LOGFILE" 2>&1 || \
+        echo "airplanes-config-sync.timer could not be enabled; remote config sync will not run until 'systemctl enable --now airplanes-config-sync.timer'."
 fi
 
 RC_LOCAL="$(airplanes_path /etc/rc.local)"

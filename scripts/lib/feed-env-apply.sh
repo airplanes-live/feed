@@ -62,6 +62,25 @@ APL_FEED_APPLY_EDITED_AT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]
 declare -gA APL_APPLY_INCOMING_META_EDITED_AT=()
 declare -gA APL_APPLY_INCOMING_META_EDITED_BY=()
 
+# Caller-input scalar: server-supplied "now" timestamp (RFC 3339 UTC)
+# used as the reference for the LWW gate's bogus-future-heal check.
+# Set by callers like `apl-feed config sync` to the server_time field of
+# the response so a feeder with a fast local clock cannot self-mask its
+# own corrupt on-disk metadata. Empty string => fall back to local now()
+# (acceptable for callers that don't have a trusted external clock).
+APL_APPLY_INCOMING_SERVER_TIME="${APL_APPLY_INCOMING_SERVER_TIME:-}"
+
+# Result global: indexed array of payload keys whose write was skipped
+# because the incoming metadata's edited_at was older-or-equal to the
+# on-disk edited_at recorded in feed.meta.json. The skip is per-key —
+# other payload keys in the same call apply normally. Skipped keys do
+# NOT appear in APL_APPLY_CHANGED and do NOT trigger service restarts.
+#
+# Symmetric with the server-side merge: equal-edited_at favors the
+# existing tuple on both sides, so a tie does not produce churn and the
+# data converges via whichever side has the strictly-newer edit.
+declare -ga APL_APPLY_SKIPPED_BY_LWW=()
+
 # Universal-reject character set. Mirrors Go configspec.universalReject.
 # Defense-in-depth: a regex-passing value containing a shell metachar
 # cannot reach feed.env (which gets `source`d by airplanes-feed.sh and
@@ -443,6 +462,38 @@ _apl_feed_apply_iso_now() {
     date -u +%Y-%m-%dT%H:%M:%SZ
 }
 
+# Normalize an RFC 3339 UTC timestamp to its no-fractional-second form so
+# byte-wise (lexicographic) comparison matches semantic ordering for the
+# two on-the-wire shapes the lib accepts: YYYY-MM-DDTHH:MM:SSZ and
+# YYYY-MM-DDTHH:MM:SS.ffffffZ. Sub-second precision is discarded for the
+# compare — the server-side merge is also second-precision, so a feeder
+# distinguishing T+0.5s from T+0.0s would produce drift across the round
+# trip. Callers do the compare on the returned string.
+_apl_feed_apply_normalize_iso_for_compare() {
+    local s="$1"
+    s="${s%Z}"
+    s="${s%%.*}"
+    printf '%sZ' "$s"
+}
+
+# Maximum acceptable lead an on-disk `edited_at` can have over server-now
+# before the LWW gate treats the on-disk stamp as bogus and lets the
+# incoming server tuple heal it. Mirrors the server-side CLOCK_SKEW_MAX
+# (accounts/services/feeder_config.py) so a feeder whose clock was set
+# wildly forward can recover via the next sync cycle once NTP corrects.
+APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS="${APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS:-300}"
+
+# Emit `now + N seconds` in the same RFC 3339 UTC shape as
+# _apl_feed_apply_iso_now. Falls back to plain `now()` when the host's
+# `date` does not support GNU's `-d` flag (e.g. BSD date on a macOS dev
+# box). The fallback effectively disables the bogus-future heal path on
+# that host — acceptable; production runs on Linux where -d works.
+_apl_feed_apply_iso_plus_seconds() {
+    local secs="$1"
+    date -u -d "+${secs} seconds" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || _apl_feed_apply_iso_now
+}
+
 # Read feed.meta.json into two parallel assoc arrays passed by nameref.
 # Missing file → empty maps, no warning. Wrong schema_version or malformed
 # JSON → empty maps + APL_APPLY_PENDING_META_WARNING set (the next write
@@ -555,6 +606,7 @@ _apl_feed_apply_reset_state() {
     APL_APPLY_STATUS=""
     APL_APPLY_CHANGED=()
     APL_APPLY_PENDING_RESTART=()
+    APL_APPLY_SKIPPED_BY_LWW=()
     APL_APPLY_PENDING_META_WARNING=""
     APL_APPLY_ERROR_MESSAGE=""
     declare -gA APL_APPLY_ERRORS=()
@@ -847,6 +899,98 @@ apl_feed_apply() {
         fi
     done
 
+    # Read the sidecar once under the lock. Used by both the LWW gate
+    # below AND the sidecar-write block at the bottom of this function.
+    # Reading inside the lock avoids racing a concurrent writer between
+    # snapshot and apply. Missing/corrupt file -> empty maps (lib helper
+    # already sets APL_APPLY_PENDING_META_WARNING when relevant).
+    local -A existing_at=() existing_by=()
+    _apl_feed_apply_read_meta "$meta_path" existing_at existing_by
+
+    # Per-key LWW gate. Any payload entry whose incoming `edited_at` is
+    # NOT strictly newer than the on-disk `edited_at` is dropped from
+    # this write. The skip is per-key: other entries in the same call
+    # apply normally. Bare-string payloads (no incoming metadata) bypass
+    # the gate so the existing operator-facing CLIs (mlat user, 978, etc.)
+    # are unaffected — those callers don't pass metadata, the lib stamps
+    # `now()` on their behalf, and `now()` always wins by definition.
+    #
+    # Symmetric with the server-side LWW (accounts/services/feeder_config.py):
+    # both sides favor the existing tuple on exact-edited_at equality. The
+    # data converges via whichever side has the strictly-newer edit.
+    #
+    # Bogus-future-heal: an on-disk `edited_at` more than
+    # APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS ahead of server-now is
+    # treated as invalid — the gate is bypassed for that key so the
+    # incoming server tuple can heal it. Mirrors the server-side
+    # clock-skew rejection that produced the heal payload in the first
+    # place (rejected_fields response from /api/feeders/config/sync).
+    local _lww_key _on_disk _incoming _on_disk_n _incoming_n _now_skew_n
+    # Bogus-future-heal reference: prefer the caller-supplied server time
+    # over the local clock so a feeder with a fast NTP offset cannot mark
+    # its own already-corrupt metadata as legitimately newer than the
+    # server response and re-skip the heal indefinitely. Empty
+    # APL_APPLY_INCOMING_SERVER_TIME (most callers) falls back to local
+    # now() — matches the previous behavior for non-sync writers.
+    local _now_ref
+    if [[ -n "$APL_APPLY_INCOMING_SERVER_TIME" \
+        && "$APL_APPLY_INCOMING_SERVER_TIME" =~ $APL_FEED_APPLY_EDITED_AT_RE ]]; then
+        _now_ref="$APL_APPLY_INCOMING_SERVER_TIME"
+    else
+        _now_ref="$(_apl_feed_apply_iso_plus_seconds 0)"
+    fi
+    # Compute "_now_ref + CLOCK_SKEW_MAX" by re-using iso_plus_seconds for
+    # the local-now path and accepting the trade-off that a server-time
+    # path adds the skew by string-extension (we'd need a date -d that
+    # parses ISO 8601 reliably). For server-time, normalize then bolt on
+    # the skew by re-rendering through GNU date.
+    if [[ -n "$APL_APPLY_INCOMING_SERVER_TIME" \
+        && "$APL_APPLY_INCOMING_SERVER_TIME" =~ $APL_FEED_APPLY_EDITED_AT_RE ]]; then
+        _now_skew_n="$(date -u -d "$_now_ref +${APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS} seconds" \
+            +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || _apl_feed_apply_iso_plus_seconds "$APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS")"
+        _now_skew_n="$(_apl_feed_apply_normalize_iso_for_compare "$_now_skew_n")"
+    else
+        _now_skew_n="$(_apl_feed_apply_normalize_iso_for_compare \
+            "$(_apl_feed_apply_iso_plus_seconds \
+                "$APL_FEED_APPLY_LWW_FUTURE_SKEW_SECONDS")")"
+    fi
+    for _lww_key in "${!_meta_in_at[@]}"; do
+        # Only gate keys actually in the payload — `_meta_in_at` may
+        # contain stray entries already rejected by the payload-coverage
+        # check above (defensive; that path returns early).
+        [[ -n "${payload[$_lww_key]+set}" ]] || continue
+        _on_disk="${existing_at[$_lww_key]:-}"
+        # No on-disk metadata for this key => bootstrap case. Incoming
+        # tuple wins unconditionally.
+        [[ -n "$_on_disk" ]] || continue
+        _incoming="${_meta_in_at[$_lww_key]}"
+        _on_disk_n="$(_apl_feed_apply_normalize_iso_for_compare "$_on_disk")"
+        _incoming_n="$(_apl_feed_apply_normalize_iso_for_compare "$_incoming")"
+        # On-disk stamp wildly in the future -> bogus. Bypass the gate
+        # and let the incoming tuple heal the bad metadata.
+        if [[ "$_on_disk_n" > "$_now_skew_n" ]]; then
+            continue
+        fi
+        # `[[ A > B ]]` is a string compare under shopt -o noglob default.
+        # The normalized form is fixed-width lexicographically sortable.
+        if [[ ! "$_incoming_n" > "$_on_disk_n" ]]; then
+            APL_APPLY_SKIPPED_BY_LWW+=("$_lww_key")
+            unset 'payload[$_lww_key]'
+            unset '_meta_in_at[$_lww_key]'
+            unset '_meta_in_by[$_lww_key]'
+        fi
+    done
+
+    # If every incoming key was LWW-skipped the call resolves to no_change.
+    # Mirrors the pre-lock empty-payload check, but runs after the gate
+    # has had a chance to drop entries.
+    if (( ${#payload[@]} == 0 )); then
+        APL_APPLY_STATUS=no_change
+        [[ -n "$lock_fd" ]] && eval "exec ${lock_fd}>&-"
+        return 0
+    fi
+
     APL_APPLY_CHANGED=()
     for key in "${!payload[@]}"; do
         value="${payload[$key]}"
@@ -926,9 +1070,9 @@ apl_feed_apply() {
     # be held hostage by an informational sidecar. The next metadata-bearing
     # write reconciles.
     if (( ${#sidecar_keys[@]} > 0 )) && [[ -n "$lock_fd" ]]; then
-        local -A existing_at=() existing_by=()
-        _apl_feed_apply_read_meta "$meta_path" existing_at existing_by
-
+        # `existing_at` / `existing_by` were already populated under the
+        # same lock above (used for the LWW gate). Reuse them here rather
+        # than re-reading the sidecar.
         local -A merged_at=() merged_by=()
         local mk
         for mk in "${!existing_at[@]}"; do

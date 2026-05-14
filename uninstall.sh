@@ -33,6 +33,8 @@ systemctl disable --now airplanes-mlat2 &>/dev/null
 systemctl disable --now airplanes-feed
 systemctl disable --now airplanes-diagnostics.timer &>/dev/null
 systemctl disable --now airplanes-diagnostics.service &>/dev/null
+systemctl disable --now airplanes-config-sync.timer &>/dev/null
+systemctl disable --now airplanes-config-sync.service &>/dev/null
 
 # Legacy cleanup: earlier releases shipped install-or-update-interface.sh, which
 # installed wiedehopf/tar1090 with the "airplanes" URL prefix. The installer is
@@ -47,6 +49,8 @@ for _systemd_dir in "${SYSTEMD_UNIT_DIRS[@]}"; do
     rm -f "$_systemd_dir/airplanes-feed.service"
     rm -f "$_systemd_dir/airplanes-diagnostics.service"
     rm -f "$_systemd_dir/airplanes-diagnostics.timer"
+    rm -f "$_systemd_dir/airplanes-config-sync.service"
+    rm -f "$_systemd_dir/airplanes-config-sync.timer"
 done
 unset _systemd_dir
 
@@ -60,6 +64,7 @@ rm -f "$SYSTEMD_ETC/default.target.wants/airplanes-mlat.service"
 rm -f "$SYSTEMD_ETC/default.target.wants/airplanes-mlat2.service"
 rm -f "$SYSTEMD_ETC/multi-user.target.wants/airplanes-mlat2.service"
 rm -f "$SYSTEMD_ETC/timers.target.wants/airplanes-diagnostics.timer"
+rm -f "$SYSTEMD_ETC/timers.target.wants/airplanes-config-sync.timer"
 
 systemctl daemon-reload || true
 
