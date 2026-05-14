@@ -127,9 +127,9 @@
     },
     "authenticated_recent": {
       "request": {
-        "uuid": "11111111-2222-3333-4444-555555555555",
-        "current_secret": "ABCDEFGHIJKLMNOP"
+        "uuid": "11111111-2222-3333-4444-555555555555"
       },
+      "bearer_secret": "ABCDEFGHIJKLMNOP",
       "response": {
         "status": 200,
         "body": {
@@ -145,9 +145,9 @@
     },
     "authenticated_stale": {
       "request": {
-        "uuid": "33333333-4444-5555-6666-777777777777",
-        "current_secret": "ABCDEFGHIJKLMNOP"
+        "uuid": "33333333-4444-5555-6666-777777777777"
       },
+      "bearer_secret": "ABCDEFGHIJKLMNOP",
       "response": {
         "status": 200,
         "body": {
@@ -163,9 +163,9 @@
     },
     "authenticated_never_seen": {
       "request": {
-        "uuid": "44444444-5555-6666-7777-888888888888",
-        "current_secret": "ABCDEFGHIJKLMNOP"
+        "uuid": "44444444-5555-6666-7777-888888888888"
       },
+      "bearer_secret": "ABCDEFGHIJKLMNOP",
       "response": {
         "status": 200,
         "body": {

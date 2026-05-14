@@ -161,12 +161,28 @@ mock_url() {
 }
 
 @test "status_probe_version: cleans up its tempfile" {
+    # status_probe_version's response_file is rm'd inside the function.
+    # post_json_bearer's curl-config tempfile is also rm'd inside the
+    # helper on return (the TMP_FILES safety-net would have been
+    # invisible from this scope anyway — see post_json_bearer for why).
     start_mock_server 200 '{"version":7}'
     SERVER_URL="$(mock_url)"
     before="$(find "$TMPDIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
     status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP' >/dev/null || true
     after="$(find "$TMPDIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
     [ "$before" = "$after" ]
+}
+
+@test "status_probe_version: sends Authorization: Bearer alv1.<uuid>.<secret>" {
+    # DEV-427: /status moved to Bearer auth. The body now carries only
+    # the uuid; the secret rides in the Authorization header so it can't
+    # leak via request-body access logs.
+    start_mock_server_with_headers 200 '{"version":7}'
+    SERVER_URL="$(mock_url)"
+    run status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP'
+    [ "$status" -eq 0 ]
+    grep -qi '^Authorization: Bearer alv1\.11111111-2222-3333-4444-555555555555\.ABCDEFGHIJKLMNOP$' "$ROOT_DIR/headers.log"
+    [ "$(cat "$MOCK_REQUEST_BODY")" = '{"uuid":"11111111-2222-3333-4444-555555555555"}' ]
 }
 
 # --- post_json_bearer ---
@@ -259,18 +275,41 @@ SH
     grep -qi '^Content-Type: application/json' "$ROOT_DIR/headers.log"
 }
 
-@test "post_json_bearer: tempfile is registered in TMP_FILES for cleanup" {
+@test "post_json_bearer: tempfile is registered in TMP_FILES safety-net and 0600" {
+    # Stub rm so the curl-config tempfile survives the in-function
+    # cleanup; that lets us assert both the TMP_FILES registration (for
+    # the EXIT trap safety-net) and the 0600 mode on the created file.
+    # The next test asserts the primary in-function cleanup actually
+    # runs.
+    rm_real="$(command -v rm)"
+    rm() { :; }  # no-op
     start_mock_server_with_headers 200 '{}'
     SERVER_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     before_count="${#TMP_FILES[@]}"
     post_json_bearer 'alv1.x.y' '/api/feeders/diagnostics' '{}' "$response_file" >/dev/null
+    unset -f rm
     [ "${#TMP_FILES[@]}" -gt "$before_count" ]
     last_entry="${TMP_FILES[-1]}"
     [ -f "$last_entry" ]
     # 0600 mode — owner-read/write only
     mode="$(stat -c '%a' "$last_entry" 2>/dev/null || stat -f '%A' "$last_entry")"
     [ "$mode" = '600' ]
+}
+
+@test "post_json_bearer: tempfile is rm'd on return (primary cleanup)" {
+    # Primary cleanup: the helper rm's the curl-config inside the
+    # function so callers using $() command substitution (where
+    # TMP_FILES mutations are lost) still don't leak. TMP_FILES is the
+    # safety-net for signal-kill / set-e-bail paths.
+    start_mock_server_with_headers 200 '{}'
+    SERVER_URL="$(mock_url)"
+    response_file="$TMPDIR/resp"
+    before="$(find "$TMPDIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    post_json_bearer 'alv1.x.y' '/api/feeders/diagnostics' '{}' "$response_file" >/dev/null
+    rm -f "$response_file"
+    after="$(find "$TMPDIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    [ "$before" = "$after" ]
 }
 
 @test "post_json: still works after http.sh has loaded post_json_bearer (regression)" {
