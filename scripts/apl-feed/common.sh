@@ -47,6 +47,8 @@ Usage:
   apl-feed 978 disable
   apl-feed 978 setup
   apl-feed 978 status
+  apl-feed diagnostics enable
+  apl-feed diagnostics disable
   apl-feed apply [--no-restart] [--lock-timeout SECS]
   apl-feed schema
   apl-feed import legacy-config [--no-restart] <path>

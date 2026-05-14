@@ -521,6 +521,7 @@ historical_apl_feed_modules=(
     backup.sh
     claim.sh
     common.sh
+    diagnostics.sh
     http.sh
     id.sh
     import.sh
@@ -711,7 +712,7 @@ if ! airplanes_is_build_mode; then
 fi
 
 # Diagnostics push: enable the timer so airplanes-diagnostics.sh fires every
-# 5 min once a claim secret is present. The collector self-gates on
+# 10 min once a claim secret is present. The collector self-gates on
 # REPORT_STATUS in feed.env and silently exits when the feeder is not yet
 # claimed, so wiring the timer here (after register_claim_secret in the
 # manual-install branch above) is safe on a fresh box.

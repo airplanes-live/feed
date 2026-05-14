@@ -153,11 +153,17 @@ MLAT_ENABLED="$MLAT_ENABLED"
 #   sudo apl-feed mlat private disable
 MLAT_PRIVATE=$MLAT_PRIVATE
 
-# Optional. Default: true.
-# When true, the feeder pushes anonymized diagnostics (CPU, temperature,
-# disk, memory, uptime, service health, versions) to airplanes.live every
-# 5 minutes. Visible only on your own logged-in dashboard. The schema
-# excludes hostname, MAC, LAN IP, SSID, and Pi serial number.
+# Diagnostics push: every 10 minutes the feeder reports anonymized CPU,
+# temperature, disk, memory, uptime, service health, and version info to
+# airplanes.live. Visible only on your own logged-in dashboard. The
+# schema excludes hostname, MAC, LAN IP, SSID, and Pi serial number.
+#
+# Default: enabled. Toggle via the CLI (the canonical writer, which also
+# runs through validation + the apply lock):
+#   sudo apl-feed diagnostics enable
+#   sudo apl-feed diagnostics disable
+# Don't hand-edit REPORT_STATUS below — direct edits bypass validation
+# and the lock that webconfig holds during concurrent writes.
 #REPORT_STATUS=true
 EOF
 
