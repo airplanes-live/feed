@@ -107,7 +107,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(400)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"error": "missing_or_malformed_authorization"}).encode())
+            self.wfile.write(json.dumps({"error": "missing_authorization"}).encode())
             return
         try:
             body = json.loads(raw or b"{}")

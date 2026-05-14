@@ -1,4 +1,5 @@
 {
+  "_doc": "Fixture shape for /api/feeders/secret (DEV-427): request.uuid is the bearer UUID identifier and is NOT a body field. The body sent on the wire is exactly {\"new_secret\": <request.new_secret>}. The Authorization header is Bearer alv1.<request.uuid>.<bearer_secret>. Mirrors the /status fixture shape used elsewhere.",
   "schema_version": 1,
   "secret": {
     "create_success": {

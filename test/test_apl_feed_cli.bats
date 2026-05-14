@@ -114,7 +114,7 @@ start_claim_server() {
     python3 - "$port_file" "$secret_status" "$secret_body" \
         "$active_secret" "$active_version" "$pending_secret" "$pending_version" \
         "$req_file" <<'PY' &
-import http.server, json, sys
+import http.server, json, re, sys
 port_file = sys.argv[1]
 secret_status = int(sys.argv[2])
 secret_body = sys.argv[3]
@@ -123,6 +123,14 @@ active_version = sys.argv[5]
 pending_secret = sys.argv[6]
 pending_version = sys.argv[7]
 req_file = sys.argv[8]
+
+# v2 wire-shape gate (DEV-427): the shared claim stub used by every
+# rotation/recovery test enforces Bearer + slim body for /secret. Without
+# this, a regression that flips claim_rotate back to body-auth would
+# silently pass every rotation test except the one that explicitly
+# inspects MOCK_REQ_FILE.
+BEARER_RE = re.compile(r"^Bearer alv1\.[0-9a-fA-F-]{32,36}\.[A-Za-z0-9]{1,64}$")
+
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -135,6 +143,20 @@ class H(http.server.BaseHTTPRequestHandler):
         with open(req_file, "a") as f:
             f.write(f"{self.path}\t{auth}\t{raw.decode('utf-8', errors='replace')}\n")
         if self.path == "/api/feeders/secret":
+            # Enforce v2 wire shape at the stub. Anything else means the
+            # client has regressed back to v1 body-auth.
+            if not BEARER_RE.match(auth):
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "missing_authorization"}).encode())
+                return
+            if not isinstance(body, dict) or set(body.keys()) != {"new_secret"}:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "invalid_request"}).encode())
+                return
             self.send_response(secret_status)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
