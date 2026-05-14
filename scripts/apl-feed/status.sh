@@ -27,6 +27,8 @@ STATUS_OWNER_PRESENT=''
 STATUS_LAST_SEEN_AT=''
 STATUS_LAST_SEEN_AGE_SECONDS=''
 STATUS_WEBSITE_FEED_STATE=''
+STATUS_DIAGNOSTICS_TOGGLE=''
+STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS=''
 
 status_init() {
     STATUS_CHECKS_FILE="$(new_tmp_file)"
@@ -39,6 +41,8 @@ status_init() {
     STATUS_LAST_SEEN_AT=''
     STATUS_LAST_SEEN_AGE_SECONDS=''
     STATUS_WEBSITE_FEED_STATE=''
+    STATUS_DIAGNOSTICS_TOGGLE=''
+    STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS=''
 }
 
 status_line() {
@@ -91,6 +95,8 @@ status_finish() {
             --arg last_seen_at "$STATUS_LAST_SEEN_AT" \
             --arg last_seen_age_seconds "$STATUS_LAST_SEEN_AGE_SECONDS" \
             --arg website_feed_state "$STATUS_WEBSITE_FEED_STATE" \
+            --arg diagnostics_toggle "$STATUS_DIAGNOSTICS_TOGGLE" \
+            --arg diagnostics_last_push_age "$STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS" \
             '
             def nullempty: if . == "" then null else . end;
             def boolish:
@@ -112,6 +118,10 @@ status_finish() {
                 feed_state: ($website_feed_state | nullempty),
                 last_seen_at: ($last_seen_at | nullempty),
                 last_seen_age_seconds: ($last_seen_age_seconds | numberish)
+              },
+              diagnostics: {
+                report_status: ($diagnostics_toggle | nullempty),
+                last_push_age_seconds: ($diagnostics_last_push_age | numberish)
               },
               checks: .
             }' \
@@ -450,6 +460,92 @@ claim_registration_status_line() {
     esac
 }
 
+# diagnostics_status_line — render the airplanes-diagnostics push state.
+# Reads the REPORT_STATUS toggle from feed.env, then consults the systemd
+# unit (if a bad config caused an exit-64 failure on the last run) and
+# the mtime of /var/lib/airplanes/diagnostics-last-success.
+diagnostics_status_line() {
+    local label="Diagnostics push"
+    local unit="airplanes-diagnostics.service"
+    local last_success_file
+    last_success_file="$(root_path /var/lib/airplanes/diagnostics-last-success)"
+
+    local raw lower
+    raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
+    lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+    lower="${lower#"${lower%%[![:space:]]*}"}"
+    lower="${lower%"${lower##*[![:space:]]}"}"
+
+    local toggle
+    case "$lower" in
+        '') toggle='enabled_default' ;;
+        true|yes|1|on) toggle='enabled' ;;
+        false|no|0|off) toggle='disabled' ;;
+        *) toggle='invalid' ;;
+    esac
+    STATUS_DIAGNOSTICS_TOGGLE="$toggle"
+
+    if [[ "$toggle" == "invalid" ]]; then
+        status_line fail "$label" "REPORT_STATUS=$raw invalid; expected true/false"
+        return
+    fi
+    if [[ "$toggle" == "disabled" ]]; then
+        status_line ok "$label" "disabled by config (REPORT_STATUS=false)"
+        return
+    fi
+
+    local toggle_text
+    if [[ "$toggle" == "enabled_default" ]]; then
+        toggle_text='enabled (default)'
+    else
+        toggle_text='enabled'
+    fi
+
+    # Surface a failed unit-with-exit-64 explicitly. The script exits 64
+    # on unrecognized REPORT_STATUS — captured above by toggle=invalid,
+    # so this branch covers future bad-config exit codes we may add.
+    if command -v systemctl >/dev/null 2>&1; then
+        local active_state
+        active_state="$(systemctl show --property=ActiveState --value "$unit" 2>/dev/null || true)"
+        if [[ "$active_state" == "failed" ]]; then
+            local exit_code
+            exit_code="$(systemctl show --property=ExecMainStatus --value "$unit" 2>/dev/null || true)"
+            status_line fail "$label" "$toggle_text — unit failed${exit_code:+ (exit $exit_code)}; check journalctl -u $unit"
+            return
+        fi
+    fi
+
+    if [[ ! -f "$last_success_file" ]]; then
+        status_line warn "$label" "$toggle_text, no successful push observed yet"
+        return
+    fi
+    local mtime now age
+    mtime="$(stat -c %Y "$last_success_file" 2>/dev/null || true)"
+    now="$(date +%s 2>/dev/null || true)"
+    if [[ ! "$mtime" =~ ^[0-9]+$ ]] || [[ ! "$now" =~ ^[0-9]+$ ]]; then
+        status_line warn "$label" "$toggle_text, last push time unavailable"
+        return
+    fi
+    age=$(( now - mtime ))
+    if (( age < 0 )); then age=0; fi
+    STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS="$age"
+    local age_text
+    age_text="$(human_duration_ago "$age")"
+    # Cadence: OnUnitActiveSec=10min + RandomizedDelaySec=30s + systemd's
+    # default AccuracySec=1min coalescing → worst-case ~11.5 min per tick.
+    # "One missed tick stays OK" => 2 × 11.5 min = 23 min between successful
+    # pushes; add TimeoutStartSec=90s for a slow recovery run and round up
+    # to 25 min for safety margin. Beyond that, one tick has clearly been
+    # lost (warn ≤ 60 min) — past 60 min it's stale.
+    if (( age <= 1500 )); then
+        status_line ok "$label" "$toggle_text, last push $age_text"
+    elif (( age <= 3600 )); then
+        status_line warn "$label" "$toggle_text, last push $age_text"
+    else
+        status_line warn "$label" "$toggle_text, last push $age_text (stale)"
+    fi
+}
+
 feed_status() {
     local opt_rc
     STATUS_OUTPUT_JSON=0
@@ -482,5 +578,6 @@ feed_status() {
     receiver_status_line
     airplanes_link_status_line
     claim_registration_status_line
+    diagnostics_status_line
     status_finish
 }

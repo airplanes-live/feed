@@ -23,6 +23,8 @@ IMAGE_INSTALL_MARKER="$(airplanes_path /etc/airplanes/image-install)"
 systemctl disable --now airplanes-mlat
 systemctl disable --now airplanes-mlat2 &>/dev/null
 systemctl disable --now airplanes-feed
+systemctl disable --now airplanes-diagnostics.timer &>/dev/null
+systemctl disable --now airplanes-diagnostics.service &>/dev/null
 
 # Legacy cleanup: earlier releases shipped install-or-update-interface.sh, which
 # installed wiedehopf/tar1090 with the "airplanes" URL prefix. The installer is
@@ -34,12 +36,18 @@ fi
 rm -f "$SYSTEMD_DIR/airplanes-mlat.service"
 rm -f "$SYSTEMD_DIR/airplanes-mlat2.service"
 rm -f "$SYSTEMD_DIR/airplanes-feed.service"
+rm -f "$SYSTEMD_DIR/airplanes-diagnostics.service"
+rm -f "$SYSTEMD_DIR/airplanes-diagnostics.timer"
 systemctl daemon-reload || true
 
 # Named-path artifacts written by update.sh outside $IPATH. The IPATH wipe
 # below handles everything inside it.
 rm -f "$LOCAL_BIN_APL_FEED"
 rm -f "$IMAGE_INSTALL_MARKER"
+# State directory for the diagnostics oneshot (last-success timestamp file).
+# Created by systemd's StateDirectory=airplanes on first fire of the unit;
+# nothing in it is user-supplied, so remove wholesale.
+rm -rf "$(airplanes_path /var/lib/airplanes)"
 
 # Preserve the legacy fallback in memory before wiping IPATH so the canonical
 # feeder-id can be materialized from it if no canonical copy exists. The

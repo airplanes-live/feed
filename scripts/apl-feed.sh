@@ -103,6 +103,8 @@ source "$APL_FEED_LIB_DIR/backup.sh"
 source "$APL_FEED_LIB_DIR/mlat.sh"
 # shellcheck source=scripts/apl-feed/uat.sh
 source "$APL_FEED_LIB_DIR/uat.sh"
+# shellcheck source=scripts/apl-feed/diagnostics.sh
+source "$APL_FEED_LIB_DIR/diagnostics.sh"
 # shellcheck source=scripts/apl-feed/apply.sh
 source "$APL_FEED_LIB_DIR/apply.sh"
 # shellcheck source=scripts/apl-feed/schema.sh
@@ -140,6 +142,10 @@ main() {
         978)
             shift
             dispatch_uat "$@"
+            ;;
+        diagnostics)
+            shift
+            dispatch_diagnostics "$@"
             ;;
         apply)
             shift

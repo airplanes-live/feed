@@ -1,0 +1,12 @@
+[Unit]
+Description=Push feeder diagnostics to airplanes.live every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+Unit=airplanes-diagnostics.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
