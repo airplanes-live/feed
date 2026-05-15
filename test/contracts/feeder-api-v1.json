@@ -1,12 +1,13 @@
 {
+  "_doc": "Fixture shape for /api/feeders/secret (DEV-427): request.uuid is the bearer UUID identifier and is NOT a body field. The body sent on the wire is exactly {\"new_secret\": <request.new_secret>}. The Authorization header is Bearer alv1.<request.uuid>.<bearer_secret>. Mirrors the /status fixture shape used elsewhere.",
   "schema_version": 1,
   "secret": {
     "create_success": {
       "request": {
         "uuid": "11111111-2222-3333-4444-555555555555",
-        "current_secret": null,
         "new_secret": "ABCDEFGHIJKLMNOP"
       },
+      "bearer_secret": "ABCDEFGHIJKLMNOP",
       "response": {
         "status": 201,
         "body": {
@@ -17,9 +18,9 @@
     "noop_replay": {
       "request": {
         "uuid": "11111111-2222-3333-4444-555555555555",
-        "current_secret": null,
         "new_secret": "ABCDEFGHIJKLMNOP"
       },
+      "bearer_secret": "ABCDEFGHIJKLMNOP",
       "response": {
         "status": 200,
         "body": {
@@ -30,13 +31,29 @@
     "rotate_success": {
       "request": {
         "uuid": "11111111-2222-3333-4444-555555555555",
-        "current_secret": "ABCDEFGHIJKLMNOP",
         "new_secret": "QRSTUVWXYZ012345"
       },
+      "bearer_secret": "ABCDEFGHIJKLMNOP",
       "response": {
         "status": 200,
         "body": {
           "version": 2
+        }
+      }
+    },
+    "missing_authorization": {
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "missing_authorization"
+        }
+      }
+    },
+    "malformed_authorization": {
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "malformed_authorization"
         }
       }
     },

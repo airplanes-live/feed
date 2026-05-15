@@ -40,3 +40,20 @@ setup() {
 @test "claim CLI posts to /api/feeders/secret" {
     grep -q "/api/feeders/secret" "$REPO_ROOT/scripts/apl-feed/claim.sh"
 }
+
+@test "claim CLI uses post_json_bearer (v2 wire shape) for /api/feeders/secret" {
+    # DEV-427 migrated /secret from body-auth to bearer. claim.sh must
+    # ship every /secret call through post_json_bearer; a post_json call
+    # to /secret would send the v1 body shape and the server now returns
+    # 400 missing_authorization.
+    [ "$(grep -cE "post_json_bearer .+ '/api/feeders/secret'" \
+        "$REPO_ROOT/scripts/apl-feed/claim.sh")" -ge 2 ]
+    # Negative guard: no legacy post_json call to /secret.
+    [ "$(grep -cE "post_json '/api/feeders/secret'" \
+        "$REPO_ROOT/scripts/apl-feed/claim.sh")" -eq 0 ]
+    # Negative guard: no legacy body-field current_secret in the wire
+    # payload. (The string appears once in a user-facing error message
+    # explaining a 409 rotation_rejected response — that's not a body
+    # key. We match the JSON-key shape `"current_secret":` only.)
+    [ "$(grep -cE '"current_secret":' "$REPO_ROOT/scripts/apl-feed/claim.sh")" -eq 0 ]
+}

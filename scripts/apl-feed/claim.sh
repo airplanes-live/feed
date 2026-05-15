@@ -71,9 +71,14 @@ claim_register() {
     backoff=1
 
     while true; do
-        body="$(printf '{"uuid":"%s","current_secret":null,"new_secret":"%s"}' "$uuid" "$secret")"
+        # v2 wire shape: Authorization: Bearer alv1.<uuid>.<auth_secret> +
+        # body {"new_secret":...}. For register there is no prior secret
+        # to authenticate with — the bearer carries the same value being
+        # registered ("tautology"). The server ignores the bearer secret
+        # on the CREATE branch and stores hash(body.new_secret).
+        body="$(printf '{"new_secret":"%s"}' "$secret")"
         set +e
-        status="$(post_json '/api/feeders/secret' "$body" "$response_file")"
+        status="$(post_json_bearer "alv1.${uuid}.${secret}" '/api/feeders/secret' "$body" "$response_file")"
         curl_rc=$?
         set -e
 
@@ -281,9 +286,16 @@ claim_rotate() {
     backoff=1
 
     while true; do
-        body="$(printf '{"uuid":"%s","current_secret":"%s","new_secret":"%s"}' "$uuid" "$current" "$next")"
+        # v2 wire shape: Authorization: Bearer alv1.<uuid>.<current> +
+        # body {"new_secret": next}. Server verifies hash(current) against
+        # the stored hash for the rotate path. The replay-after-network-
+        # failure path (server already accepted next; client retries) is
+        # preserved verbatim — server's NOOP_REPLAY check runs before the
+        # rotate-current-check, so a stale bearer with the matching body
+        # new_secret still returns 200.
+        body="$(printf '{"new_secret":"%s"}' "$next")"
         set +e
-        status="$(post_json '/api/feeders/secret' "$body" "$response_file")"
+        status="$(post_json_bearer "alv1.${uuid}.${current}" '/api/feeders/secret' "$body" "$response_file")"
         curl_rc=$?
         set -e
 

@@ -14,6 +14,10 @@ setup() {
     touch "$ROOT_DIR/var/lib/airplanes/diagnostics-last-success"
     MOCK_PORT_FILE="$(mktemp)"
     MOCK_PID_FILE="$(mktemp)"
+    # Mock servers append one "PATH<TAB>AUTH<TAB>BODY" line per POST here,
+    # so tests can pin the v2 wire shape (Authorization: Bearer alv1.X.Y +
+    # slim {"new_secret": ...} body for /api/feeders/secret).
+    MOCK_REQ_FILE="$(mktemp)"
 
     # Stub external commands `apl-feed status` calls so the result-text
     # assertions don't depend on whether the host runner has systemctl,
@@ -47,7 +51,7 @@ STUB
 teardown() {
     stop_mock_server || true
     rm -rf "$ROOT_DIR" "$STUB_BIN_DIR"
-    rm -f "$MOCK_PORT_FILE" "$MOCK_PID_FILE"
+    rm -f "$MOCK_PORT_FILE" "$MOCK_PID_FILE" "$MOCK_REQ_FILE"
 }
 
 stop_mock_server() {
@@ -106,9 +110,11 @@ start_claim_server() {
     local pending_version="$6"
     local port_file="$MOCK_PORT_FILE"
     local pid_file="$MOCK_PID_FILE"
+    local req_file="$MOCK_REQ_FILE"
     python3 - "$port_file" "$secret_status" "$secret_body" \
-        "$active_secret" "$active_version" "$pending_secret" "$pending_version" <<'PY' &
-import http.server, json, sys
+        "$active_secret" "$active_version" "$pending_secret" "$pending_version" \
+        "$req_file" <<'PY' &
+import http.server, json, re, sys
 port_file = sys.argv[1]
 secret_status = int(sys.argv[2])
 secret_body = sys.argv[3]
@@ -116,6 +122,15 @@ active_secret = sys.argv[4]
 active_version = sys.argv[5]
 pending_secret = sys.argv[6]
 pending_version = sys.argv[7]
+req_file = sys.argv[8]
+
+# v2 wire-shape gate (DEV-427): the shared claim stub used by every
+# rotation/recovery test enforces Bearer + slim body for /secret. Without
+# this, a regression that flips claim_rotate back to body-auth would
+# silently pass every rotation test except the one that explicitly
+# inspects MOCK_REQ_FILE.
+BEARER_RE = re.compile(r"^Bearer alv1\.[0-9a-fA-F-]{32,36}\.[A-Za-z0-9]{1,64}$")
+
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -123,7 +138,25 @@ class H(http.server.BaseHTTPRequestHandler):
             body = json.loads(raw.decode() or "{}")
         except Exception:
             body = {}
+        # Record (path, auth, body) for test-side wire-shape assertions.
+        auth = self.headers.get("Authorization", "")
+        with open(req_file, "a") as f:
+            f.write(f"{self.path}\t{auth}\t{raw.decode('utf-8', errors='replace')}\n")
         if self.path == "/api/feeders/secret":
+            # Enforce v2 wire shape at the stub. Anything else means the
+            # client has regressed back to v1 body-auth.
+            if not BEARER_RE.match(auth):
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "missing_authorization"}).encode())
+                return
+            if not isinstance(body, dict) or set(body.keys()) != {"new_secret"}:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "invalid_request"}).encode())
+                return
             self.send_response(secret_status)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -279,6 +312,31 @@ EOF
     [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "2" ]
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" != "ABCDEFGHIJKLMNOP" ]
+}
+
+@test "claim rotate POST sends v2 bearer with current secret + slim body" {
+    # Pin the v2 wire shape for rotation (DEV-427): bearer carries the
+    # *current* (pre-rotation) secret, body has only new_secret with the
+    # next value. No legacy current_secret / uuid keys in the body.
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    start_claim_server 200 '{"version": 2}' \
+        "ABCDEFGHIJKLMNOP" 1 "" 0
+
+    run "$SCRIPT" claim rotate --root "$ROOT_DIR" --server-url "$(mock_url)"
+    [ "$status" -eq 0 ]
+    # Filter to the /secret POST line; /status probes are not relevant here
+    # but may also appear in the capture if the rotate flow probes.
+    secret_line="$(grep -F $'/api/feeders/secret\t' "$MOCK_REQ_FILE" | head -1)"
+    [ -n "$secret_line" ]
+    # Bearer = alv1.<uuid>.<current_secret>.
+    auth="$(printf '%s' "$secret_line" | awk -F'\t' '{print $2}')"
+    [[ "$auth" = "Bearer alv1.11111111-2222-3333-4444-555555555555.ABCDEFGHIJKLMNOP" ]]
+    # Body = {"new_secret":"<16-char>"} with no other keys.
+    body="$(printf '%s' "$secret_line" | awk -F'\t' '{print $3}')"
+    [[ "$body" =~ ^\{\"new_secret\":\"[A-Z0-9]{16}\"\}$ ]]
+    [[ ! "$body" =~ current_secret ]]
+    [[ ! "$body" =~ \"uuid\" ]]
 }
 
 @test "claim rotate finalizes pending after lost response" {

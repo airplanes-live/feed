@@ -88,13 +88,36 @@ chmod +x /usr/local/sbin/nc
 python3 - <<'PY' &
 import http.server
 import json
+import re
+
+# v2 wire shape (DEV-427): require Authorization: Bearer alv1.<uuid>.<secret>
+# and reject legacy body fields.
+BEARER_RE = re.compile(r"^Bearer alv1\.[0-9a-fA-F-]{32,36}\.[A-Za-z0-9]{1,64}$")
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b""
         if self.path != "/api/feeders/secret":
             self.send_response(404)
             self.end_headers()
+            return
+        auth = self.headers.get("Authorization", "")
+        if not BEARER_RE.match(auth):
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "missing_authorization"}).encode())
+            return
+        try:
+            body = json.loads(raw or b"{}")
+        except Exception:
+            body = {}
+        if not isinstance(body, dict) or set(body.keys()) != {"new_secret"}:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "invalid_request"}).encode())
             return
         self.send_response(201)
         self.send_header("Content-Type", "application/json")

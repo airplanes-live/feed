@@ -12,36 +12,48 @@ setup() {
     MOCK_RESP_FILE="$(mktemp)"
     MOCK_PORT_FILE="$(mktemp)"
     MOCK_PID_FILE="$(mktemp)"
+    # Capture of the most recent request the mock server received. Each
+    # successful POST overwrites this file with the parsed Authorization
+    # header on line 1 and the request body on line 2. Tests grep this
+    # to assert v2 wire shape (DEV-427).
+    MOCK_REQ_FILE="$(mktemp)"
 }
 
 teardown() {
     stop_mock_server || true
     rm -rf "$ROOT_DIR"
-    rm -f "$MOCK_RESP_FILE" "$MOCK_PORT_FILE" "$MOCK_PID_FILE"
+    rm -f "$MOCK_RESP_FILE" "$MOCK_PORT_FILE" "$MOCK_PID_FILE" "$MOCK_REQ_FILE"
 }
 
 # Inline mock HTTP server. Reads its (status, body) response from
 # $MOCK_RESP_FILE on each request, so a test can sequence responses by
 # rewriting the file between polls. For one-shot tests we just write once
-# before starting the server.
+# before starting the server. Records the inbound Authorization header
+# and body to $MOCK_REQ_FILE so tests can pin the v2 wire shape.
 start_mock_server() {
     local port_file="$MOCK_PORT_FILE"
     local resp_file="$MOCK_RESP_FILE"
+    local req_file="$MOCK_REQ_FILE"
     local pid_file="$MOCK_PID_FILE"
-    python3 - "$port_file" "$resp_file" <<'PY' &
+    python3 - "$port_file" "$resp_file" "$req_file" <<'PY' &
 import http.server, json, sys
-port_file, resp_file = sys.argv[1], sys.argv[2]
+port_file, resp_file, req_file = sys.argv[1], sys.argv[2], sys.argv[3]
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         with open(resp_file) as f:
             spec = json.load(f)
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length > 0 else b""
+        auth = self.headers.get("Authorization", "")
+        with open(req_file, "w") as f:
+            f.write(f"AUTH: {auth}\n")
+            f.write(f"BODY: {body.decode('utf-8', errors='replace')}\n")
         self.send_response(spec["status"])
         ct = spec.get("content_type", "application/json")
         self.send_header("Content-Type", ct)
         self.end_headers()
-        body = spec.get("body", {})
-        out = body if isinstance(body, str) else json.dumps(body)
+        resp_body = spec.get("body", {})
+        out = resp_body if isinstance(resp_body, str) else json.dumps(resp_body)
         self.wfile.write(out.encode())
     def log_message(self, *a, **kw): pass
 
@@ -174,6 +186,29 @@ mock_url() {
     run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "SUCCESS" ]]
+}
+
+@test "register POST sends v2 bearer + slim body (no legacy fields)" {
+    # Pin the v2 wire shape (DEV-427): Authorization carries the bearer,
+    # body has only new_secret. Legacy current_secret / uuid keys must
+    # be absent — a v2 server rejects them with 400 invalid_request.
+    write_contract_response secret create_success
+    start_mock_server
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    [ "$status" -eq 0 ]
+    # Authorization header is alv1.<uuid>.<secret>; the register tautology
+    # means the bearer secret equals the body new_secret.
+    grep -E '^AUTH: Bearer alv1\.11111111-2222-3333-4444-555555555555\.[A-Z0-9]{16}$' "$MOCK_REQ_FILE"
+    # Body shape: {"new_secret":"..."} with no other keys.
+    body_line="$(grep '^BODY: ' "$MOCK_REQ_FILE" | head -1 | sed 's/^BODY: //')"
+    [[ "$body_line" =~ ^\{\"new_secret\":\"[A-Z0-9]{16}\"\}$ ]]
+    [[ ! "$body_line" =~ current_secret ]]
+    [[ ! "$body_line" =~ \"uuid\" ]]
+    # Register tautology: the bearer secret and the body new_secret are
+    # the same value.
+    auth_secret="$(grep '^AUTH: ' "$MOCK_REQ_FILE" | sed -E 's/.*alv1\.[^.]+\.([A-Z0-9]+)$/\1/')"
+    body_secret="$(echo "$body_line" | sed -E 's/.*"new_secret":"([^"]+)".*/\1/')"
+    [ "$auth_secret" = "$body_secret" ]
 }
 
 @test "200 NOOP_REPLAY exits 0 (treated as success)" {
