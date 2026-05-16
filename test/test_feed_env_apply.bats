@@ -492,9 +492,11 @@ EOF
     [ -f "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
     [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "feeder"  ]
     # Current-ish timestamp — assert RFC 3339 shape (regex). Strict equality
-    # would require freezing the clock.
+    # would require freezing the clock. iso_now emits microsecond precision
+    # so two writes within the same second produce distinct stamps under the
+    # LWW gate; the regex permits the optional fractional segment.
     EDITED_AT="$(jq -r '.fields.MLAT_USER.edited_at' "$ROOT_DIR/etc/airplanes/feed.meta.json")"
-    [[ "$EDITED_AT" =~ ^2[0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+    [[ "$EDITED_AT" =~ ^2[0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]
 }
 
 @test "unchanged tracked key with no incoming metadata leaves prior tuple intact" {

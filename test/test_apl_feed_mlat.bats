@@ -713,7 +713,9 @@ EOF
     META="$ROOT_DIR/etc/airplanes/feed.meta.json"
     [ -f "$META" ]
     [ "$(jq -r '.fields.MLAT_PRIVATE.edited_by' "$META")" = "feeder" ]
-    [[ "$(jq -r '.fields.MLAT_PRIVATE.edited_at' "$META")" =~ ^2[0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+    # Microsecond fractional permitted (iso_now uses %6N for sub-second LWW
+    # ordering across same-second writes).
+    [[ "$(jq -r '.fields.MLAT_PRIVATE.edited_at' "$META")" =~ ^2[0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]
 }
 
 @test "mlat --root targets only the rootfs sidecar, never the host" {
