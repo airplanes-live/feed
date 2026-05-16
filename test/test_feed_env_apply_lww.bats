@@ -336,3 +336,35 @@ read_meta_edited_at() {
     [ " ${APL_APPLY_SKIPPED_BY_LWW[*]} " = " MLAT_USER " ]
     [ "$(read_disk_value MLAT_USER)" = "alice" ]
 }
+
+@test "explicit metadata on unchanged tracked key still bumps sidecar edited_at" {
+    # Pins the load-bearing behavior the image-webconfig metadata
+    # gate depends on (DEV-383): when an incoming object-form payload
+    # carries metadata for a tracked key, the sidecar is updated
+    # regardless of whether the canonical value changed, provided the
+    # LWW gate accepts the incoming edited_at.
+    #
+    # This is what makes the stuck-future-timestamp heal work
+    # (apl-feed config sync reconciles by sending the server tuple
+    # even when value matches). It is ALSO why webconfig must not
+    # attach metadata to unchanged tracked keys — if it did, every
+    # form save would push a fresh edited_at into the sidecar for
+    # untouched fields and clobber legitimate concurrent edits under
+    # LWW. The omission lives in
+    # image-webconfig/internal/feedmeta.BuildApplyPayload; this test
+    # guards the apply-side assumption that omission targets.
+    seed_feed_env
+    seed_meta MLAT_USER "2026-05-14T10:00:00Z"
+    reset_incoming_meta
+    APL_APPLY_INCOMING_META_EDITED_AT[MLAT_USER]="2026-05-14T11:00:00Z"
+    APL_APPLY_INCOMING_META_EDITED_BY[MLAT_USER]="website"
+
+    do_apply --no-restart MLAT_USER=alice  # value unchanged
+
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ "${#APL_APPLY_CHANGED[@]}" -eq 0 ]
+    [ "${#APL_APPLY_SKIPPED_BY_LWW[@]}" -eq 0 ]
+    [ "$(read_disk_value MLAT_USER)" = "alice" ]
+    [ "$(read_meta_edited_at MLAT_USER)" = "2026-05-14T11:00:00Z" ]
+}
