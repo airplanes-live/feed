@@ -107,7 +107,7 @@ apl_feed_apply_cli() {
               elif (.value.edited_at | type) != "string" then "\(.key): .edited_at must be a string"
               elif (.value.edited_by | type) != "string" then "\(.key): .edited_by must be a string"
               elif ([.value.edited_by] | inside(["feeder","website","legacy"]) | not) then "\(.key): .edited_by must be feeder/website/legacy"
-              elif ((.value.edited_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$")) | not) then "\(.key): .edited_at must be RFC 3339 UTC"
+              elif ((.value.edited_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$")) | not) then "\(.key): .edited_at must be RFC 3339 UTC (max 6 fractional digits)"
               else empty end
             else "\(.key): value must be a string or {value,edited_at,edited_by}"
             end

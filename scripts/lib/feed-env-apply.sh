@@ -53,7 +53,11 @@ APL_FEED_APPLY_EDITED_BY_ENUM="feeder website legacy"
 
 # RFC 3339 UTC shape required for `edited_at`. Strict — the server side
 # stamps with this exact format; webconfig writes do too.
-APL_FEED_APPLY_EDITED_AT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$'
+# Accepted edited_at shape: RFC 3339 UTC with optional fractional segment
+# of up to 6 digits (microsecond). The LWW normalize pads/truncates to
+# microsecond precision; longer input would be silently truncated which
+# can collapse strict-newer ordering, so we reject it at the wire.
+APL_FEED_APPLY_EDITED_AT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$'
 
 # Caller-input arrays. Parallel maps keyed by feed.env key. apl_feed_apply
 # snapshots these into locals at entry; the caller MAY free them after the
@@ -458,22 +462,45 @@ _apl_feed_apply_is_tracked_key() {
 }
 
 # Emit current time in the RFC 3339 UTC shape the sidecar requires.
+# Microsecond precision so two writes within the same wall-clock-second
+# produce distinct stamps that the LWW gate can order. The feeder runs
+# on Linux Pi (GNU date, %N supported); on BSD date (macOS dev machines)
+# %N is not interpreted and the fallback emits .000000Z so the strict
+# fractional regex in the JSON adapter still matches.
 _apl_feed_apply_iso_now() {
-    date -u +%Y-%m-%dT%H:%M:%SZ
+    local s
+    s="$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"
+    if [[ ! "$s" =~ \.[0-9]{1,9}Z$ ]]; then
+        s="$(date -u +%Y-%m-%dT%H:%M:%S.000000Z)"
+    fi
+    printf '%s' "$s"
 }
 
-# Normalize an RFC 3339 UTC timestamp to its no-fractional-second form so
-# byte-wise (lexicographic) comparison matches semantic ordering for the
-# two on-the-wire shapes the lib accepts: YYYY-MM-DDTHH:MM:SSZ and
-# YYYY-MM-DDTHH:MM:SS.ffffffZ. Sub-second precision is discarded for the
-# compare — the server-side merge is also second-precision, so a feeder
-# distinguishing T+0.5s from T+0.0s would produce drift across the round
-# trip. Callers do the compare on the returned string.
+# Normalize an RFC 3339 UTC timestamp into a fixed-width form so byte-wise
+# (lexicographic) comparison matches semantic ordering. Accepted on-wire
+# shapes are YYYY-MM-DDTHH:MM:SSZ (zero fractional) and
+# YYYY-MM-DDTHH:MM:SS.<frac>Z (any fractional precision). The normalized
+# form is always YYYY-MM-DDTHH:MM:SS.<6 digits>Z (microsecond precision,
+# zero-padded if absent, truncated if longer) so callers can compare
+# returned strings with `[[ A > B ]]` and get the right answer for
+# sub-second differences.
+#
+# Microsecond precision matches the server-side merge in
+# accounts/services/feeder_config.py (Python's datetime.now() emits
+# microseconds via isoformat()) so the same-second tie semantics behave
+# symmetrically across the round trip.
 _apl_feed_apply_normalize_iso_for_compare() {
     local s="$1"
     s="${s%Z}"
-    s="${s%%.*}"
-    printf '%sZ' "$s"
+    local base="$s" frac=""
+    if [[ "$s" == *.* ]]; then
+        base="${s%.*}"
+        frac="${s##*.}"
+    fi
+    # Pad to 6 digits (microsecond); truncate longer (e.g. nanosecond) input.
+    frac="${frac}000000"
+    frac="${frac:0:6}"
+    printf '%s.%sZ' "$base" "$frac"
 }
 
 # Maximum acceptable lead an on-disk `edited_at` can have over server-now
@@ -753,7 +780,7 @@ apl_feed_apply() {
                 ;;
         esac
         if ! [[ "${_meta_in_at[$_meta_check_key]:-}" =~ $APL_FEED_APPLY_EDITED_AT_RE ]]; then
-            APL_APPLY_ERRORS[$_meta_check_key]="edited_at must be RFC 3339 UTC (YYYY-MM-DDTHH:MM:SS[.fff]Z)"
+            APL_APPLY_ERRORS[$_meta_check_key]="edited_at must be RFC 3339 UTC with at most 6 fractional digits (YYYY-MM-DDTHH:MM:SS[.ffffff]Z)"
             APL_APPLY_STATUS=rejected
             return 2
         fi

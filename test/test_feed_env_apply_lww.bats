@@ -191,14 +191,70 @@ read_meta_edited_at() {
     [ "$(read_disk_value MLAT_USER)" = "bob" ]
 }
 
-@test "fractional-second incoming compared against unfractioned on-disk" {
-    # Server emits the no-fraction form when microseconds are zero; a
-    # feeder-side stamp with sub-second precision must not falsely beat
-    # the unfractioned same-second on-disk stamp.
+@test "fractional-second incoming beats unfractioned on-disk same-second stamp" {
+    # Microsecond precision is preserved through normalize so a writer
+    # that lands a few microseconds after a same-second on-disk stamp
+    # is ordered correctly. The on-disk no-fraction form normalizes to
+    # `.000000`; an incoming `.000001` is strictly newer.
     seed_feed_env
     seed_meta MLAT_USER "2026-05-14T12:00:00Z"
     reset_incoming_meta
     APL_APPLY_INCOMING_META_EDITED_AT[MLAT_USER]="2026-05-14T12:00:00.000001Z"
+    APL_APPLY_INCOMING_META_EDITED_BY[MLAT_USER]="feeder"
+
+    do_apply --no-restart MLAT_USER=bob
+
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ " ${APL_APPLY_CHANGED[*]} " = " MLAT_USER " ]
+    [ "${#APL_APPLY_SKIPPED_BY_LWW[@]}" -eq 0 ]
+    [ "$(read_disk_value MLAT_USER)" = "bob" ]
+    [ "$(read_meta_edited_at MLAT_USER)" = "2026-05-14T12:00:00.000001Z" ]
+}
+
+@test "sub-second LWW orders two same-second incoming writes" {
+    # Two webconfig saves within the same wall-clock-second must not
+    # collide under LWW: the second one is strictly newer and applies.
+    # Without microsecond-preserving normalize the second save was
+    # silently dropped (DEV-383 review finding).
+    seed_feed_env
+    seed_meta MLAT_USER "2026-05-14T12:00:00.100000Z"
+    reset_incoming_meta
+    APL_APPLY_INCOMING_META_EDITED_AT[MLAT_USER]="2026-05-14T12:00:00.500000Z"
+    APL_APPLY_INCOMING_META_EDITED_BY[MLAT_USER]="feeder"
+
+    do_apply --no-restart MLAT_USER=bob
+
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ " ${APL_APPLY_CHANGED[*]} " = " MLAT_USER " ]
+    [ "$(read_meta_edited_at MLAT_USER)" = "2026-05-14T12:00:00.500000Z" ]
+}
+
+@test "sub-second LWW skips an older same-second incoming write" {
+    # Mirror of the test above with ordering reversed: an incoming
+    # stamp earlier than the on-disk stamp inside the same second loses.
+    seed_feed_env
+    seed_meta MLAT_USER "2026-05-14T12:00:00.500000Z"
+    reset_incoming_meta
+    APL_APPLY_INCOMING_META_EDITED_AT[MLAT_USER]="2026-05-14T12:00:00.100000Z"
+    APL_APPLY_INCOMING_META_EDITED_BY[MLAT_USER]="feeder"
+
+    do_apply --no-restart MLAT_USER=bob
+
+    [ "$APL_APPLY_STATUS" = "no_change" ]
+    [ " ${APL_APPLY_SKIPPED_BY_LWW[*]} " = " MLAT_USER " ]
+    [ "$(read_disk_value MLAT_USER)" = "alice" ]
+}
+
+@test "normalize pads bare on-disk stamps to microsecond width for compare" {
+    # Older sidecar entries written before the microsecond-preserving
+    # normalize landed will have second-precision stamps. They must
+    # still compare correctly against new microsecond stamps. An
+    # incoming `12:00:00.000000Z` ties an on-disk `12:00:00Z` (both
+    # normalize to .000000) and the tie favors disk.
+    seed_feed_env
+    seed_meta MLAT_USER "2026-05-14T12:00:00Z"
+    reset_incoming_meta
+    APL_APPLY_INCOMING_META_EDITED_AT[MLAT_USER]="2026-05-14T12:00:00.000000Z"
     APL_APPLY_INCOMING_META_EDITED_BY[MLAT_USER]="feeder"
 
     do_apply --no-restart MLAT_USER=bob
@@ -335,4 +391,36 @@ read_meta_edited_at() {
     [ "$APL_APPLY_STATUS" = "no_change" ]
     [ " ${APL_APPLY_SKIPPED_BY_LWW[*]} " = " MLAT_USER " ]
     [ "$(read_disk_value MLAT_USER)" = "alice" ]
+}
+
+@test "explicit metadata on unchanged tracked key still bumps sidecar edited_at" {
+    # Pins the load-bearing behavior the image-webconfig metadata
+    # gate depends on (DEV-383): when an incoming object-form payload
+    # carries metadata for a tracked key, the sidecar is updated
+    # regardless of whether the canonical value changed, provided the
+    # LWW gate accepts the incoming edited_at.
+    #
+    # This is what makes the stuck-future-timestamp heal work
+    # (apl-feed config sync reconciles by sending the server tuple
+    # even when value matches). It is ALSO why webconfig must not
+    # attach metadata to unchanged tracked keys — if it did, every
+    # form save would push a fresh edited_at into the sidecar for
+    # untouched fields and clobber legitimate concurrent edits under
+    # LWW. The omission lives in
+    # image-webconfig/internal/feedmeta.BuildApplyPayload; this test
+    # guards the apply-side assumption that omission targets.
+    seed_feed_env
+    seed_meta MLAT_USER "2026-05-14T10:00:00Z"
+    reset_incoming_meta
+    APL_APPLY_INCOMING_META_EDITED_AT[MLAT_USER]="2026-05-14T11:00:00Z"
+    APL_APPLY_INCOMING_META_EDITED_BY[MLAT_USER]="website"
+
+    do_apply --no-restart MLAT_USER=alice  # value unchanged
+
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ "${#APL_APPLY_CHANGED[@]}" -eq 0 ]
+    [ "${#APL_APPLY_SKIPPED_BY_LWW[@]}" -eq 0 ]
+    [ "$(read_disk_value MLAT_USER)" = "alice" ]
+    [ "$(read_meta_edited_at MLAT_USER)" = "2026-05-14T11:00:00Z" ]
 }
