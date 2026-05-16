@@ -53,7 +53,11 @@ APL_FEED_APPLY_EDITED_BY_ENUM="feeder website legacy"
 
 # RFC 3339 UTC shape required for `edited_at`. Strict — the server side
 # stamps with this exact format; webconfig writes do too.
-APL_FEED_APPLY_EDITED_AT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$'
+# Accepted edited_at shape: RFC 3339 UTC with optional fractional segment
+# of up to 6 digits (microsecond). The LWW normalize pads/truncates to
+# microsecond precision; longer input would be silently truncated which
+# can collapse strict-newer ordering, so we reject it at the wire.
+APL_FEED_APPLY_EDITED_AT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$'
 
 # Caller-input arrays. Parallel maps keyed by feed.env key. apl_feed_apply
 # snapshots these into locals at entry; the caller MAY free them after the
@@ -776,7 +780,7 @@ apl_feed_apply() {
                 ;;
         esac
         if ! [[ "${_meta_in_at[$_meta_check_key]:-}" =~ $APL_FEED_APPLY_EDITED_AT_RE ]]; then
-            APL_APPLY_ERRORS[$_meta_check_key]="edited_at must be RFC 3339 UTC (YYYY-MM-DDTHH:MM:SS[.fff]Z)"
+            APL_APPLY_ERRORS[$_meta_check_key]="edited_at must be RFC 3339 UTC with at most 6 fractional digits (YYYY-MM-DDTHH:MM:SS[.ffffff]Z)"
             APL_APPLY_STATUS=rejected
             return 2
         fi

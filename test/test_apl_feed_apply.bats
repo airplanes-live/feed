@@ -181,6 +181,24 @@ META_FILE_FOR_ROOT() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.meta.json"; }
     [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
 }
 
+@test "apply rejects edited_at with more than 6 fractional digits" {
+    # The LWW normalize pads/truncates to microsecond precision. A
+    # nanosecond-precision input would be silently truncated, which
+    # can collapse strict-newer ordering under LWW. Reject at the wire
+    # rather than accept-then-truncate.
+    PAYLOAD='{"updates":{"MLAT_USER":{"value":"bob","edited_at":"2026-05-14T12:00:00.1234567Z","edited_by":"website"}}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 5 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "parse_error" ]
+}
+
+@test "apply accepts edited_at with exactly 6 fractional digits" {
+    PAYLOAD='{"updates":{"MLAT_USER":{"value":"bob","edited_at":"2026-05-14T12:00:00.123456Z","edited_by":"website"}}}'
+    run_apply "$PAYLOAD" --no-restart
+    [ "$APPLY_RC" -eq 0 ]
+    [ "$(jq -r .status <<<"$APPLY_OUT")" = "applied" ]
+}
+
 @test "malformed JSON returns structured parse_error (no bash abort)" {
     run_apply '{"updates":{"MLAT_USER":' --no-restart
     [ "$APPLY_RC" -eq 5 ]
