@@ -403,7 +403,7 @@ claim_registration_status_line() {
     response_file="$(new_tmp_file)"
     # Body carries only the UUID; auth is in the Bearer header.
     body="$(printf '{"uuid":"%s"}' "$uuid")"
-    token="alv1.${uuid}.${secret}"
+    token="$(apl_auth_token "$uuid" "$secret")"
     set +e
     status="$(post_json_bearer "$token" '/api/feeders/status' "$body" "$response_file")"
     curl_rc=$?

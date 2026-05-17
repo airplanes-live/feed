@@ -680,7 +680,7 @@ apl_feed_config_sync() {
 
     response_file="$(new_tmp_file)"
     local status curl_rc token
-    token="alv1.${uuid}.${secret}"
+    token="$(apl_auth_token "$uuid" "$secret")"
     set +e
     status="$(post_json_bearer "$token" '/api/feeders/config/sync' "$payload" "$response_file")"
     curl_rc=$?

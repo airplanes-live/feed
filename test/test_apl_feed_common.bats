@@ -631,3 +631,48 @@ STUB
     [ "$status" -eq 0 ]
     [ "$output" = 'banana' ]
 }
+
+# --- apl_auth_token ---
+
+@test "apl_auth_token: builds alv1.<uuid>.<secret> from canonical inputs" {
+    run apl_auth_token \
+        '11111111-2222-3333-4444-555555555555' \
+        'ABCDEFGHIJKLMNOP'
+    [ "$status" -eq 0 ]
+    [ "$output" = 'alv1.11111111-2222-3333-4444-555555555555.ABCDEFGHIJKLMNOP' ]
+}
+
+@test "apl_auth_token: canonicalizes uppercase + braces in uuid" {
+    run apl_auth_token \
+        '{11111111-2222-3333-4444-AAAAAAAAAAAA}' \
+        'ABCDEFGHIJKLMNOP'
+    [ "$status" -eq 0 ]
+    [ "$output" = 'alv1.11111111-2222-3333-4444-aaaaaaaaaaaa.ABCDEFGHIJKLMNOP' ]
+}
+
+@test "apl_auth_token: canonicalizes spaces + hyphens + lowercase in secret" {
+    run apl_auth_token \
+        '11111111-2222-3333-4444-555555555555' \
+        '  abcd-efgh ijkl-mnop  '
+    [ "$status" -eq 0 ]
+    [ "$output" = 'alv1.11111111-2222-3333-4444-555555555555.ABCDEFGHIJKLMNOP' ]
+}
+
+@test "apl_auth_token: rejects malformed uuid" {
+    run apl_auth_token 'not-a-uuid' 'ABCDEFGHIJKLMNOP'
+    [ "$status" -ne 0 ]
+}
+
+@test "apl_auth_token: rejects too-short secret after canonicalization" {
+    run apl_auth_token \
+        '11111111-2222-3333-4444-555555555555' \
+        'ABCDEFGH'
+    [ "$status" -ne 0 ]
+}
+
+@test "apl_auth_token: rejects secret with non-alphanumeric chars" {
+    run apl_auth_token \
+        '11111111-2222-3333-4444-555555555555' \
+        'ABCDEFGH!@#$%^&*'
+    [ "$status" -ne 0 ]
+}

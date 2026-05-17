@@ -341,6 +341,20 @@ feed_env_get() {
     printf '%s\n' "$output" | tail -n 1
 }
 
+apl_auth_token() {
+    # Build the v1 Authorization: Bearer token shape `alv1.<uuid>.<secret>`
+    # from a raw uuid + secret pair. Canonicalizes both internally so call
+    # sites can't accidentally send unnormalized inputs. Returns 0 with the
+    # assembled token on stdout, 1 if either input fails its canonical-form
+    # check (caller should fail loud — the server would 401 either way).
+    local raw_uuid="${1:-}" raw_secret="${2:-}"
+    local uuid secret
+    uuid="$(canonicalize_uuid "$raw_uuid")" || return 1
+    secret="$(canonicalize_secret "$raw_secret")"
+    validate_secret "$secret" || return 1
+    printf 'alv1.%s.%s' "$uuid" "$secret"
+}
+
 canonicalize_uuid() {
     # Strip whitespace + braces + hyphens are kept; lowercase hex; require
     # the canonical 8-4-4-4-12 shape after normalization. Returns 0 with

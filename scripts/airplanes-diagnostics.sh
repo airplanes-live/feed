@@ -747,7 +747,7 @@ main() {
     # `ps`.
     local response_file token status curl_rc
     response_file="$(new_tmp_file)"
-    token="alv1.${uuid}.${secret}"
+    token="$(apl_auth_token "$uuid" "$secret")"
 
     set +e
     status="$(post_json_bearer "$token" '/api/feeders/diagnostics' "$payload" "$response_file")"
