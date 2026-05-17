@@ -348,6 +348,18 @@ _config_sync_translate_response() {
     local api_field is_null value edited_at edited_by
     while IFS=$'\t' read -r api_field is_null value edited_at edited_by; do
         [[ -z "$api_field" ]] && continue
+        # The server-side serializer enforces this allowlist on inbound
+        # writes; mirror it on the response so a misbehaving server cannot
+        # smuggle an unknown actor label into feed.meta.json. Drop the
+        # field entirely (no out_args entry, no incoming-meta entry) and
+        # continue — other fields in the same response still apply.
+        case "$edited_by" in
+            feeder|website|legacy) ;;
+            *)
+                _config_sync_log warn "reason=bad_edited_by field=$api_field value=${edited_by}"
+                continue
+                ;;
+        esac
         case "$api_field" in
             position)
                 if [[ "$is_null" == "1" ]]; then

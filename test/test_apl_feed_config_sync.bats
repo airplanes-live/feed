@@ -405,6 +405,92 @@ EOF
     [ "$(jq -r '.fields.mlat_user.edited_at' <<<"$SYNC_OUT")" = "2020-01-01T00:00:00Z" ]
 }
 
+@test "response edited_by={feeder,website,legacy} all apply normally" {
+    # Sanity: each accepted actor label produces a normal apply.
+    seed_feed_env
+    seed_feed_meta MLAT_USER "2026-05-10T00:00:00Z" \
+                   ALTITUDE "2026-05-10T00:00:00Z" \
+                   LATITUDE "2026-05-10T00:00:00Z" \
+                   LONGITUDE "2026-05-10T00:00:00Z"
+    set_canned 200 '{
+        "schema_version": 1,
+        "server_time": "2026-05-14T12:00:00Z",
+        "owned": true,
+        "fields": {
+            "position": {"value": {"lat": 47.0, "lon": 8.0}, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "legacy"},
+            "alt": {"value": "200m", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
+            "mlat_user": {"value": "bob", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "website"},
+            "mlat_enabled": {"value": true, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
+            "mlat_private": {"value": false, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"}
+        }
+    }'
+
+    run_sync --no-restart
+
+    [ "$SYNC_RC" -eq 0 ]
+    grep -F 'MLAT_USER="bob"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -F 'ALTITUDE="200m"' "$ROOT_DIR/etc/airplanes/feed.env"
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "website" ]
+    [ "$(jq -r '.fields.ALTITUDE.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "feeder" ]
+    [ "$(jq -r '.fields.LATITUDE.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "legacy" ]
+}
+
+@test "response edited_by outside allowlist drops only the offending field" {
+    # Server response carries a bogus actor label on mlat_user. That
+    # field must be dropped (logged with reason=bad_edited_by), but the
+    # other fields in the same response must still apply.
+    seed_feed_env
+    seed_feed_meta MLAT_USER "2026-05-10T00:00:00Z" \
+                   ALTITUDE "2026-05-10T00:00:00Z"
+    set_canned 200 '{
+        "schema_version": 1,
+        "server_time": "2026-05-14T12:00:00Z",
+        "owned": true,
+        "fields": {
+            "alt": {"value": "200m", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
+            "mlat_user": {"value": "mallory", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "attacker"}
+        }
+    }'
+
+    run_sync --no-restart
+
+    [ "$SYNC_RC" -eq 0 ]
+    echo "$SYNC_ERR" | grep -F 'reason=bad_edited_by'
+    echo "$SYNC_ERR" | grep -F 'field=mlat_user'
+    # mlat_user value on disk is untouched.
+    grep -F 'MLAT_USER="alice"' "$ROOT_DIR/etc/airplanes/feed.env"
+    # Sidecar entry for MLAT_USER is unchanged (still feeder + the seeded stamp).
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "feeder" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_at' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "2026-05-10T00:00:00Z" ]
+    # The well-formed field still applied.
+    grep -F 'ALTITUDE="200m"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "response position edited_by outside allowlist drops both axes atomically" {
+    # The translator emits LATITUDE+LONGITUDE entries from a single
+    # `position` line — when that line is dropped for bad edited_by,
+    # neither axis must end up applied.
+    seed_feed_env
+    seed_feed_meta LATITUDE "2026-05-10T00:00:00Z" LONGITUDE "2026-05-10T00:00:00Z"
+    set_canned 200 '{
+        "schema_version": 1,
+        "server_time": "2026-05-14T12:00:00Z",
+        "owned": true,
+        "fields": {
+            "position": {"value": {"lat": 99.9, "lon": 99.9}, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "rogue"}
+        }
+    }'
+
+    run_sync --no-restart
+
+    [ "$SYNC_RC" -eq 0 ]
+    echo "$SYNC_ERR" | grep -F 'reason=bad_edited_by'
+    echo "$SYNC_ERR" | grep -F 'field=position'
+    # On-disk position must be unchanged.
+    grep -F 'LATITUDE="47.0"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -F 'LONGITUDE="8.0"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
 @test "position group skips atomically when only one axis is newer locally" {
     # Hand-divergent on-disk stamps: LATITUDE was edited locally just
     # now, LONGITUDE is still on the 2020 legacy seed. Server returns a

@@ -324,3 +324,79 @@ SH
     [ "$output" = '400' ]
     [ "$(cat "$response_file")" = '{"error":"bad_request"}' ]
 }
+
+# --- response-size cap ---
+#
+# Both POST helpers pass --max-filesize 131072 so a misbehaving server
+# cannot fill /tmp on a disk-constrained feeder. curl announces the
+# expected size via Content-Length; if that exceeds the cap, curl exits
+# 63 before reading the body.
+
+start_mock_server_big_body() {
+    # Emits an HTTP response with the given Content-Length and then
+    # streams that many bytes. Used to exercise the --max-filesize cap.
+    local status="$1"
+    local size="$2"
+    python3 - "$MOCK_PORT_FILE" "$status" "$size" <<'PY' &
+import http.server, sys
+port_file = sys.argv[1]
+status = int(sys.argv[2])
+size = int(sys.argv[3])
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        _ = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        self.send_response(status)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(size))
+        self.end_headers()
+        # Stream bytes in chunks so the wire reflects the announced size.
+        chunk = b"A" * 4096
+        remaining = size
+        try:
+            while remaining > 0:
+                n = min(remaining, len(chunk))
+                self.wfile.write(chunk[:n])
+                remaining -= n
+        except BrokenPipeError:
+            pass
+    def log_message(self, *a, **kw): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(s.server_address[1]))
+s.serve_forever()
+PY
+    echo $! > "$MOCK_PID_FILE"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [[ -s "$MOCK_PORT_FILE" ]] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+@test "post_json: response larger than 128 KiB cap exits with curl --max-filesize error" {
+    # 200 KiB body — Content-Length > 131072 so curl bails with exit 63
+    # (CURLE_FILESIZE_EXCEEDED) before writing anything to the response file.
+    start_mock_server_big_body 200 204800
+    SERVER_URL="$(mock_url)"
+    response_file="$TMPDIR/resp"
+    run post_json '/api/feeders/secret' '{"x":1}' "$response_file"
+    [ "$status" -eq 63 ]
+}
+
+@test "post_json_bearer: response larger than 128 KiB cap exits with curl --max-filesize error" {
+    start_mock_server_big_body 200 204800
+    SERVER_URL="$(mock_url)"
+    response_file="$TMPDIR/resp"
+    run post_json_bearer 'alv1.x.y' '/api/feeders/diagnostics' '{"x":1}' "$response_file"
+    [ "$status" -eq 63 ]
+}
+
+@test "post_json: response just under 128 KiB cap succeeds" {
+    # Sanity: 120 KiB body (well under the 128 KiB cap) round-trips fine.
+    start_mock_server_big_body 200 122880
+    SERVER_URL="$(mock_url)"
+    response_file="$TMPDIR/resp"
+    run post_json '/api/feeders/secret' '{"x":1}' "$response_file"
+    [ "$status" -eq 0 ]
+    [ "$output" = '200' ]
+}
