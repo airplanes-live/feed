@@ -94,7 +94,7 @@ apl_feed_diagnostics_disable() {
     done
 
     _diagnostics_apply REPORT_STATUS=false
-    _diagnostics_emit_result "REPORT_STATUS set to false (diagnostics push disabled; the timer stays armed but the collector exits silently each tick)"
+    _diagnostics_emit_result "REPORT_STATUS set to false (diagnostics push disabled; the next tick within ~10 min sends one final muted signal to airplanes.live, then the collector exits silently)"
 }
 
 dispatch_diagnostics() {

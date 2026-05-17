@@ -525,12 +525,31 @@ main() {
         confirm_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
         confirm_toggle="$(parse_report_status "$confirm_raw")"
         if [[ "$confirm_toggle" == "disabled" ]]; then
-            log info "status=disabled_acked"
-            exit "$EXIT_OK"
+            # Stale-ack guard. The ack file was last written with the
+            # value "false", but if a subsequent full POST succeeded
+            # (LAST_SUCCESS_FILE touched after a 2xx full report) and
+            # the corresponding ack-true write failed (filesystem
+            # hiccup, partition full, etc.), the file still claims the
+            # server is muted while the server in fact saw "true".
+            # Treat that case as a transition needed: fall through to
+            # send a fresh goodbye so the two sides reconverge.
+            if [[ -f "$LAST_SUCCESS_FILE" && -f "$INTENT_ACK_FILE" \
+                  && "$LAST_SUCCESS_FILE" -nt "$INTENT_ACK_FILE" ]]; then
+                log info "status=intent_ack_stale reason=last_success_newer"
+                # Drop the "acked=false" assumption so the rest of
+                # main() takes the regular disabled-goodbye path. The
+                # downstream mode/new_ack selection only reads $toggle,
+                # so blanking $acked is safe.
+                acked=''
+            else
+                log info "status=disabled_acked"
+                exit "$EXIT_OK"
+            fi
+        else
+            # Toggle flipped back to enabled between the two reads —
+            # fall through to the enabled branch.
+            toggle="$confirm_toggle"
         fi
-        # Toggle flipped back to enabled between the two reads — fall
-        # through to the enabled branch.
-        toggle="$confirm_toggle"
     fi
 
     # 2. Read identity. Either piece missing means the feeder isn't claimed

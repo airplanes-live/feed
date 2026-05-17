@@ -277,6 +277,33 @@ run_script() {
     [ "$output" = 'false' ]
 }
 
+@test "REPORT_STATUS=false with stale false-ack (last-success newer) still sends goodbye" {
+    # Simulate the race: a previous full POST succeeded (LAST_SUCCESS
+    # touched after that 2xx), but the ack-true write that should have
+    # followed failed, so the ack file still says "false" from an even
+    # earlier transition. Now the operator disables; the goodbye must
+    # still go out so the server doesn't keep thinking diagnostics is
+    # enabled.
+    printf 'REPORT_STATUS=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$(dirname "$INTENT_ACK")"
+    printf 'false\n2026-01-01T00:00:00Z\n' > "$INTENT_ACK"
+    # Make the ack file older than the last-success file.
+    touch -d '2026-01-01T00:00:00Z' "$INTENT_ACK"
+    mkdir -p "$(dirname "$LAST_SUCCESS")"
+    : > "$LAST_SUCCESS"  # touch with current time → newer than INTENT_ACK
+    run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"status=intent_ack_stale"* ]]
+    # Goodbye payload went out.
+    [ -f "$COMMAND_LOG" ]
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'false' ]
+    # And the ack was re-written to false (with a fresh timestamp).
+    [ -f "$INTENT_ACK" ]
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'false' ]
+}
+
 @test "REPORT_STATUS=true with prior false-ack sends full payload and refreshes ack to true" {
     printf 'REPORT_STATUS=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
     mkdir -p "$(dirname "$INTENT_ACK")"
