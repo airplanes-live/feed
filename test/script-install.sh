@@ -129,7 +129,7 @@ done
 [[ "$ready" -eq 1 ]] || { echo "mock HTTP server did not become ready" >&2; exit 1; }
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-export APL_FEED_SERVER_URL="http://127.0.0.1:18080"
+export APL_FEED_WEBSITE_URL="http://127.0.0.1:18080"
 export APL_FEED_MAX_RETRY_TIME=5
 export AIRPLANES_PACKAGE_MANAGER=apt
 

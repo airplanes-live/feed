@@ -320,6 +320,22 @@ EOF
     grep -q '^LONGITUDE="20"$' "$FEED_ENV"
 }
 
+@test "APL_FEED_WEBSITE_URL is preserved through config-sync rewrite" {
+    # Non-writable keys (here: the WEBSITE_URL pointer written by the
+    # image's first-run from airplanes-config.txt) must survive every
+    # apply pass — otherwise a homelab-pointed Pi would silently re-home
+    # to prod on the first config-sync tick.
+    cat > "$FEED_ENV" <<EOF
+APL_FEED_WEBSITE_URL="http://homelab.airplanes.test"
+LATITUDE="52.5"
+LONGITUDE="13.4"
+EOF
+    do_apply --no-restart LATITUDE=53.0
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q '^APL_FEED_WEBSITE_URL="http://homelab.airplanes.test"$' "$FEED_ENV"
+    grep -q '^LATITUDE="53.0"$' "$FEED_ENV"
+}
+
 @test "MLAT_ENABLED=true accepted when consistency holds" {
     cat > "$FEED_ENV" <<EOF
 LATITUDE="52.5"

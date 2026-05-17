@@ -236,7 +236,7 @@ PY
     echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
-    run "$SCRIPT" claim show --root "$ROOT_DIR" --server-url "https://staging.airplanes.test/"
+    run "$SCRIPT" claim show --root "$ROOT_DIR" --website-url "https://staging.airplanes.test/"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Claim page: https://staging.airplanes.test/feeder/claim" ]]
@@ -247,7 +247,7 @@ PY
     chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     start_fixed_server 200 "$(contract_body status authenticated_recent)"
 
-    run "$SCRIPT" status --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" status --root "$ROOT_DIR" --website-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Website claim" ]]
@@ -276,7 +276,7 @@ EOF
     chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     start_fixed_server 200 "$(contract_body status authenticated_recent)"
 
-    run "$SCRIPT" status --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" status --root "$ROOT_DIR" --website-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Receiver input" ]]
@@ -289,7 +289,7 @@ EOF
     chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     start_fixed_server 200 "$(contract_body status authenticated_recent)"
 
-    run "$SCRIPT" status --json --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" status --json --root "$ROOT_DIR" --website-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
     [ "$(jq -r '.schema_version' <<< "$output")" = "1" ]
@@ -305,7 +305,7 @@ EOF
     chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     start_fixed_server 200 '{"version": 2}'
 
-    run "$SCRIPT" claim rotate --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim rotate --root "$ROOT_DIR" --website-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Rotation complete (v2)" ]]
@@ -323,7 +323,7 @@ EOF
     start_claim_server 200 '{"version": 2}' \
         "ABCDEFGHIJKLMNOP" 1 "" 0
 
-    run "$SCRIPT" claim rotate --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim rotate --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 0 ]
     # Filter to the /secret POST line; /status probes are not relevant here
     # but may also appear in the capture if the rotate flow probes.
@@ -346,7 +346,7 @@ EOF
     start_claim_server 409 '{"error": "rotation_rejected"}' \
         "ABCDEFGHIJKLMNOP" 1 "QRSTUVWXYZ012345" 3
 
-    run "$SCRIPT" claim rotate --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim rotate --root "$ROOT_DIR" --website-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Rotation finalized (v3)" ]]
@@ -361,7 +361,7 @@ EOF
     start_claim_server 200 '{"version": 1}' \
         "ABCDEFGHIJKLMNOP" 1 "NO_MATCH_PENDING1" 2
 
-    run "$SCRIPT" claim rotate --abort --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim rotate --abort --root "$ROOT_DIR" --website-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Pending rotation aborted" ]]
@@ -424,7 +424,7 @@ EOF
     echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
-    run "$SCRIPT" claim rotate --dry-run --root "$ROOT_DIR" --server-url "http://127.0.0.1:1"
+    run "$SCRIPT" claim rotate --dry-run --root "$ROOT_DIR" --website-url "http://127.0.0.1:1"
 
     [ "$status" -ne 0 ]
     [[ "$output" =~ "unknown flag for claim rotate: --dry-run" ]]
@@ -827,7 +827,7 @@ SH
     chmod +x "$bin_dir/curl"
 
     run env PATH="$bin_dir:$PATH" CURL_ARGS_FILE="$args_file" CURL_STDIN_FILE="$stdin_file" \
-        "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "http://example.invalid"
+        "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "http://example.invalid"
 
     [ "$status" -eq 0 ]
     local secret

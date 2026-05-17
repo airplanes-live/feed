@@ -214,7 +214,7 @@ apl_feed_mlat_geo() {
         case "$1" in
             -[0-9]*|-.[0-9]*)
                 positional+=("$1"); shift ;;
-            --|-h|--help|--root|--server-url|--max-retry-time)
+            --|-h|--help|--root|--website-url|--max-retry-time)
                 local opt_rc
                 if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
                 case "$opt_rc" in

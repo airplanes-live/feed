@@ -1,8 +1,40 @@
 #!/usr/bin/env bash
 
 ROOT='/'
-# shellcheck disable=SC2034  # SERVER_URL/MAX_RETRY_TIME/DRY_RUN/FORCE are read by sibling modules sourced from apl-feed.sh
-SERVER_URL="${APL_FEED_SERVER_URL:-https://airplanes.live}"
+
+# Precedence: CLI flag (--website-url) > APL_FEED_WEBSITE_URL env > on-disk
+# feed.env > built-in default. systemd-launched timers run without env vars,
+# so the feed.env grep is the only way they pick up a non-prod backend set
+# via airplanes-config.txt's WEBSITE_URL key. feed.env is parsed (not
+# sourced) because the file is operator-editable and apl-feed runs as root.
+# shellcheck disable=SC2120  # production call site uses default; bats overrides
+_resolve_website_url() {
+    local feed_env="${1:-/etc/airplanes/feed.env}"
+    if [[ -n "${APL_FEED_WEBSITE_URL:-}" ]]; then
+        printf '%s' "$APL_FEED_WEBSITE_URL"
+        return 0
+    fi
+    if [[ -r "$feed_env" ]]; then
+        local val
+        val="$(awk -F= '
+            /^APL_FEED_WEBSITE_URL=/ {
+                v = substr($0, length($1) + 2)
+                sub(/^"/, "", v)
+                sub(/"$/, "", v)
+                last = v
+            }
+            END { if (last != "") print last }
+        ' "$feed_env" 2>/dev/null)"
+        if [[ -n "$val" ]]; then
+            printf '%s' "$val"
+            return 0
+        fi
+    fi
+    printf 'https://airplanes.live'
+}
+
+# shellcheck disable=SC2034  # WEBSITE_URL/MAX_RETRY_TIME/DRY_RUN/FORCE are read by sibling modules sourced from apl-feed.sh
+WEBSITE_URL="$(_resolve_website_url)"
 # shellcheck disable=SC2034
 MAX_RETRY_TIME="${APL_FEED_MAX_RETRY_TIME:-60}"
 # shellcheck disable=SC2034
@@ -453,10 +485,10 @@ parse_common_option() {
             ROOT="$2"
             return 2
             ;;
-        --server-url)
-            [[ $# -ge 2 ]] || die "--server-url requires URL"
+        --website-url)
+            [[ $# -ge 2 ]] || die "--website-url requires URL"
             # shellcheck disable=SC2034  # consumed by http.sh/claim.sh after parse
-            SERVER_URL="$2"
+            WEBSITE_URL="$2"
             return 2
             ;;
         --max-retry-time)

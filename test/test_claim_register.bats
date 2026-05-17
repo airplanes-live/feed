@@ -105,7 +105,7 @@ mock_url() {
     [[ "$output" =~ "Usage:" ]]
 }
 
-@test "defaults server URL when --server-url missing" {
+@test "defaults website URL when --website-url missing" {
     run "$SCRIPT" claim register --root "$ROOT_DIR" --dry-run
     [ "$status" -eq 0 ]
     [[ "$output" =~ "https://airplanes.live/api/feeders/secret" ]]
@@ -113,21 +113,21 @@ mock_url() {
 
 @test "reads existing UUID from --root in --dry-run" {
     run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
-        --server-url "http://127.0.0.1:1" --dry-run
+        --website-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 0 ]
     [[ "$output" =~ "11111111-2222-3333-4444-555555555555" ]]
 }
 
 @test "fails when no Feeder ID file exists at --root" {
     rm "$ROOT_DIR/etc/airplanes/feeder-id"
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "http://127.0.0.1:1" --dry-run
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 1 ]
     [[ "$output" =~ "Feeder ID" ]]
 }
 
 @test "rejects malformed Feeder ID" {
     echo "not-a-uuid" > "$ROOT_DIR/etc/airplanes/feeder-id"
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "http://127.0.0.1:1" --dry-run
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 1 ]
     [[ "$output" =~ "Feeder ID" || "$output" =~ "format" ]]
 }
@@ -137,7 +137,7 @@ mock_url() {
     mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
     echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
     run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
-        --server-url "http://127.0.0.1:1" --dry-run
+        --website-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 0 ]
     [[ "$output" =~ "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]]
 }
@@ -147,7 +147,7 @@ mock_url() {
     mkdir -p "$ROOT_DIR/boot"
     echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > "$ROOT_DIR/boot/airplanes-uuid"
     run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
-        --server-url "http://127.0.0.1:1" --dry-run
+        --website-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 0 ]
     [[ "$output" =~ "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ]]
 }
@@ -157,7 +157,7 @@ mock_url() {
 
 @test "secret is 16 chars, A-Z + 0-9 only" {
     run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
-        --server-url "http://127.0.0.1:1" --dry-run
+        --website-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 0 ]
     secret=$(echo "$output" | grep -E '^SECRET: ' | awk '{print $2}')
     [ -n "$secret" ]
@@ -167,10 +167,10 @@ mock_url() {
 
 @test "two consecutive generations produce different secrets" {
     s1=$(timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
-        --server-url "http://127.0.0.1:1" --dry-run \
+        --website-url "http://127.0.0.1:1" --dry-run \
         | grep -E '^SECRET: ' | awk '{print $2}')
     s2=$(timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
-        --server-url "http://127.0.0.1:1" --dry-run \
+        --website-url "http://127.0.0.1:1" --dry-run \
         | grep -E '^SECRET: ' | awk '{print $2}')
     [ -n "$s1" ]
     [ -n "$s2" ]
@@ -183,7 +183,7 @@ mock_url() {
 @test "201 success exits 0 and prints SUCCESS" {
     write_contract_response secret create_success
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "SUCCESS" ]]
 }
@@ -194,7 +194,7 @@ mock_url() {
     # be absent — a v2 server rejects them with 400 invalid_request.
     write_contract_response secret create_success
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 0 ]
     # Authorization header is alv1.<uuid>.<secret>; the register tautology
     # means the bearer secret equals the body new_secret.
@@ -214,7 +214,7 @@ mock_url() {
 @test "200 NOOP_REPLAY exits 0 (treated as success)" {
     write_contract_response secret noop_replay
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "SUCCESS" ]]
 }
@@ -222,14 +222,14 @@ mock_url() {
 @test "409 legacy_unclaimed exits 4 (reinstall flow)" {
     write_contract_response secret legacy_unclaimed
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 4 ]
 }
 
 @test "409 rotation_rejected exits 1" {
     write_contract_response secret rotation_rejected
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 1 ]
 }
 
@@ -237,7 +237,7 @@ mock_url() {
     write_contract_response secret feeder_blocked
     start_mock_server
     local start_ts; start_ts=$(date +%s)
-    run timeout 5 "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run timeout 5 "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     local elapsed=$(( $(date +%s) - start_ts ))
     [ "$status" -eq 1 ]
     [ "$elapsed" -lt 3 ]
@@ -246,20 +246,20 @@ mock_url() {
 @test "400 bad request exits 1" {
     write_contract_response secret invalid_claim_secret
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 1 ]
 }
 
 @test "non-JSON 404 exits 1 (endpoint disabled / wrong URL)" {
     write_response 404 '<html>Not Found</html>' 'text/html'
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 1 ]
 }
 
 @test "network unreachable (RFC 2606 .invalid) exits 2" {
     run "$SCRIPT" claim register --root "$ROOT_DIR" \
-        --server-url "http://nonexistent-host-deliberately-broken.invalid" \
+        --website-url "http://nonexistent-host-deliberately-broken.invalid" \
         --max-retry-time 5
     [ "$status" -eq 2 ]
 }
@@ -270,7 +270,7 @@ mock_url() {
 @test "201 success persists secret atomically (mode 0640, .pending cleaned)" {
     write_contract_response secret create_success
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 0 ]
     local final="$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     [ -f "$final" ]
@@ -288,7 +288,7 @@ mock_url() {
     # Use a non-routable address so the POST hangs/fails, but pending was
     # written first and survives.
     run timeout 4 "$SCRIPT" claim register --root "$ROOT_DIR" \
-        --server-url "http://127.0.0.1:1" \
+        --website-url "http://127.0.0.1:1" \
         --max-retry-time 1
     # Either curl-rc network-error (exit 2) or rate-limit-cap (exit 3).
     [ "$status" -eq 2 ] || [ "$status" -eq 3 ]
@@ -304,7 +304,7 @@ mock_url() {
     chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     write_contract_response secret noop_replay
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "SUCCESS" ]]
     [[ ! "$output" =~ "PRESERVEDSECRET1" ]]
@@ -317,7 +317,7 @@ mock_url() {
     echo "RESUMEPENDING123" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending"
     write_contract_response secret create_success
     start_mock_server
-    run "$SCRIPT" claim register --root "$ROOT_DIR" --server-url "$(mock_url)"
+    run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "RESU-MEPE-NDIN-G123" ]]
     # Pending was promoted to final on success.

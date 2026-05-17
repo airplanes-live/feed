@@ -496,10 +496,10 @@ STUB
     [[ "$output" == *'--root requires PATH'* ]]
 }
 
-@test "parse_common_option: --server-url without value dies" {
-    run_strict 'parse_common_option --server-url'
+@test "parse_common_option: --website-url without value dies" {
+    run_strict 'parse_common_option --website-url'
     [ "$status" -ne 0 ]
-    [[ "$output" == *'--server-url requires URL'* ]]
+    [[ "$output" == *'--website-url requires URL'* ]]
 }
 
 @test "parse_common_option: --max-retry-time consumes 2 args" {
@@ -675,4 +675,77 @@ STUB
         '11111111-2222-3333-4444-555555555555' \
         'ABCDEFGH!@#$%^&*'
     [ "$status" -ne 0 ]
+}
+
+# --- _resolve_website_url ---
+#
+# Precedence: APL_FEED_WEBSITE_URL env > feed.env grep > built-in default.
+# CLI flag wins by writing WEBSITE_URL directly in parse_common_option, not
+# through the resolver — covered in test_apl_feed_cli.bats.
+
+@test "_resolve_website_url: env var overrides feed.env" {
+    local feed_env="$TMPDIR/feed.env"
+    printf 'APL_FEED_WEBSITE_URL="http://from.feedenv"\n' > "$feed_env"
+    APL_FEED_WEBSITE_URL="http://from.env" run _resolve_website_url "$feed_env"
+    [ "$status" -eq 0 ]
+    [ "$output" = "http://from.env" ]
+}
+
+@test "_resolve_website_url: reads from feed.env when env unset" {
+    local feed_env="$TMPDIR/feed.env"
+    printf 'APL_FEED_WEBSITE_URL="http://from.feedenv"\n' > "$feed_env"
+    unset APL_FEED_WEBSITE_URL
+    run _resolve_website_url "$feed_env"
+    [ "$status" -eq 0 ]
+    [ "$output" = "http://from.feedenv" ]
+}
+
+@test "_resolve_website_url: handles unquoted feed.env value" {
+    local feed_env="$TMPDIR/feed.env"
+    printf 'APL_FEED_WEBSITE_URL=http://no.quotes\n' > "$feed_env"
+    unset APL_FEED_WEBSITE_URL
+    run _resolve_website_url "$feed_env"
+    [ "$status" -eq 0 ]
+    [ "$output" = "http://no.quotes" ]
+}
+
+@test "_resolve_website_url: ignores commented lines" {
+    local feed_env="$TMPDIR/feed.env"
+    printf '#APL_FEED_WEBSITE_URL="http://commented.out"\n' > "$feed_env"
+    unset APL_FEED_WEBSITE_URL
+    run _resolve_website_url "$feed_env"
+    [ "$status" -eq 0 ]
+    [ "$output" = "https://airplanes.live" ]
+}
+
+@test "_resolve_website_url: last write wins when feed.env has duplicates" {
+    local feed_env="$TMPDIR/feed.env"
+    printf 'APL_FEED_WEBSITE_URL="http://first"\nAPL_FEED_WEBSITE_URL="http://second"\n' > "$feed_env"
+    unset APL_FEED_WEBSITE_URL
+    run _resolve_website_url "$feed_env"
+    [ "$status" -eq 0 ]
+    [ "$output" = "http://second" ]
+}
+
+@test "_resolve_website_url: empty feed.env value falls back to default" {
+    local feed_env="$TMPDIR/feed.env"
+    printf 'APL_FEED_WEBSITE_URL=""\n' > "$feed_env"
+    unset APL_FEED_WEBSITE_URL
+    run _resolve_website_url "$feed_env"
+    [ "$status" -eq 0 ]
+    [ "$output" = "https://airplanes.live" ]
+}
+
+@test "_resolve_website_url: missing feed.env returns default" {
+    unset APL_FEED_WEBSITE_URL
+    run _resolve_website_url "$TMPDIR/does-not-exist"
+    [ "$status" -eq 0 ]
+    [ "$output" = "https://airplanes.live" ]
+}
+
+@test "_resolve_website_url: unset env and missing file returns default" {
+    unset APL_FEED_WEBSITE_URL
+    run _resolve_website_url "/nonexistent/path/feed.env"
+    [ "$status" -eq 0 ]
+    [ "$output" = "https://airplanes.live" ]
 }
