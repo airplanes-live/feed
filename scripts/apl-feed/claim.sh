@@ -77,8 +77,10 @@ claim_register() {
         # registered ("tautology"). The server ignores the bearer secret
         # on the CREATE branch and stores hash(body.new_secret).
         body="$(printf '{"new_secret":"%s"}' "$secret")"
+        local token
+        token="$(apl_auth_token "$uuid" "$secret")"
         set +e
-        status="$(post_json_bearer "alv1.${uuid}.${secret}" '/api/feeders/secret' "$body" "$response_file")"
+        status="$(post_json_bearer "$token" '/api/feeders/secret' "$body" "$response_file")"
         curl_rc=$?
         set -e
 
@@ -294,8 +296,10 @@ claim_rotate() {
         # rotate-current-check, so a stale bearer with the matching body
         # new_secret still returns 200.
         body="$(printf '{"new_secret":"%s"}' "$next")"
+        local token
+        token="$(apl_auth_token "$uuid" "$current")"
         set +e
-        status="$(post_json_bearer "alv1.${uuid}.${current}" '/api/feeders/secret' "$body" "$response_file")"
+        status="$(post_json_bearer "$token" '/api/feeders/secret' "$body" "$response_file")"
         curl_rc=$?
         set -e
 
