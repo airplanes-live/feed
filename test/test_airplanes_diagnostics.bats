@@ -539,6 +539,71 @@ SH
     [ "$output" = '0a1b2c3d4e5f6a7b8c9d' ]
 }
 
+@test "POST body includes readsb when its unit is installed" {
+    cat > "$STUB_DIR/systemctl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+    "show airplanes-feed "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-mlat "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show readsb "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=1\n' ;;
+    "show dump978-fa "*) printf 'LoadState=not-found\nUnitFileState=\nActiveState=inactive\nSubState=dead\nNRestarts=0\n' ;;
+    *) ;;
+esac
+exit 0
+SH
+    chmod +x "$STUB_DIR/systemctl"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '[.services[].name] | sort | join(",")' "$BODY_LOG"
+    [ "$output" = 'airplanes-feed,airplanes-mlat,readsb' ]
+    run jq -er '.services[] | select(.name=="readsb") | .restart_count_total' "$BODY_LOG"
+    [ "$output" = '1' ]
+    # readsb shares the install-time readsb_version file with airplanes-feed.
+    run jq -er '.services[] | select(.name=="readsb") | .version' "$BODY_LOG"
+    [ "$output" = '0a1b2c3d4e5f6a7b8c9d' ]
+}
+
+@test "POST body omits airplanes-978 when UAT_INPUT is empty" {
+    # Default feed.env has REPORT_STATUS=true and no UAT_INPUT.
+    cat > "$STUB_DIR/systemctl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+    "show airplanes-feed "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-mlat "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    # The collector must not even probe airplanes-978 when UAT is off —
+    # if it does, this stub would emit it and the assertion below fails.
+    "show airplanes-978 "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=inactive\nSubState=dead\nNRestarts=0\n' ;;
+    *) ;;
+esac
+exit 0
+SH
+    chmod +x "$STUB_DIR/systemctl"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.services | map(select(.name=="airplanes-978")) | length' "$BODY_LOG"
+    [ "$output" = '0' ]
+}
+
+@test "POST body includes airplanes-978 when UAT_INPUT is set" {
+    printf 'REPORT_STATUS=true\nUAT_INPUT=driver=0bda:2838,serial=978\n' \
+        > "$ROOT_DIR/etc/airplanes/feed.env"
+    cat > "$STUB_DIR/systemctl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+    "show airplanes-feed "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-mlat "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-978 "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    *) ;;
+esac
+exit 0
+SH
+    chmod +x "$STUB_DIR/systemctl"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.services[] | select(.name=="airplanes-978") | .active_state' "$BODY_LOG"
+    [ "$output" = 'active' ]
+}
+
 @test "POST body versions block reflects /etc/os-release and uname" {
     run_script
     [ "$status" -eq 0 ]

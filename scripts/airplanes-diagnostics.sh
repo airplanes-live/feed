@@ -329,7 +329,9 @@ get_service_version() {
     ipath="$(root_path /usr/local/share/airplanes)"
     local version_file=''
     case "$service" in
-        airplanes-feed) version_file="$ipath/readsb_version" ;;
+        # airplanes-feed, readsb, and airplanes-978 all run a readsb-derived
+        # binary; they share the same install-time version file.
+        airplanes-feed|readsb|airplanes-978) version_file="$ipath/readsb_version" ;;
         airplanes-mlat) version_file="$ipath/mlat_version" ;;
     esac
     if [[ -n "$version_file" && -r "$version_file" ]]; then
@@ -602,10 +604,24 @@ main() {
         collect_disk || true
         collect_network || true
 
-        local svc_feed svc_mlat svc_978
+        local svc_feed svc_mlat svc_readsb svc_dump978 svc_978
         svc_feed="$(build_service_json airplanes-feed)"
         svc_mlat="$(build_service_json airplanes-mlat)"
-        svc_978="$(build_service_json dump978-fa)"
+        svc_readsb="$(build_service_json readsb)"
+        svc_dump978="$(build_service_json dump978-fa)"
+        # airplanes-978 is the readsb UAT instance — only relevant when
+        # the user has actually configured UAT. Without this gate, every
+        # non-UAT feeder would report a "stopped" airplanes-978 unit
+        # because the image ships the unit file even when UAT is off
+        # (the unit self-disables at runtime). Gating here keeps the
+        # dashboard quiet for the common no-978-dongle case until the
+        # collector grows a per-service `configured` field.
+        local uat_input
+        uat_input="$(feed_env_get UAT_INPUT 2>/dev/null || true)"
+        svc_978='null'
+        if [[ -n "$uat_input" ]]; then
+            svc_978="$(build_service_json airplanes-978)"
+        fi
 
         local pi_health_json
         pi_health_json="$(build_pi_health_json)"
@@ -645,6 +661,8 @@ main() {
             --argjson wifi_rssi "$(nullable_num "$NET_WIFI_RSSI_DBM")" \
             --argjson svc_feed "$svc_feed" \
             --argjson svc_mlat "$svc_mlat" \
+            --argjson svc_readsb "$svc_readsb" \
+            --argjson svc_dump978 "$svc_dump978" \
             --argjson svc_978 "$svc_978" \
             --argjson pi_health "$pi_health_json" \
             --arg feed_scripts "${feed_scripts_version:-}" \
@@ -680,7 +698,7 @@ main() {
                     connection_type: $net_connection_type,
                     wifi_rssi_dbm: $wifi_rssi
                 },
-                services: [$svc_feed, $svc_mlat, $svc_978] | map(select(. != null)),
+                services: [$svc_feed, $svc_mlat, $svc_readsb, $svc_dump978, $svc_978] | map(select(. != null)),
                 versions: {
                     feed_scripts: $feed_scripts,
                     os_pretty_name: $os_pretty_name,
