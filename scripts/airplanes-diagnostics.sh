@@ -19,6 +19,7 @@ EXIT_OK=0
 EXIT_BAD_CONFIG=64
 
 LAST_SUCCESS_FILE="${AIRPLANES_DIAGNOSTICS_LAST_SUCCESS:-/var/lib/airplanes/diagnostics-last-success}"
+INTENT_ACK_FILE="${AIRPLANES_DIAGNOSTICS_INTENT_ACK_FILE:-/var/lib/airplanes/diagnostics-intent-acked}"
 INSTALL_DIR="${AIRPLANES_DIAGNOSTICS_INSTALL_DIR:-}"
 
 _resolve_install_dir() {
@@ -87,6 +88,63 @@ parse_report_status() {
         false|no|0|off) printf '%s' 'disabled' ;;
         *) printf '%s' 'invalid' ;;
     esac
+}
+
+# airplanes_diagnostics_read_intent_ack
+#   echoes one of: "true", "false", or empty.
+#   The ack file records the last diagnostics_enabled state the server
+#   has been told (i.e. the last value the server has ack'd via 2xx). The
+#   script is the SOLE owner of this file — no other writer (CLI,
+#   webconfig) touches it.
+airplanes_diagnostics_read_intent_ack() {
+    local path="$INTENT_ACK_FILE"
+    [[ -r "$path" ]] || return 0
+    local first
+    first="$(head -n 1 "$path" 2>/dev/null | tr -d '[:space:]')"
+    case "$first" in
+        true|false) printf '%s' "$first" ;;
+        *) ;;
+    esac
+}
+
+# airplanes_diagnostics_write_intent_ack <true|false>
+#   Atomically write "<value>\n<RFC3339 ts>\n" to the ack file. Creates
+#   the parent dir on demand (mirrors touch_last_success). Returns 0 on
+#   success, non-zero otherwise — caller logs but does not exit on a
+#   write failure (next tick will retry).
+airplanes_diagnostics_write_intent_ack() {
+    local value="$1"
+    case "$value" in
+        true|false) ;;
+        *) return 1 ;;
+    esac
+    local path="$INTENT_ACK_FILE"
+    local dir tmp ts
+    dir="$(dirname "$path")"
+    mkdir -p "$dir" 2>/dev/null || true
+    ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    tmp="$(mktemp "${path}.XXXXXX" 2>/dev/null)" || return 1
+    if ! printf '%s\n%s\n' "$value" "$ts" > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! mv -f "$tmp" "$path"; then
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+# build_intent_only_payload <uuid>
+#   Minimal "goodbye" payload — just enough for the server to record that
+#   the feeder owner intentionally muted diagnostics push. No probe data.
+build_intent_only_payload() {
+    local uuid="$1"
+    local ts
+    ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    jq -nc \
+        --arg ts "$ts" \
+        --arg uuid "$uuid" \
+        '{schema_version: 1, ts: $ts, uuid: $uuid, diagnostics_enabled: false}'
 }
 
 # Run a probe with a 3s timeout, return the captured stdout. Failures
@@ -439,7 +497,11 @@ touch_last_success() {
 
 main() {
     # 1. Resolve REPORT_STATUS toggle. feed_env_get returns nonzero when
-    # the key is absent — handle both branches uniformly.
+    # the key is absent — handle both branches uniformly. The script
+    # owns the intent-ack file at INTENT_ACK_FILE: every transition
+    # between enabled/disabled gets a one-shot POST (full payload or
+    # minimal goodbye) on the next tick, retrying naturally on the
+    # timer cadence until the server acks.
     local report_status_raw
     report_status_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
     local toggle
@@ -449,12 +511,46 @@ main() {
             log error "status=bad_config key=REPORT_STATUS value=${report_status_raw}"
             exit "$EXIT_BAD_CONFIG"
             ;;
-        disabled)
-            log info "status=disabled"
-            exit "$EXIT_OK"
-            ;;
-        enabled|empty) ;;
     esac
+
+    local acked
+    acked="$(airplanes_diagnostics_read_intent_ack)"
+
+    # If the operator disabled the toggle AND the server already knows,
+    # there is nothing to do until they re-enable. Re-confirm the toggle
+    # before logging the skip so a near-simultaneous re-enable still
+    # converges on the next tick rather than this one.
+    if [[ "$toggle" == "disabled" && "$acked" == "false" ]]; then
+        local confirm_raw confirm_toggle
+        confirm_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
+        confirm_toggle="$(parse_report_status "$confirm_raw")"
+        if [[ "$confirm_toggle" == "disabled" ]]; then
+            # Stale-ack guard. The ack file was last written with the
+            # value "false", but if a subsequent full POST succeeded
+            # (LAST_SUCCESS_FILE touched after a 2xx full report) and
+            # the corresponding ack-true write failed (filesystem
+            # hiccup, partition full, etc.), the file still claims the
+            # server is muted while the server in fact saw "true".
+            # Treat that case as a transition needed: fall through to
+            # send a fresh goodbye so the two sides reconverge.
+            if [[ -f "$LAST_SUCCESS_FILE" && -f "$INTENT_ACK_FILE" \
+                  && "$LAST_SUCCESS_FILE" -nt "$INTENT_ACK_FILE" ]]; then
+                log info "status=intent_ack_stale reason=last_success_newer"
+                # Drop the "acked=false" assumption so the rest of
+                # main() takes the regular disabled-goodbye path. The
+                # downstream mode/new_ack selection only reads $toggle,
+                # so blanking $acked is safe.
+                acked=''
+            else
+                log info "status=disabled_acked"
+                exit "$EXIT_OK"
+            fi
+        else
+            # Toggle flipped back to enabled between the two reads —
+            # fall through to the enabled branch.
+            toggle="$confirm_toggle"
+        fi
+    fi
 
     # 2. Read identity. Either piece missing means the feeder isn't claimed
     # yet; the timer will fire again in 10 min once claim has run.
@@ -476,146 +572,177 @@ main() {
         exit "$EXIT_OK"
     fi
 
-    # 3. Collect. Each variable is empty on probe failure; nullable_num /
-    # `--arg` with empty + `del(.. | nulls?)` removes them from the
-    # payload before send.
-    local uptime_seconds LOAD_1M='' LOAD_5M='' LOAD_15M='' cpu_temp_c=''
-    local MEM_TOTAL_BYTES='' MEM_USED_PERCENT=''
-    local DISK_TOTAL_BYTES='' DISK_USED_PERCENT=''
-    local NET_CONNECTION_TYPE='unknown' NET_WIFI_RSSI_DBM=''
-    uptime_seconds="$(collect_uptime_seconds || true)"
-    collect_loadavg || true
-    cpu_temp_c="$(collect_cpu_temp_c || true)"
-    collect_memory || true
-    collect_disk || true
-    collect_network || true
+    # 3. Pick the branch we're in.
+    #   - "disabled" → goodbye payload, intent-only, write ack=false on 2xx.
+    #   - anything else (enabled / empty) → full payload, write ack=true on 2xx.
+    # `mode` controls payload shape; `new_ack` controls what to write
+    # after a successful POST.
+    local mode new_ack
+    if [[ "$toggle" == "disabled" ]]; then
+        mode='goodbye'
+        new_ack='false'
+    else
+        mode='full'
+        new_ack='true'
+    fi
 
-    local svc_feed svc_mlat svc_978
-    svc_feed="$(build_service_json airplanes-feed)"
-    svc_mlat="$(build_service_json airplanes-mlat)"
-    svc_978="$(build_service_json dump978-fa)"
-
-    local pi_health_json
-    pi_health_json="$(build_pi_health_json)"
-
-    local feed_scripts_version os_pretty_name os_id os_version_id kernel architecture image_release
-    feed_scripts_version="$(get_feed_scripts_version || true)"
-    os_pretty_name="$(get_os_release_field PRETTY_NAME || true)"
-    os_id="$(get_os_release_field ID || true)"
-    os_version_id="$(get_os_release_field VERSION_ID || true)"
-    kernel="$(uname -r 2>/dev/null | tr -d '[:cntrl:]' | cut -c1-128)"
-    architecture="$(uname -m 2>/dev/null | tr -d '[:cntrl:]' | cut -c1-128)"
-    image_release="$(get_image_release || true)"
-
-    local ts
-    ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-
-    # 4. Build the payload via jq. If jq fails (binary missing, an
-    # --argjson value the parser rejected, transient I/O), $payload would
-    # otherwise carry partial bytes and curl would loop on 4xx every 10
-    # minutes. Capture jq's rc explicitly and skip the POST.
     local payload payload_rc=0
-    payload="$(jq -nc \
-        --arg ts "$ts" \
-        --arg uuid "$uuid" \
-        --argjson uptime_seconds "$(nullable_num "$uptime_seconds")" \
-        --argjson load_1m "$(nullable_num "$LOAD_1M")" \
-        --argjson load_5m "$(nullable_num "$LOAD_5M")" \
-        --argjson load_15m "$(nullable_num "$LOAD_15M")" \
-        --argjson cpu_temp_c "$(nullable_num "$cpu_temp_c")" \
-        --argjson mem_used_pct "$(nullable_num "$MEM_USED_PERCENT")" \
-        --argjson mem_total_bytes "$(nullable_num "$MEM_TOTAL_BYTES")" \
-        --argjson disk_used_pct "$(nullable_num "$DISK_USED_PERCENT")" \
-        --argjson disk_total_bytes "$(nullable_num "$DISK_TOTAL_BYTES")" \
-        --arg net_connection_type "${NET_CONNECTION_TYPE:-unknown}" \
-        --argjson wifi_rssi "$(nullable_num "$NET_WIFI_RSSI_DBM")" \
-        --argjson svc_feed "$svc_feed" \
-        --argjson svc_mlat "$svc_mlat" \
-        --argjson svc_978 "$svc_978" \
-        --argjson pi_health "$pi_health_json" \
-        --arg feed_scripts "${feed_scripts_version:-}" \
-        --arg os_pretty_name "${os_pretty_name:-}" \
-        --arg os_id "${os_id:-}" \
-        --arg os_version_id "${os_version_id:-}" \
-        --arg kernel "${kernel:-}" \
-        --arg architecture "${architecture:-}" \
-        --arg image_release "${image_release:-}" \
-        '{
-            schema_version: 1,
-            ts: $ts,
-            uuid: $uuid,
-            system: {
-                uptime_seconds: $uptime_seconds,
-                cpu: {
-                    load_1m: $load_1m,
-                    load_5m: $load_5m,
-                    load_15m: $load_15m,
-                    temperature_celsius: $cpu_temp_c
+    if [[ "$mode" == "full" ]]; then
+        # 4a. Collect. Each variable is empty on probe failure; nullable_num /
+        # `--arg` with empty + `del(.. | nulls?)` removes them from the
+        # payload before send.
+        local uptime_seconds LOAD_1M='' LOAD_5M='' LOAD_15M='' cpu_temp_c=''
+        local MEM_TOTAL_BYTES='' MEM_USED_PERCENT=''
+        local DISK_TOTAL_BYTES='' DISK_USED_PERCENT=''
+        local NET_CONNECTION_TYPE='unknown' NET_WIFI_RSSI_DBM=''
+        uptime_seconds="$(collect_uptime_seconds || true)"
+        collect_loadavg || true
+        cpu_temp_c="$(collect_cpu_temp_c || true)"
+        collect_memory || true
+        collect_disk || true
+        collect_network || true
+
+        local svc_feed svc_mlat svc_978
+        svc_feed="$(build_service_json airplanes-feed)"
+        svc_mlat="$(build_service_json airplanes-mlat)"
+        svc_978="$(build_service_json dump978-fa)"
+
+        local pi_health_json
+        pi_health_json="$(build_pi_health_json)"
+
+        local feed_scripts_version os_pretty_name os_id os_version_id kernel architecture image_release
+        feed_scripts_version="$(get_feed_scripts_version || true)"
+        os_pretty_name="$(get_os_release_field PRETTY_NAME || true)"
+        os_id="$(get_os_release_field ID || true)"
+        os_version_id="$(get_os_release_field VERSION_ID || true)"
+        kernel="$(uname -r 2>/dev/null | tr -d '[:cntrl:]' | cut -c1-128)"
+        architecture="$(uname -m 2>/dev/null | tr -d '[:cntrl:]' | cut -c1-128)"
+        image_release="$(get_image_release || true)"
+
+        local ts
+        ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+        # 5a. Build the full payload via jq. If jq fails (binary missing,
+        # an --argjson value the parser rejected, transient I/O),
+        # $payload would otherwise carry partial bytes and curl would
+        # loop on 4xx every 10 minutes. Capture jq's rc explicitly and
+        # skip the POST. `diagnostics_enabled: true` rides alongside
+        # schema_version so the server can distinguish a normal report
+        # from the goodbye payload via a single top-level field.
+        payload="$(jq -nc \
+            --arg ts "$ts" \
+            --arg uuid "$uuid" \
+            --argjson uptime_seconds "$(nullable_num "$uptime_seconds")" \
+            --argjson load_1m "$(nullable_num "$LOAD_1M")" \
+            --argjson load_5m "$(nullable_num "$LOAD_5M")" \
+            --argjson load_15m "$(nullable_num "$LOAD_15M")" \
+            --argjson cpu_temp_c "$(nullable_num "$cpu_temp_c")" \
+            --argjson mem_used_pct "$(nullable_num "$MEM_USED_PERCENT")" \
+            --argjson mem_total_bytes "$(nullable_num "$MEM_TOTAL_BYTES")" \
+            --argjson disk_used_pct "$(nullable_num "$DISK_USED_PERCENT")" \
+            --argjson disk_total_bytes "$(nullable_num "$DISK_TOTAL_BYTES")" \
+            --arg net_connection_type "${NET_CONNECTION_TYPE:-unknown}" \
+            --argjson wifi_rssi "$(nullable_num "$NET_WIFI_RSSI_DBM")" \
+            --argjson svc_feed "$svc_feed" \
+            --argjson svc_mlat "$svc_mlat" \
+            --argjson svc_978 "$svc_978" \
+            --argjson pi_health "$pi_health_json" \
+            --arg feed_scripts "${feed_scripts_version:-}" \
+            --arg os_pretty_name "${os_pretty_name:-}" \
+            --arg os_id "${os_id:-}" \
+            --arg os_version_id "${os_version_id:-}" \
+            --arg kernel "${kernel:-}" \
+            --arg architecture "${architecture:-}" \
+            --arg image_release "${image_release:-}" \
+            '{
+                schema_version: 1,
+                diagnostics_enabled: true,
+                ts: $ts,
+                uuid: $uuid,
+                system: {
+                    uptime_seconds: $uptime_seconds,
+                    cpu: {
+                        load_1m: $load_1m,
+                        load_5m: $load_5m,
+                        load_15m: $load_15m,
+                        temperature_celsius: $cpu_temp_c
+                    },
+                    memory: {
+                        used_percent: $mem_used_pct,
+                        total_bytes: $mem_total_bytes
+                    },
+                    disk: {
+                        used_percent: $disk_used_pct,
+                        total_bytes: $disk_total_bytes
+                    }
                 },
-                memory: {
-                    used_percent: $mem_used_pct,
-                    total_bytes: $mem_total_bytes
+                network: {
+                    connection_type: $net_connection_type,
+                    wifi_rssi_dbm: $wifi_rssi
                 },
-                disk: {
-                    used_percent: $disk_used_pct,
-                    total_bytes: $disk_total_bytes
-                }
-            },
-            network: {
-                connection_type: $net_connection_type,
-                wifi_rssi_dbm: $wifi_rssi
-            },
-            services: [$svc_feed, $svc_mlat, $svc_978] | map(select(. != null)),
-            versions: {
-                feed_scripts: $feed_scripts,
-                os_pretty_name: $os_pretty_name,
-                os_id: $os_id,
-                os_version_id: $os_version_id,
-                kernel: $kernel,
-                architecture: $architecture,
-                image_release: $image_release
-            },
-            pi_health: $pi_health
-        }
-        | def _prune:
-            if type == "object" then
-                with_entries(.value |= _prune)
-                | with_entries(select(.value != null and .value != ""))
-            elif type == "array" then
-                map(_prune) | map(select(. != null))
-            else . end;
-          _prune
-        ')" || payload_rc=$?
-    # The inline _prune def avoids jq 1.5 packagings that omit `walk`
-    # (Debian Buster). Post-order recursion: drops null and empty-string
-    # entries from objects, null entries from arrays.
+                services: [$svc_feed, $svc_mlat, $svc_978] | map(select(. != null)),
+                versions: {
+                    feed_scripts: $feed_scripts,
+                    os_pretty_name: $os_pretty_name,
+                    os_id: $os_id,
+                    os_version_id: $os_version_id,
+                    kernel: $kernel,
+                    architecture: $architecture,
+                    image_release: $image_release
+                },
+                pi_health: $pi_health
+            }
+            | def _prune:
+                if type == "object" then
+                    with_entries(.value |= _prune)
+                    | with_entries(select(.value != null and .value != ""))
+                elif type == "array" then
+                    map(_prune) | map(select(. != null))
+                else . end;
+              _prune
+            ')" || payload_rc=$?
+        # The inline _prune def avoids jq 1.5 packagings that omit `walk`
+        # (Debian Buster). Post-order recursion: drops null and empty-string
+        # entries from objects, null entries from arrays. `true` survives
+        # the prune so the `diagnostics_enabled: true` field is preserved.
+    else
+        # 4b/5b. Goodbye payload — no probes, no system data, only the
+        # bare envelope plus diagnostics_enabled=false.
+        payload="$(build_intent_only_payload "$uuid")" || payload_rc=$?
+    fi
     if (( payload_rc != 0 )) || [[ -z "$payload" ]]; then
-        log warn "status=payload_build_failed rc=$payload_rc"
+        log warn "status=payload_build_failed rc=$payload_rc mode=$mode"
         exit "$EXIT_OK"
     fi
 
-    # 5. Re-check REPORT_STATUS right before the POST. The initial check at
-    # the top of main() runs before ~seconds of probe work; an operator
-    # invoking `apl-feed diagnostics disable` between the two reads should
-    # have the in-flight tick honour the new state instead of pushing one
-    # last (now stale) payload.
+    # 6. Re-check REPORT_STATUS right before the POST. The initial check
+    # at the top of main() runs before ~seconds of probe work; an
+    # operator flipping the toggle between the two reads should have the
+    # in-flight tick honour the new state instead of pushing one last
+    # (now stale) payload. In the full-payload branch a late flip to
+    # disabled aborts the POST (next tick sends goodbye). In the
+    # goodbye branch a late flip to enabled aborts the POST (next tick
+    # sends the full payload). A garbage value mid-run surfaces the
+    # same way the initial check does.
     local late_raw late_toggle
     late_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
     late_toggle="$(parse_report_status "$late_raw")"
     case "$late_toggle" in
-        disabled)
-            log info "status=disabled_during_run"
-            exit "$EXIT_OK"
-            ;;
         invalid)
-            # A garbage value can only land if someone hand-edited mid-run
-            # — surface it the same way the initial check does.
             log error "status=bad_config key=REPORT_STATUS value=${late_raw}"
             exit "$EXIT_BAD_CONFIG"
             ;;
     esac
+    if [[ "$mode" == "full" && "$late_toggle" == "disabled" ]]; then
+        log info "status=disabled_during_run"
+        exit "$EXIT_OK"
+    fi
+    if [[ "$mode" == "goodbye" && "$late_toggle" != "disabled" ]]; then
+        log info "status=enabled_during_run"
+        exit "$EXIT_OK"
+    fi
 
-    # 6. POST. Bearer = alv1.<uuid>.<secret>. The bearer goes into a 0600
+    # 7. POST. Bearer = alv1.<uuid>.<secret>. The bearer goes into a 0600
     # curl --config file (not argv) so the token can't be inspected via
     # `ps`.
     local response_file token status curl_rc
@@ -630,25 +757,48 @@ main() {
     token=''
 
     if (( curl_rc != 0 )); then
-        log warn "status=transport_error curl_rc=$curl_rc"
+        log warn "status=transport_error curl_rc=$curl_rc mode=$mode"
         exit "$EXIT_OK"
     fi
 
     case "$status" in
         2*)
-            touch_last_success
-            log info "status=ok http=$status"
+            if [[ "$mode" == "full" ]]; then
+                touch_last_success
+                if ! airplanes_diagnostics_write_intent_ack "$new_ack"; then
+                    log warn "status=intent_ack_write_failed value=$new_ack"
+                fi
+                log info "status=ok http=$status mode=$mode"
+            else
+                # Goodbye succeeded. Before persisting the false ack, do
+                # one final REPORT_STATUS read — if the operator
+                # re-enabled in the goodbye round-trip, writing the
+                # false ack would cause the next tick to think the
+                # server has been told `false` and skip the next full
+                # POST. Abort the ack write; next tick reconverges.
+                local post_raw post_toggle
+                post_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
+                post_toggle="$(parse_report_status "$post_raw")"
+                if [[ "$post_toggle" != "disabled" ]]; then
+                    log info "status=goodbye_aborted reason=enabled_post_post http=$status"
+                else
+                    if ! airplanes_diagnostics_write_intent_ack "$new_ack"; then
+                        log warn "status=intent_ack_write_failed value=$new_ack"
+                    fi
+                    log info "status=goodbye_acked http=$status"
+                fi
+            fi
             ;;
         4*)
             local body_err
             body_err="$(parse_field_from "$response_file" '.error')"
-            log warn "status=client_error http=$status error=${body_err:-unknown}"
+            log warn "status=client_error http=$status mode=$mode error=${body_err:-unknown}"
             ;;
         5*)
-            log warn "status=server_error http=$status"
+            log warn "status=server_error http=$status mode=$mode"
             ;;
         *)
-            log warn "status=unexpected http=$status"
+            log warn "status=unexpected http=$status mode=$mode"
             ;;
     esac
     exit "$EXIT_OK"
