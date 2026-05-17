@@ -32,6 +32,28 @@ CONFIG_SYNC_LEGACY_EDITED_BY="legacy"
 CONFIG_SYNC_EXIT_OK=0
 CONFIG_SYNC_EXIT_BAD_CONFIG=64
 
+# parse_opt_in RAW
+#   echoes one of: enabled, disabled, invalid, empty
+#   Mirrors parse_report_status in airplanes-diagnostics.sh.
+#   Callers map "empty" to disabled — REMOTE_CONFIG_ENABLED is opt-in,
+#   so absence means "not consented" rather than "default on".
+_config_sync_parse_opt_in() {
+    local raw="$1"
+    if [[ -z "$raw" ]]; then
+        printf '%s' 'empty'
+        return
+    fi
+    local lower
+    lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+    lower="${lower#"${lower%%[![:space:]]*}"}"
+    lower="${lower%"${lower##*[![:space:]]}"}"
+    case "$lower" in
+        true|yes|1|on) printf '%s' 'enabled' ;;
+        false|no|0|off) printf '%s' 'disabled' ;;
+        *) printf '%s' 'invalid' ;;
+    esac
+}
+
 # Sentinel mtime path. Overridable for tests + chroot smokes.
 CONFIG_SYNC_LAST_SUCCESS_FILE="${AIRPLANES_CONFIG_SYNC_LAST_SUCCESS:-/var/lib/airplanes/config-sync-last-success}"
 
@@ -584,6 +606,27 @@ apl_feed_config_sync() {
         esac
     done
 
+    # Opt-in gate. REMOTE_CONFIG_ENABLED must be explicitly true before
+    # this CLI contacts the website. Absent / empty / false all short-
+    # circuit silently with exit 0 — the timer keeps ticking, the
+    # collector exits silently each tick, no payload leaves the feeder.
+    # An unparseable value surfaces as a hard config error (exit 64) so
+    # operators see it in `apl-feed status` / `systemctl status`.
+    local opt_in opt_in_state
+    opt_in="$(feed_env_get REMOTE_CONFIG_ENABLED 2>/dev/null || true)"
+    opt_in_state="$(_config_sync_parse_opt_in "$opt_in")"
+    case "$opt_in_state" in
+        disabled|empty)
+            _config_sync_log info "status=disabled reason=opt_in_required"
+            return "$CONFIG_SYNC_EXIT_OK"
+            ;;
+        invalid)
+            _config_sync_log error "status=bad_config key=REMOTE_CONFIG_ENABLED value=${opt_in}"
+            return "$CONFIG_SYNC_EXIT_BAD_CONFIG"
+            ;;
+        enabled) ;;
+    esac
+
     require_jq
 
     if (( dry_run )); then
@@ -705,12 +748,100 @@ apl_feed_config_sync() {
     return "$CONFIG_SYNC_EXIT_OK"
 }
 
+# Operator-facing toggle for the REMOTE_CONFIG_ENABLED opt-in. Mirrors
+# _diagnostics_apply / _diagnostics_emit_result in apl-feed/diagnostics.sh:
+# routes the sparse update through apl_feed_apply so the canonical
+# privileged writer handles locking, validation, and atomic rewrite.
+# REMOTE_CONFIG_ENABLED is registered as a no-restart key in
+# feed-env-keys.sh — the next sync tick (within ~60s) reads the new
+# value at the top-of-function gate.
+_config_toggle_apply() {
+    feed_env_ensure_canonical_for_write
+    local -a args=()
+    args+=(--feed-env "$(feed_env_write_path)")
+    args+=(--lock-file "$(feed_env_lock_path)")
+    if [[ "$ROOT" != "/" ]]; then
+        args+=(--no-restart --no-audit)
+        echo "Skipping service restart (--root=$ROOT, not the host root)" >&2
+    fi
+    CONFIG_TOGGLE_APPLY_RC=0
+    apl_feed_apply "${args[@]}" "$@" || CONFIG_TOGGLE_APPLY_RC=$?
+}
+
+_config_toggle_emit_result() {
+    local success_msg="$1"
+    case "$APL_APPLY_STATUS" in
+        applied)
+            echo "$success_msg"
+            if (( ${#APL_APPLY_PENDING_RESTART[@]} > 0 )); then
+                echo "Warning: failed to restart ${APL_APPLY_PENDING_RESTART[*]} — re-run: sudo systemctl restart ${APL_APPLY_PENDING_RESTART[*]}" >&2
+            fi
+            apl_feed_apply_emit_meta_warning
+            return 0
+            ;;
+        no_change)
+            return 0
+            ;;
+        rejected)
+            local k
+            for k in "${!APL_APPLY_ERRORS[@]}"; do
+                echo "ERROR: $k: ${APL_APPLY_ERRORS[$k]}" >&2
+            done
+            return 1
+            ;;
+        lock_timeout)
+            echo "ERROR: could not acquire feed.env lock: $APL_APPLY_ERROR_MESSAGE" >&2
+            return 1
+            ;;
+        filesystem_error)
+            echo "ERROR: $APL_APPLY_ERROR_MESSAGE" >&2
+            return 1
+            ;;
+        *)
+            echo "ERROR: ${APL_APPLY_ERROR_MESSAGE:-apply failed with status ${APL_APPLY_STATUS:-<unset>}}" >&2
+            return 1
+            ;;
+    esac
+}
+
+apl_feed_config_enable() {
+    local opt_rc
+    while [[ $# -gt 0 ]]; do
+        if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
+        case "$opt_rc" in
+            1) shift ;;
+            2) shift 2 ;;
+            0) die "unknown flag for config enable: $1" ;;
+        esac
+    done
+
+    _config_toggle_apply REMOTE_CONFIG_ENABLED=true
+    _config_toggle_emit_result "REMOTE_CONFIG_ENABLED set to true (remote config sync enabled; next tick within ~60s will contact the website)"
+}
+
+apl_feed_config_disable() {
+    local opt_rc
+    while [[ $# -gt 0 ]]; do
+        if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
+        case "$opt_rc" in
+            1) shift ;;
+            2) shift 2 ;;
+            0) die "unknown flag for config disable: $1" ;;
+        esac
+    done
+
+    _config_toggle_apply REMOTE_CONFIG_ENABLED=false
+    _config_toggle_emit_result "REMOTE_CONFIG_ENABLED set to false (remote config sync disabled; the timer stays armed but the sync CLI exits silently each tick)"
+}
+
 dispatch_config() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "config requires a subcommand (sync)"
+    [[ -n "$sub" ]] || die "config requires a subcommand (enable|disable|sync)"
     shift || true
     case "$sub" in
-        sync) apl_feed_config_sync "$@" ;;
+        enable)  apl_feed_config_enable  "$@" ;;
+        disable) apl_feed_config_disable "$@" ;;
+        sync)    apl_feed_config_sync    "$@" ;;
         -h|--help) usage ;;
         *) die "unknown config subcommand: $sub" ;;
     esac
