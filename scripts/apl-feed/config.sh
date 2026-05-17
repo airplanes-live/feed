@@ -356,7 +356,13 @@ _config_sync_translate_response() {
         case "$edited_by" in
             feeder|website|legacy) ;;
             *)
-                _config_sync_log warn "reason=bad_edited_by field=$api_field value=${edited_by}"
+                # Quote the value so an attacker-controlled string can't
+                # forge extra key=value pairs in the structured log line.
+                # jq @tsv already escapes tabs/newlines; this guards
+                # against spaces and embedded `=`.
+                local _bad_value="${edited_by:0:64}"
+                _bad_value="${_bad_value//\"/\\\"}"
+                _config_sync_log warn "reason=bad_edited_by field=$api_field value=\"$_bad_value\""
                 continue
                 ;;
         esac
