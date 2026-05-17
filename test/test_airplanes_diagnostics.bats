@@ -160,6 +160,7 @@ OSR
 
     LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes/diagnostics-last-success"
     mkdir -p "$(dirname "$LAST_SUCCESS")"
+    INTENT_ACK="$ROOT_DIR/var/lib/airplanes/diagnostics-intent-acked"
 }
 
 teardown() {
@@ -172,6 +173,7 @@ run_script() {
         HOME="$ROOT_DIR" \
         AIRPLANES_DIAGNOSTICS_ROOT="$ROOT_DIR" \
         AIRPLANES_DIAGNOSTICS_LAST_SUCCESS="$LAST_SUCCESS" \
+        AIRPLANES_DIAGNOSTICS_INTENT_ACK_FILE="$INTENT_ACK" \
         APL_FEED_SERVER_URL='http://127.0.0.1:0' \
         COMMAND_LOG="$COMMAND_LOG" \
         BODY_LOG="$BODY_LOG" \
@@ -218,26 +220,170 @@ run_script() {
     [ -f "$COMMAND_LOG" ]
 }
 
-@test "REPORT_STATUS=false treats as disabled and skips POST" {
+@test "REPORT_STATUS=false with no prior ack sends one-shot goodbye POST" {
     printf 'REPORT_STATUS=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
     run_script
     [ "$status" -eq 0 ]
-    [ ! -f "$COMMAND_LOG" ]
+    [ -f "$COMMAND_LOG" ]
+    # Goodbye payload is the bare envelope — no system/services/versions
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'false' ]
+    run jq -er '.schema_version' "$BODY_LOG"
+    [ "$output" = '1' ]
+    run jq -er '.uuid' "$BODY_LOG"
+    [ "$output" = '11111111-2222-3333-4444-555555555555' ]
+    run jq '.system // empty' "$BODY_LOG"
+    [ -z "$output" ]
+    run jq '.services // empty' "$BODY_LOG"
+    [ -z "$output" ]
+    run jq '.versions // empty' "$BODY_LOG"
+    [ -z "$output" ]
+    # Ack file recorded false
+    [ -f "$INTENT_ACK" ]
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'false' ]
+    # Last-success only fires on full reports
     [ ! -f "$LAST_SUCCESS" ]
 }
 
-@test "REPORT_STATUS=off treats as disabled" {
+@test "REPORT_STATUS=off with no prior ack sends goodbye POST" {
     printf 'REPORT_STATUS=off\n' > "$ROOT_DIR/etc/airplanes/feed.env"
     run_script
     [ "$status" -eq 0 ]
-    [ ! -f "$COMMAND_LOG" ]
+    [ -f "$COMMAND_LOG" ]
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'false' ]
 }
 
-@test "REPORT_STATUS=False (capital F) treats as disabled (case-insensitive)" {
+@test "REPORT_STATUS=False (capital F) sends goodbye (case-insensitive)" {
     printf 'REPORT_STATUS=False\n' > "$ROOT_DIR/etc/airplanes/feed.env"
     run_script
     [ "$status" -eq 0 ]
+    [ -f "$COMMAND_LOG" ]
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'false' ]
+}
+
+@test "REPORT_STATUS=false with prior false-ack skips POST (already muted)" {
+    printf 'REPORT_STATUS=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$(dirname "$INTENT_ACK")"
+    printf 'false\n2026-01-01T00:00:00Z\n' > "$INTENT_ACK"
+    run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"status=disabled_acked"* ]]
     [ ! -f "$COMMAND_LOG" ]
+    # Ack file untouched
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'false' ]
+}
+
+@test "REPORT_STATUS=true with prior false-ack sends full payload and refreshes ack to true" {
+    printf 'REPORT_STATUS=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$(dirname "$INTENT_ACK")"
+    printf 'false\n2026-01-01T00:00:00Z\n' > "$INTENT_ACK"
+    run_script
+    [ "$status" -eq 0 ]
+    [ -f "$COMMAND_LOG" ]
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'true' ]
+    # Full payload includes system block
+    run jq -er '.system.uptime_seconds' "$BODY_LOG"
+    [ "$output" = '12345' ]
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'true' ]
+    [ -f "$LAST_SUCCESS" ]
+}
+
+@test "REPORT_STATUS=true with prior true-ack still sends full payload and refreshes ack" {
+    printf 'REPORT_STATUS=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$(dirname "$INTENT_ACK")"
+    printf 'true\n2026-01-01T00:00:00Z\n' > "$INTENT_ACK"
+    run_script
+    [ "$status" -eq 0 ]
+    [ -f "$COMMAND_LOG" ]
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'true' ]
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'true' ]
+}
+
+@test "REPORT_STATUS=false with prior true-ack sends goodbye and writes false ack" {
+    printf 'REPORT_STATUS=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$(dirname "$INTENT_ACK")"
+    printf 'true\n2026-01-01T00:00:00Z\n' > "$INTENT_ACK"
+    run_script
+    [ "$status" -eq 0 ]
+    [ -f "$COMMAND_LOG" ]
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'false' ]
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'false' ]
+    [ ! -f "$LAST_SUCCESS" ]
+}
+
+@test "goodbye HTTP 5xx leaves ack file untouched (retried next tick)" {
+    printf 'REPORT_STATUS=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$(dirname "$INTENT_ACK")"
+    printf 'true\n2026-01-01T00:00:00Z\n' > "$INTENT_ACK"
+    CURL_STATUS=503 run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"status=server_error"* ]]
+    [[ "$output" == *"mode=goodbye"* ]]
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'true' ]
+}
+
+@test "goodbye 2xx then race-flip back to enabled aborts the false ack write" {
+    printf 'REPORT_STATUS=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$(dirname "$INTENT_ACK")"
+    printf 'true\n2026-01-01T00:00:00Z\n' > "$INTENT_ACK"
+    # The curl stub flips REPORT_STATUS back to true while servicing the
+    # POST — i.e. the operator re-enabled during the round-trip. The
+    # post-POST re-check should see "enabled" and abort the ack write so
+    # the next tick reconverges to a full POST.
+    cat > "$STUB_DIR/curl" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "\$COMMAND_LOG"
+prev=''
+output_file=''
+for arg in "\$@"; do
+    if [[ "\$prev" == "--config" && -r "\$arg" ]]; then
+        cat "\$arg" >> "\$HEADER_LOG"
+    fi
+    if [[ "\$prev" == "--output" ]]; then
+        output_file="\$arg"
+    fi
+    prev="\$arg"
+done
+cat > "\$BODY_LOG"
+if [[ -n "\$output_file" ]]; then
+    printf '{"ok":true}' > "\$output_file"
+fi
+printf 'REPORT_STATUS=true\\n' > '$ROOT_DIR/etc/airplanes/feed.env'
+printf '%s' "200"
+exit 0
+SH
+    chmod +x "$STUB_DIR/curl"
+    run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"status=goodbye_aborted"* ]]
+    # POST went out (goodbye payload reached the wire) but ack was NOT
+    # flipped to false — still records the prior true state.
+    [ -f "$COMMAND_LOG" ]
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'true' ]
+}
+
+@test "REPORT_STATUS=true with missing ack file sends full payload and writes true ack" {
+    printf 'REPORT_STATUS=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    [ ! -f "$INTENT_ACK" ]
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'true' ]
+    [ -f "$INTENT_ACK" ]
+    run head -n 1 "$INTENT_ACK"
+    [ "$output" = 'true' ]
 }
 
 @test "late REPORT_STATUS=false (set mid-run) skips the POST without exiting non-zero" {
@@ -323,6 +469,13 @@ SH
     [ -s "$BODY_LOG" ]
     run jq -e '.schema_version == 1' "$BODY_LOG"
     [ "$status" -eq 0 ]
+}
+
+@test "POST body for a full report carries diagnostics_enabled=true" {
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.diagnostics_enabled' "$BODY_LOG"
+    [ "$output" = 'true' ]
 }
 
 @test "POST body contains canonical lowercase UUID" {
