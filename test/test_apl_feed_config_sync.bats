@@ -86,6 +86,7 @@ GEO_CONFIGURED=true
 MLAT_USER="alice"
 MLAT_ENABLED=true
 MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
 EOF
 }
 
@@ -168,6 +169,7 @@ GEO_CONFIGURED=false
 MLAT_USER="alice"
 MLAT_ENABLED=false
 MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
 EOF
     run_sync --dry-run
 
@@ -184,6 +186,7 @@ GEO_CONFIGURED=true
 MLAT_USER="alice"
 MLAT_ENABLED=true
 MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
 EOF
     run_sync --dry-run
     [ "$SYNC_RC" -eq 0 ]
@@ -213,6 +216,7 @@ ALTITUDE="120m"
 MLAT_USER=""
 MLAT_ENABLED=false
 MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
 EOF
     run_sync --dry-run
     [ "$SYNC_RC" -eq 0 ]
@@ -227,6 +231,7 @@ GEO_CONFIGURED=true
 ALTITUDE="120m"
 MLAT_USER="alice"
 MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
 EOF
     run_sync --dry-run
     [ "$SYNC_RC" -eq 0 ]

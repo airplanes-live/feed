@@ -28,6 +28,7 @@ declare -ga APL_FEED_WRITABLE_KEYS=(
     DUMP978_SDR_SERIAL
     DUMP978_GAIN
     REPORT_STATUS
+    REMOTE_CONFIG_ENABLED
 )
 
 declare -ga APL_FEED_READABLE_KEYS=(
@@ -45,6 +46,7 @@ declare -ga APL_FEED_READABLE_KEYS=(
     DUMP978_SDR_SERIAL
     DUMP978_GAIN
     REPORT_STATUS
+    REMOTE_CONFIG_ENABLED
 )
 
 declare -gA APL_FEED_KEY_TYPE=(
@@ -60,6 +62,7 @@ declare -gA APL_FEED_KEY_TYPE=(
     [DUMP978_SDR_SERIAL]=dump978_serial
     [DUMP978_GAIN]=dump978_gain
     [REPORT_STATUS]=bool
+    [REMOTE_CONFIG_ENABLED]=bool
 )
 
 # Restart map: a key landing on disk → space-separated list of systemd units
@@ -80,6 +83,7 @@ declare -gA APL_FEED_KEY_RESTART=(
     [DUMP978_SDR_SERIAL]="dump978-fa airplanes-978"
     [DUMP978_GAIN]="dump978-fa"
     [REPORT_STATUS]=""
+    [REMOTE_CONFIG_ENABLED]=""
 )
 
 apl_feed_is_writable_key() {
