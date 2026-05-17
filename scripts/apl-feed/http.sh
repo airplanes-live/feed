@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 
+# Caps the response at 128 KiB via curl --max-filesize so a misbehaving
+# server cannot fill /tmp on a disk-constrained feeder. The well-formed
+# responses for the known endpoints (/status, /config/sync, /diagnostics)
+# are all well under 1 KiB; the cap is loose-fitting.
 post_json() {
     local path="$1"
     local body="$2"
     local response_file="$3"
     printf '%s' "$body" | curl --silent --show-error \
-        --connect-timeout 10 --max-time 30 \
+        --connect-timeout 10 --max-time 30 --max-filesize 131072 \
         --request POST \
         --header 'Content-Type: application/json' \
         --data-binary @- \
@@ -21,6 +25,9 @@ post_json() {
 # --config so it never lands in argv (which /proc/<pid>/cmdline and `ps`
 # expose). The tempfile is registered in TMP_FILES so common.sh's EXIT
 # trap removes it when the caller exits.
+#
+# Caps the response at 128 KiB via curl --max-filesize so a misbehaving
+# server cannot fill /tmp.
 #
 # Returns curl's exit code; echoes the HTTP status to stdout (or empty
 # on transport failure).
@@ -57,7 +64,7 @@ post_json_bearer() {
     fi
 
     printf '%s' "$body" | curl --silent --show-error \
-        --connect-timeout 10 --max-time 30 \
+        --connect-timeout 10 --max-time 30 --max-filesize 131072 \
         --request POST \
         --header 'Content-Type: application/json' \
         --config "$cfg" \
