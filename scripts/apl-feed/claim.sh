@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 claim_page_url() {
-    printf '%s/feeder/claim' "${SERVER_URL%/}"
+    printf '%s/feeder/claim' "${WEBSITE_URL%/}"
 }
 
 print_claim_instructions() {
@@ -62,7 +62,7 @@ claim_register() {
     echo "Feeder ID: $uuid"
     if (( DRY_RUN )); then
         echo "SECRET: $secret"
-        echo "(dry-run; would POST to $SERVER_URL/api/feeders/secret)"
+        echo "(dry-run; would POST to $WEBSITE_URL/api/feeders/secret)"
         exit 0
     fi
 
@@ -91,7 +91,7 @@ claim_register() {
                 return 2
                 ;;
             *)
-                echo "ERROR: curl rc=$curl_rc - $SERVER_URL/api/feeders/secret unreachable" >&2
+                echo "ERROR: curl rc=$curl_rc - $WEBSITE_URL/api/feeders/secret unreachable" >&2
                 return 2
                 ;;
         esac
@@ -160,7 +160,7 @@ claim_register() {
                 echo "INFO: 429 rate-limited; sleeping ${sleep_for}s (server retry_after)" >&2
                 ;;
             404)
-                echo "ERROR: 404 from API - endpoint disabled or wrong server URL ($SERVER_URL) - $preview" >&2
+                echo "ERROR: 404 from API - endpoint disabled or wrong website URL ($WEBSITE_URL) - $preview" >&2
                 return 1
                 ;;
             5*)

@@ -90,7 +90,7 @@ apl_feed_import_legacy_config() {
                 break
                 ;;
             -*)
-                # parse_common_option owns --root, --server-url, etc.
+                # parse_common_option owns --root, --website-url, etc.
                 # Check it BEFORE rejecting as unknown so chroot / build /
                 # test callers can pass `--root /mnt` to redirect paths.
                 local opt_rc

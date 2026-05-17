@@ -15,7 +15,7 @@ post_json() {
         --data-binary @- \
         --output "$response_file" \
         --write-out '%{http_code}' \
-        "$SERVER_URL$path"
+        "$WEBSITE_URL$path"
 }
 
 # post_json_bearer <token> <path> <body> <response_file>
@@ -71,7 +71,7 @@ post_json_bearer() {
         --data-binary @- \
         --output "$response_file" \
         --write-out '%{http_code}' \
-        "$SERVER_URL$path"
+        "$WEBSITE_URL$path"
     rc=$?
     rm -f "$cfg"
     return "$rc"

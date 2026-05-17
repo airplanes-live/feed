@@ -26,7 +26,7 @@ config_backup() {
             --force)
                 die "unknown flag for backup: --force"
                 ;;
-            --root|--server-url|--max-retry-time|-h|--help)
+            --root|--website-url|--max-retry-time|-h|--help)
                 if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
                 case "$opt_rc" in
                     1) shift ;;
@@ -120,7 +120,7 @@ config_restore() {
                 uuid_arg="$2"
                 shift 2
                 ;;
-            --root|--server-url|--max-retry-time|-h|--help)
+            --root|--website-url|--max-retry-time|-h|--help)
                 if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
                 case "$opt_rc" in
                     1) shift ;;

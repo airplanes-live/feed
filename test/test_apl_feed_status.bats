@@ -845,7 +845,7 @@ stop_python_mock() {
 @test "claim_registration_status_line: integration with real Python mock (200 ok)" {
     setup_claim_state 1
     start_python_mock 200 '{"registered":true,"version":5,"owner_present":true,"reset_until":null,"last_seen_at":null,"last_seen_age_seconds":null}'
-    SERVER_URL="http://127.0.0.1:$(cat "$PORT_FILE")"
+    WEBSITE_URL="http://127.0.0.1:$(cat "$PORT_FILE")"
     status_init
     STATUS_OUTPUT_JSON=0
     run claim_registration_status_line

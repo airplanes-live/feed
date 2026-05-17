@@ -25,7 +25,7 @@ setup() {
     source "$LIB_DIR/http.sh"
     eval "$bats_exit_trap"
     ROOT="$ROOT_DIR"
-    SERVER_URL='http://127.0.0.1:0'
+    WEBSITE_URL='http://127.0.0.1:0'
 }
 
 teardown() {
@@ -86,7 +86,7 @@ mock_url() {
 
 @test "post_json: returns HTTP code on stdout, writes body to file" {
     start_mock_server 201 '{"version":1}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     body='{"uuid":"11111111-2222-3333-4444-555555555555","new_secret":"ABCDEFGHIJKLMNOP"}'
     run post_json '/api/feeders/secret' "$body" "$response_file"
@@ -97,7 +97,7 @@ mock_url() {
 
 @test "post_json: sends body verbatim with Content-Type: application/json" {
     start_mock_server 200 '{}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     body='{"uuid":"11111111-2222-3333-4444-555555555555"}'
     post_json '/api/feeders/status' "$body" "$response_file" >/dev/null
@@ -127,7 +127,7 @@ mock_url() {
 
 @test "status_probe_version: 200 with .version echoes integer version" {
     start_mock_server 200 '{"version":7}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     run status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP'
     [ "$status" -eq 0 ]
     [ "$output" = '7' ]
@@ -135,27 +135,27 @@ mock_url() {
 
 @test "status_probe_version: 200 without .version returns 1" {
     start_mock_server 200 '{"registered":true}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     run status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP'
     [ "$status" -eq 1 ]
 }
 
 @test "status_probe_version: 200 with .version=null returns 1" {
     start_mock_server 200 '{"version":null}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     run status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP'
     [ "$status" -eq 1 ]
 }
 
 @test "status_probe_version: non-200 returns 1" {
     start_mock_server 423 '{"error":"feeder_blocked"}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     run status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP'
     [ "$status" -eq 1 ]
 }
 
 @test "status_probe_version: network failure (unbound port) returns 1" {
-    SERVER_URL='http://127.0.0.1:1'   # port 1 — should refuse connection
+    WEBSITE_URL='http://127.0.0.1:1'   # port 1 — should refuse connection
     run status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP'
     [ "$status" -eq 1 ]
 }
@@ -166,7 +166,7 @@ mock_url() {
     # helper on return (the TMP_FILES safety-net would have been
     # invisible from this scope anyway — see post_json_bearer for why).
     start_mock_server 200 '{"version":7}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     before="$(find "$TMPDIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
     status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP' >/dev/null || true
     after="$(find "$TMPDIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
@@ -178,7 +178,7 @@ mock_url() {
     # the uuid; the secret rides in the Authorization header so it can't
     # leak via request-body access logs.
     start_mock_server_with_headers 200 '{"version":7}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     run status_probe_version '11111111-2222-3333-4444-555555555555' 'ABCDEFGHIJKLMNOP'
     [ "$status" -eq 0 ]
     grep -qi '^Authorization: Bearer alv1\.11111111-2222-3333-4444-555555555555\.ABCDEFGHIJKLMNOP$' "$ROOT_DIR/headers.log"
@@ -231,7 +231,7 @@ PY
 
 @test "post_json_bearer: sends Authorization: Bearer <token> header" {
     start_mock_server_with_headers 200 '{"ok":true}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     body='{"schema_version":1,"uuid":"11111111-2222-3333-4444-555555555555"}'
     run post_json_bearer 'alv1.11111111-2222-3333-4444-555555555555.ABCDEFGHIJKLMNOP' \
@@ -255,19 +255,19 @@ SH
     chmod +x "$stub_dir/curl"
 
     start_mock_server_with_headers 200 '{"ok":true}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     PATH="$stub_dir:$PATH" post_json_bearer 'alv1.deadbeef.SECRETTOKEN0000' \
         '/api/feeders/diagnostics' '{"x":1}' "$response_file" >/dev/null
     ! grep -q 'SECRETTOKEN0000' "$ROOT_DIR/curl-argv.log"
     ! grep -q 'alv1\.deadbeef' "$ROOT_DIR/curl-argv.log"
     # Sanity: the canned URL is in argv even though the token is not
-    grep -q "$SERVER_URL" "$ROOT_DIR/curl-argv.log"
+    grep -q "$WEBSITE_URL" "$ROOT_DIR/curl-argv.log"
 }
 
 @test "post_json_bearer: sends body verbatim with Content-Type: application/json" {
     start_mock_server_with_headers 200 '{}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     body='{"schema_version":1,"uuid":"x"}'
     post_json_bearer 'alv1.x.y' '/api/feeders/diagnostics' "$body" "$response_file" >/dev/null
@@ -284,7 +284,7 @@ SH
     rm_real="$(command -v rm)"
     rm() { :; }  # no-op
     start_mock_server_with_headers 200 '{}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     before_count="${#TMP_FILES[@]}"
     post_json_bearer 'alv1.x.y' '/api/feeders/diagnostics' '{}' "$response_file" >/dev/null
@@ -303,7 +303,7 @@ SH
     # TMP_FILES mutations are lost) still don't leak. TMP_FILES is the
     # safety-net for signal-kill / set-e-bail paths.
     start_mock_server_with_headers 200 '{}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     before="$(find "$TMPDIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
     post_json_bearer 'alv1.x.y' '/api/feeders/diagnostics' '{}' "$response_file" >/dev/null
@@ -317,7 +317,7 @@ SH
     # This regression pin asserts the original helper's contract is unchanged:
     # a 4xx response is returned as a string, not as a curl transport failure.
     start_mock_server 400 '{"error":"bad_request"}'
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     run post_json '/api/feeders/secret' '{"x":1}' "$response_file"
     [ "$status" -eq 0 ]
@@ -377,7 +377,7 @@ PY
     # 200 KiB body — Content-Length > 131072 so curl bails with exit 63
     # (CURLE_FILESIZE_EXCEEDED) before writing anything to the response file.
     start_mock_server_big_body 200 204800
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     run post_json '/api/feeders/secret' '{"x":1}' "$response_file"
     [ "$status" -eq 63 ]
@@ -385,7 +385,7 @@ PY
 
 @test "post_json_bearer: response larger than 128 KiB cap exits with curl --max-filesize error" {
     start_mock_server_big_body 200 204800
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     run post_json_bearer 'alv1.x.y' '/api/feeders/diagnostics' '{"x":1}' "$response_file"
     [ "$status" -eq 63 ]
@@ -394,7 +394,7 @@ PY
 @test "post_json: response just under 128 KiB cap succeeds" {
     # Sanity: 120 KiB body (well under the 128 KiB cap) round-trips fine.
     start_mock_server_big_body 200 122880
-    SERVER_URL="$(mock_url)"
+    WEBSITE_URL="$(mock_url)"
     response_file="$TMPDIR/resp"
     run post_json '/api/feeders/secret' '{"x":1}' "$response_file"
     [ "$status" -eq 0 ]
