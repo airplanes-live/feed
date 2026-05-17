@@ -466,6 +466,29 @@ EOF
     grep -F 'ALTITUDE="200m"' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
+@test "response edited_by with embedded space/equals is logged as a quoted token" {
+    # An attacker-controlled value must not forge extra key=value pairs in
+    # the structured log line. The dropped-field log entry quotes the value.
+    seed_feed_env
+    set_canned 200 '{
+        "schema_version": 1,
+        "server_time": "2026-05-14T12:00:00Z",
+        "owned": true,
+        "fields": {
+            "alt": {"value": "200m", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "evil reason=spoofed"}
+        }
+    }'
+
+    run_sync --no-restart
+
+    [ "$SYNC_RC" -eq 0 ]
+    echo "$SYNC_ERR" | grep -F 'reason=bad_edited_by'
+    echo "$SYNC_ERR" | grep -F 'field=alt'
+    # The hostile value must appear quoted, so a downstream parser cannot
+    # mistake `reason=spoofed` for a new log key.
+    echo "$SYNC_ERR" | grep -F 'value="evil reason=spoofed"'
+}
+
 @test "response position edited_by outside allowlist drops both axes atomically" {
     # The translator emits LATITUDE+LONGITUDE entries from a single
     # `position` line — when that line is dropped for bad edited_by,
