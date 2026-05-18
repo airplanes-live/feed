@@ -570,22 +570,32 @@ EOF
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "7" ]
 }
 
-@test "claim set never invokes systemctl (no daemon consumes the secret)" {
+@test "claim set never restarts feeder daemons (no daemon consumes the secret)" {
     # The claim secret is consumed only by apl-feed itself, not by
     # airplanes-feed or airplanes-mlat. Saving it must not bounce a
-    # working feeder. Use a sentinel stub that fails the test if invoked.
+    # working feeder. The only permitted systemctl call is the post-write
+    # stop of airplanes-claim.timer (see test_claim_timer_stop.bats);
+    # this assertion pins that NOTHING ELSE is touched.
+    COMMAND_LOG="$(mktemp)"
     cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
 #!/usr/bin/env bash
-echo "systemctl invoked with: $*" >&2
-exit 99
+{ printf 'systemctl'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } >> "$COMMAND_LOG"
+exit 0
 STUB
     chmod +x "$STUB_BIN_DIR/systemctl"
+    export COMMAND_LOG APL_FEED_TEST_TIMER_STOP_FORCE=1
 
     run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCDEFGHIJKLMNOP"
 
     [ "$status" -eq 0 ]
-    [[ ! "$output" =~ "systemctl invoked" ]]
     [[ ! "$output" =~ "Restarted" ]]
+    # Every recorded systemctl invocation must be the timer-stop. No
+    # restart, no reload, no apl-feed daemon touched.
+    while IFS= read -r line; do
+        [[ "$line" == "systemctl --no-block stop airplanes-claim.timer" ]] \
+            || { echo "unexpected systemctl call: $line" >&2; false; }
+    done < "$COMMAND_LOG"
+    rm -f "$COMMAND_LOG"
 }
 
 @test "claim set is idempotent when supplied secret already matches local" {
@@ -655,6 +665,93 @@ STUB
     [[ "$output" =~ "dry-run" ]]
     [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
     [ ! -f "$restart_log" ]
+}
+
+
+# --- claim set: post-write timer stop -------------------------------------
+#
+# Coordinated with the image-side airplanes-claim.timer. Once claim set
+# lands the secret on disk, the timer has nothing left to do, and every
+# subsequent fire pollutes the service journal with condition-skip lines
+# that the webconfig Claim activity panel surfaces.
+
+@test "claim set new-secret write stops airplanes-claim.timer" {
+    COMMAND_LOG="$(mktemp)"
+    cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+{ printf 'systemctl'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } >> "$COMMAND_LOG"
+exit 0
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl"
+    export COMMAND_LOG APL_FEED_TEST_TIMER_STOP_FORCE=1
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -eq 0 ]
+    grep -F -- '--no-block stop airplanes-claim.timer' "$COMMAND_LOG"
+    rm -f "$COMMAND_LOG"
+}
+
+@test "claim set same-canonical-value (idempotent) still stops the timer" {
+    # The re-normalize path also writes the file (to fix mode / casing), so
+    # we want the timer-stop here too — keeps the helper invariant simple:
+    # any successful secret write triggers the stop.
+    echo "abcd-efgh-ijkl-mnop" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 644 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    COMMAND_LOG="$(mktemp)"
+    cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+{ printf 'systemctl'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } >> "$COMMAND_LOG"
+exit 0
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl"
+    export COMMAND_LOG APL_FEED_TEST_TIMER_STOP_FORCE=1
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCD-EFGH-IJKL-MNOP"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "already matches" ]]
+    grep -F -- '--no-block stop airplanes-claim.timer' "$COMMAND_LOG"
+    rm -f "$COMMAND_LOG"
+}
+
+@test "claim set --dry-run does NOT stop the timer (no secret was written)" {
+    COMMAND_LOG="$(mktemp)"
+    cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+{ printf 'systemctl'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } >> "$COMMAND_LOG"
+exit 0
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl"
+    export COMMAND_LOG APL_FEED_TEST_TIMER_STOP_FORCE=1
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" --dry-run <<<"ABCDEFGHIJKLMNOP"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "dry-run" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret" ]
+    ! grep -F -- 'stop airplanes-claim.timer' "$COMMAND_LOG"
+    rm -f "$COMMAND_LOG"
+}
+
+@test "claim set refuse-without-force does NOT stop the timer (nothing written)" {
+    echo "OLDSECRETXYZ1234" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    COMMAND_LOG="$(mktemp)"
+    cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+{ printf 'systemctl'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } >> "$COMMAND_LOG"
+exit 0
+STUB
+    chmod +x "$STUB_BIN_DIR/systemctl"
+    export COMMAND_LOG APL_FEED_TEST_TIMER_STOP_FORCE=1
+
+    run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"NEWSECRETXYZ5678"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "different claim secret" ]]
+    ! grep -F -- 'stop airplanes-claim.timer' "$COMMAND_LOG"
+    rm -f "$COMMAND_LOG"
 }
 
 @test "id set writes a new UUID and restarts both daemons feed-first" {

@@ -118,6 +118,11 @@ claim_register() {
                     chmod 640 "$pending"
                     mv "$pending" "$final"
                 fi
+                # The secret is on disk; stop the timer before any later
+                # failure (write_version_file errno, echo EPIPE, etc.)
+                # could abort under `set -e` and leave the retry timer
+                # firing indefinitely against a now-claimed feeder.
+                stop_claim_timer_if_present
                 write_version_file "$version"
                 echo "SUCCESS ($status, version $version)"
                 echo "Secret persisted to $final"
@@ -394,9 +399,15 @@ claim_rotate() {
 claim_set() {
     # Save a claim secret minted by the website (e.g. the same-IP claim
     # legacy bootstrap, the owner-side Reset secret flow, or a support
-    # reset) and restart feeder services so the new value takes effect
-    # immediately. The secret is read from stdin (TTY prompts; pipes work
+    # reset). The secret is read from stdin (TTY prompts; pipes work
     # too) so the value never lands in argv or shell history.
+    #
+    # No feeder-daemon restart: neither airplanes-feed nor airplanes-mlat
+    # reads the claim secret — only apl-feed itself does, and the next
+    # CLI invocation picks up the file change immediately. The only
+    # systemd touch is stopping the image-side airplanes-claim.timer
+    # post-write so the now-claimed feeder stops accumulating condition-
+    # skip noise in the service journal.
     #
     # Refuses to overwrite an existing different secret unless --force is
     # passed; a no-op when the supplied secret already matches the local
@@ -468,7 +479,7 @@ claim_set() {
 
     echo "Feeder ID: $uuid"
     if (( DRY_RUN )); then
-        echo "(dry-run; would save secret + restart feeder services)"
+        echo "(dry-run; would save secret to $final)"
         return 0
     fi
 
@@ -481,14 +492,17 @@ claim_set() {
         # Same canonical value already on disk. Re-write to normalize byte
         # contents (lowercase / hyphenated raw input gets canonicalized)
         # and the file mode (0600). Don't drop the version file — the
-        # local secret bytes haven't functionally changed. Don't restart
-        # services either: nothing observable changed.
+        # local secret bytes haven't functionally changed.
         write_secret_file "$final" "$secret"
+        stop_claim_timer_if_present
         echo "Local claim secret already matches — no change."
         return 0
     fi
 
     write_secret_file "$final" "$secret"
+    # Secret is on disk; stop the timer before any later step (rm,
+    # echo EPIPE) could abort under `set -e`.
+    stop_claim_timer_if_present
 
     # Local secret no longer matches whatever the version file claimed.
     # Drop the version file so `claim show` / `backup` can't pair a
@@ -497,12 +511,10 @@ claim_set() {
     rm -f "$version_path"
 
     echo "Claim secret saved."
-    # No daemon restart: neither airplanes-feed nor airplanes-mlat reads
-    # the claim secret. Only this CLI does, and the next CLI invocation
-    # picks up the file change immediately. The website's hash is already
-    # the new value (this command is run AFTER the website mints the
-    # secret), so the next outbound `status` or `rotate` from the feeder
-    # authenticates fine.
+    # The website's hash is already the new value (this command is run
+    # AFTER the website mints the secret), so the next outbound `status`
+    # or `rotate` from the feeder authenticates fine. No daemon restart
+    # — neither airplanes-feed nor airplanes-mlat reads this file.
     echo "Done. The feeder will use the new secret on its next contact with the website."
 }
 

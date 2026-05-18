@@ -510,6 +510,34 @@ restart_feeder_services() {
     return $rc
 }
 
+# Stop the image-side airplanes-claim.timer after a successful claim write
+# (claim register / claim set). The timer drives retry of unclaimed feeders;
+# once the secret is on disk it has nothing to do, and every subsequent
+# 5-min fire logs `Condition check resulted in ... skipped` against the
+# service unit — which the webconfig "Claim activity" panel surfaces as
+# noise. The timer's WantedBy=timers.target keeps it re-armable on next
+# reboot if the secret is ever deleted (factory reset, manual reclaim).
+#
+# Defensive on every leg: silently no-ops on hosts without systemctl,
+# hosts without the timer unit (legacy non-image installs), and non-root
+# --root invocations (mirrors restart_feeder_services — stopping the
+# host's timer when operating on a different rootfs is wrong).
+#
+# APL_FEED_TEST_TIMER_STOP_FORCE is a test-only override so bats
+# integration tests can exercise the helper while using --root to scope
+# filesystem fixtures. The TEST prefix is deliberate so a stray export
+# in a production shell is visible at a glance; production callers must
+# never set this.
+stop_claim_timer_if_present() {
+    if [[ "$ROOT" != "/" && -z "${APL_FEED_TEST_TIMER_STOP_FORCE:-}" ]]; then
+        return 0
+    fi
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    systemctl --no-block stop airplanes-claim.timer 2>/dev/null || true
+}
+
 parse_common_option() {
     case "${1:-}" in
         --root)
