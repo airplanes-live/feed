@@ -307,3 +307,45 @@ bar"
     [ "$status" -eq 1 ]
     grep -qx 'service=before' "$TARGET"
 }
+
+@test "dedupe: existing target without trailing newline → tail field still compared" {
+    # An external writer or an interrupted previous run could leave a
+    # target with no final newline. Without the `|| [[ -n line ]]` tail
+    # in the canonicaliser the last line silently disappears from the
+    # comparison, and a proposed write that removed the trailing field
+    # would falsely dedupe against the truncated remainder, preserving
+    # stale content. This case asserts the canonicaliser includes the
+    # final line so the writer detects the difference and renames.
+    printf 'schema_version=1\nservice=mlat\nstate=disabled\nextra=v' \
+        > "$TARGET"
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1
+    airplanes_write_state "$TARGET" \
+        service=mlat \
+        state=disabled
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -gt "$mtime_before" ]
+    ! grep -qx 'extra=v' "$TARGET"
+}
+
+@test "dedupe: values with backslashes + trailing spaces preserved verbatim" {
+    # `IFS= read -r` + `printf '%s\n'` round-trips backslashes and
+    # trailing whitespace; canonicalisation must not mangle them, or
+    # else two semantically-identical writes would compare unequal and
+    # break dedupe.
+    airplanes_write_state "$TARGET" \
+        "feed_bin=/usr/bin/x\\trailing " \
+        "decided_at=2026-05-18T10:00:00Z"
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1
+    airplanes_write_state "$TARGET" \
+        "feed_bin=/usr/bin/x\\trailing " \
+        "decided_at=2026-05-18T10:00:30Z"
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -eq "$mtime_before" ]
+    grep -qFx 'feed_bin=/usr/bin/x\trailing ' "$TARGET"
+}

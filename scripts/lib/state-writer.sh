@@ -50,10 +50,16 @@
 
 # Print $1's content with decided_at= lines filtered out. Used by the
 # dedupe path so a fresh timestamp on an otherwise-identical decision
-# doesn't force a rename.
+# doesn't force a rename. The `|| [[ -n "$line" ]]` tail catches an
+# existing target that's missing its final newline — without it the
+# loop would silently drop the last line and a proposed write that
+# removed a tail field could falsely dedupe against the truncated
+# remainder. (The writer's own output always ends in \n, so this only
+# matters for files left behind by an interrupted write or external
+# tampering.)
 _airplanes_write_state_canonical() {
     local line
-    while IFS= read -r line; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
             decided_at=*) continue ;;
         esac
