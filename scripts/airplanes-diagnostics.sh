@@ -59,6 +59,7 @@ source "$_COMMON_SH"
 # shellcheck source=apl-feed/http.sh
 source "$_HTTP_SH"
 
+
 # common.sh unconditionally sets ROOT='/' on source. Reapply the override
 # after sourcing so callers can re-root the script's filesystem reads
 # (useful for tests / chroot smokes).
@@ -355,10 +356,62 @@ get_service_version() {
     printf '%s' "$raw"
 }
 
+# _read_service_decision <state_file>
+#   Single-open read of the daemon-published state file. Echoes
+#   "<state>|<reason>" on success when BOTH keys are present and the
+#   schema_version line passes. Returns 1 (no stdout) on any read or
+#   validation failure.
+#
+# Single open matters: the state-writer renames a temp file atomically
+# into place, so two separate `airplanes_read_state` calls could pick
+# up `state` from the old file and `reason` from the new one, publishing
+# a mixed pair on the wire. Reading both keys from one open snapshot
+# of the file rules that out. The all-or-nothing return also handles a
+# schema-valid-but-truncated file (e.g. only `reason=` present) without
+# emitting an orphan field.
+#
+# Mirrors state-reader.sh's validation rules: schema_version=1 first
+# line, KEY=VALUE shape with [A-Za-z_][A-Za-z0-9_]* keys, no CR in
+# values. Locally re-implemented rather than calling the lib twice so
+# the read is provably single-open.
+_read_service_decision() {
+    local path="$1"
+    [[ -f "$path" && -r "$path" ]] || return 1
+    local first state='' reason=''
+    {
+        IFS= read -r first || return 1
+        [[ "$first" == "schema_version=1" ]] || return 1
+        local line key val
+        while IFS= read -r line; do
+            [[ "$line" == *=* ]] || continue
+            key="${line%%=*}"
+            val="${line#*=}"
+            [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+            case "$val" in *$'\r'*) return 1 ;; esac
+            case "$key" in
+                state)  state="$val" ;;
+                reason) reason="$val" ;;
+            esac
+        done
+    } < "$path"
+    [[ -n "$state" && -n "$reason" ]] || return 1
+    printf '%s|%s' "$state" "$reason"
+}
+
 # Build a single service object as JSON (or print "null" if the unit is
 # load_state=not-found / systemctl unavailable / probe failed).
+#
+# The optional second positional argument is the path to the daemon's
+# runtime state file (``/run/<service>/state``); when readable and
+# schema_version=1 valid AND both ``state`` and ``reason`` keys are
+# present, the daemon's published tokens are added to the JSON so the
+# dashboard can distinguish user-disabled from runtime hardware-missing
+# without re-deriving either predicate. Any read failure (missing file,
+# bad schema, orphan field) silently omits both — the server falls back
+# to systemd-only classification.
 build_service_json() {
     local name="$1"
+    local state_file="${2:-}"
     command -v systemctl >/dev/null 2>&1 || { printf 'null'; return; }
     local show_out
     show_out="$(timeout 3s systemctl show "$name" \
@@ -377,6 +430,14 @@ build_service_json() {
     [[ "$nrestarts" =~ ^[0-9]+$ ]] || nrestarts=0
     local version
     version="$(get_service_version "$name" || true)"
+    local state='' reason=''
+    if [[ -n "$state_file" ]]; then
+        local pair
+        if pair="$(_read_service_decision "$state_file" 2>/dev/null)"; then
+            state="${pair%%|*}"
+            reason="${pair#*|}"
+        fi
+    fi
     jq -nc \
         --arg name "$name" \
         --arg load_state "${load_state:-}" \
@@ -385,13 +446,17 @@ build_service_json() {
         --arg sub_state "${sub_state:-}" \
         --argjson restart_count_total "$nrestarts" \
         --arg version "${version:-}" \
+        --arg state "${state:-}" \
+        --arg reason "${reason:-}" \
         '{name: $name,
           load_state: $load_state,
           unit_file_state: $unit_file_state,
           active_state: $active_state,
           sub_state: $sub_state,
           restart_count_total: $restart_count_total,
-          version: $version}
+          version: $version,
+          state: $state,
+          reason: $reason}
          | with_entries(select(.value != null and .value != ""))'
 }
 
@@ -605,22 +670,23 @@ main() {
         collect_network || true
 
         local svc_feed svc_mlat svc_readsb svc_dump978 svc_978
+        # airplanes-feed has no user-disable predicate today, so its state
+        # file would always say enabled/ok — no value in plumbing it.
+        # readsb has no state file at all.
         svc_feed="$(build_service_json airplanes-feed)"
-        svc_mlat="$(build_service_json airplanes-mlat)"
+        svc_mlat="$(build_service_json airplanes-mlat "$(root_path /run/airplanes-mlat/state)")"
         svc_readsb="$(build_service_json readsb)"
-        svc_dump978="$(build_service_json dump978-fa)"
+        svc_dump978="$(build_service_json dump978-fa "$(root_path /run/dump978-fa/state)")"
         # airplanes-978 is the readsb UAT instance — only relevant when
         # the user has actually configured UAT. Without this gate, every
-        # non-UAT feeder would report a "stopped" airplanes-978 unit
-        # because the image ships the unit file even when UAT is off
-        # (the unit self-disables at runtime). Gating here keeps the
-        # dashboard quiet for the common no-978-dongle case until the
-        # collector grows a per-service `configured` field.
+        # non-UAT feeder would report an idle airplanes-978 unit and add
+        # noise to the dashboard. Globally most users don't have a 978
+        # dongle so the chip stays hidden until they wire one up.
         local uat_input
         uat_input="$(feed_env_get UAT_INPUT 2>/dev/null || true)"
         svc_978='null'
         if [[ -n "$uat_input" ]]; then
-            svc_978="$(build_service_json airplanes-978)"
+            svc_978="$(build_service_json airplanes-978 "$(root_path /run/airplanes-978/state)")"
         fi
 
         local pi_health_json
