@@ -91,17 +91,18 @@ claim_register() {
                 # route, connect timeout). Exit 75 (EX_TEMPFAIL) so the
                 # caller's systemd unit can map it via SuccessExitStatus=
                 # and the timer's OnUnitActiveSec= re-arms cleanly off a
-                # dead-not-failed unit. Exit 2 stays reserved for argv /
-                # config errors that retry can't fix.
+                # dead-not-failed unit.
                 echo "ERROR: curl rc=$curl_rc (DNS/connect/timeout) - network unreachable" >&2
                 return 75
                 ;;
             *)
-                # Other curl failures (SSL handshake, recv error, etc.) are
-                # also retry-worthy from the timer's perspective, so use 75
-                # rather than 2.
+                # Catch-all for non-transient curl failures (rc=3 malformed
+                # URL, rc=51/60 SSL cert verify, rc=58 missing client cert,
+                # rc=1 unsupported protocol, ...). These are config errors
+                # that retry can't fix; keep exit 2 so the unit ends in
+                # `failed` and stays visible in `systemctl --failed`.
                 echo "ERROR: curl rc=$curl_rc - $WEBSITE_URL/api/feeders/secret unreachable" >&2
-                return 75
+                return 2
                 ;;
         esac
 
