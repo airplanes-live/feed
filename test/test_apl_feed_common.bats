@@ -749,3 +749,88 @@ STUB
     [ "$status" -eq 0 ]
     [ "$output" = "https://airplanes.live" ]
 }
+
+# --- _set_website_host ---
+#
+# WEBSITE_HOST is the bare host[:port] tag used by structured journal lines
+# in airplanes-diagnostics and apl-feed-config-sync. The parser must strip
+# scheme, userinfo, path, query, and fragment, while keeping any explicit
+# port — non-default ports are operationally useful in the journal.
+
+@test "_set_website_host: strips scheme only on plain host" {
+    WEBSITE_URL="https://airplanes.live"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: preserves host:port" {
+    WEBSITE_URL="http://localhost:8080"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "localhost:8080" ]
+}
+
+@test "_set_website_host: strips path" {
+    WEBSITE_URL="https://airplanes.live/api/foo"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: strips query string" {
+    WEBSITE_URL="https://airplanes.live?x=1"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: strips fragment" {
+    WEBSITE_URL="https://airplanes.live#section"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: strips userinfo (credential leak prevention)" {
+    WEBSITE_URL="https://user:pass@airplanes.live"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: userinfo + port + path + query combined" {
+    WEBSITE_URL="https://u:p@host.example:9000/path?q=1"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "host.example:9000" ]
+}
+
+@test "_set_website_host: re-derives via parse_common_option --website-url" {
+    WEBSITE_URL="https://airplanes.live"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+    # Drive the real parser so the production code path is covered.
+    # Return code 2 is parse_common_option's "consumed 2 args" signal, not
+    # an error — || true keeps `set -e` from aborting the bats run.
+    parse_common_option --website-url "http://staging.example:8443/v2" || true
+    [ "$WEBSITE_URL" = "http://staging.example:8443/v2" ]
+    [ "$WEBSITE_HOST" = "staging.example:8443" ]
+}
+
+@test "_set_website_host: @ in path does not capture suffix as host" {
+    WEBSITE_URL="https://airplanes.live/api/user@example"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: log-injection attempt becomes invalid" {
+    WEBSITE_URL="https://good.example level=error injected=1"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "invalid" ]
+}
+
+@test "_set_website_host: embedded newline becomes invalid" {
+    WEBSITE_URL=$'https://good.example\nfake-line'
+    _set_website_host
+    [ "$WEBSITE_HOST" = "invalid" ]
+}
+
+@test "_set_website_host: empty / default produces invalid (defensive)" {
+    WEBSITE_URL=""
+    _set_website_host
+    [ "$WEBSITE_HOST" = "invalid" ]
+}

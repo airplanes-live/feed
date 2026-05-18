@@ -174,7 +174,7 @@ run_script() {
         AIRPLANES_DIAGNOSTICS_ROOT="$ROOT_DIR" \
         AIRPLANES_DIAGNOSTICS_LAST_SUCCESS="$LAST_SUCCESS" \
         AIRPLANES_DIAGNOSTICS_INTENT_ACK_FILE="$INTENT_ACK" \
-        APL_FEED_WEBSITE_URL='http://127.0.0.1:0' \
+        APL_FEED_WEBSITE_URL="${APL_FEED_WEBSITE_URL:-http://127.0.0.1:0}" \
         COMMAND_LOG="$COMMAND_LOG" \
         BODY_LOG="$BODY_LOG" \
         HEADER_LOG="$HEADER_LOG" \
@@ -726,7 +726,35 @@ SH
     [ "$status" -eq 0 ]
     [[ "$output" == *"status=client_error"* ]]
     [[ "$output" == *"http=400"* ]]
+    [[ "$output" == *"level=warn"* ]]
     [ ! -f "$LAST_SUCCESS" ]
+}
+
+@test "HTTP 403 feeder_unclaimed downgrades to level=info status=unclaimed" {
+    CURL_STATUS=403 CURL_RESPONSE='{"error":"feeder_unclaimed"}' run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"level=info"* ]]
+    [[ "$output" == *"status=unclaimed"* ]]
+    [[ "$output" == *"http=403"* ]]
+    [[ "$output" == *"error=feeder_unclaimed"* ]]
+    [[ "$output" != *"status=client_error"* ]]
+    [[ "$output" != *"level=warn"* ]]
+    [ ! -f "$LAST_SUCCESS" ]
+}
+
+@test "HTTP 403 with non-feeder_unclaimed body stays at level=warn status=client_error" {
+    CURL_STATUS=403 CURL_RESPONSE='{"error":"signature_invalid"}' run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"level=warn"* ]]
+    [[ "$output" == *"status=client_error"* ]]
+    [[ "$output" == *"error=signature_invalid"* ]]
+    [[ "$output" != *"status=unclaimed"* ]]
+}
+
+@test "log line carries host= tag from WEBSITE_URL" {
+    APL_FEED_WEBSITE_URL='http://feed.airplanes.test:8080/v1' run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"host=feed.airplanes.test:8080"* ]]
 }
 
 @test "HTTP 5xx logs server_error and exits 0" {
@@ -760,5 +788,195 @@ SH
     run_script
     [ "$status" -eq 0 ]
     run jq '.system.cpu.temperature_celsius // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+# ---- daemon-published state/reason on service entries ----
+#
+# Helper: write a schema_version=1 state file at a rooted path.
+_write_state_file() {
+    local path="$1" state="$2" reason="$3"
+    local rooted="$ROOT_DIR$path"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'schema_version=1\n'
+        printf 'state=%s\n' "$state"
+        printf 'reason=%s\n' "$reason"
+    } > "$rooted"
+}
+
+@test "POST body service entry carries state=enabled,reason=ok from state file" {
+    _write_state_file /run/airplanes-mlat/state enabled ok
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.services[] | select(.name=="airplanes-mlat") | .state' "$BODY_LOG"
+    [ "$output" = 'enabled' ]
+    run jq -er '.services[] | select(.name=="airplanes-mlat") | .reason' "$BODY_LOG"
+    [ "$output" = 'ok' ]
+}
+
+@test "POST body service entry carries state=disabled,reason=mlat_enabled_false" {
+    _write_state_file /run/airplanes-mlat/state disabled mlat_enabled_false
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.services[] | select(.name=="airplanes-mlat") | .state' "$BODY_LOG"
+    [ "$output" = 'disabled' ]
+    run jq -er '.services[] | select(.name=="airplanes-mlat") | .reason' "$BODY_LOG"
+    [ "$output" = 'mlat_enabled_false' ]
+}
+
+@test "POST body service entry carries disabled,no_hardware for dump978-fa" {
+    cat > "$STUB_DIR/systemctl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+    "show airplanes-feed "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-mlat "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show dump978-fa "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    *) ;;
+esac
+exit 0
+SH
+    chmod +x "$STUB_DIR/systemctl"
+    _write_state_file /run/dump978-fa/state disabled no_hardware
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.services[] | select(.name=="dump978-fa") | .state' "$BODY_LOG"
+    [ "$output" = 'disabled' ]
+    run jq -er '.services[] | select(.name=="dump978-fa") | .reason' "$BODY_LOG"
+    [ "$output" = 'no_hardware' ]
+}
+
+@test "POST body omits state/reason when state file is missing" {
+    # No state file → fields absent. Server falls back to systemd-only.
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .reason // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "POST body omits state/reason when schema_version is wrong" {
+    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'schema_version=2\n'
+        printf 'state=disabled\n'
+        printf 'reason=mlat_enabled_false\n'
+    } > "$rooted"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "POST body omits state/reason on corrupt state file (no schema_version)" {
+    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'state=disabled\n'
+        printf 'reason=mlat_enabled_false\n'
+    } > "$rooted"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "POST body airplanes-feed has no state/reason (not plumbed)" {
+    # airplanes-feed has no user-disable predicate today; the script doesn't
+    # pass a state file path for it. Pinning this so a future PR doesn't
+    # silently start plumbing it without a deliberate decision.
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-feed") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "POST body airplanes-978 carries state=enabled,reason=peer_no_hardware" {
+    # When UAT is configured and the local dump978-fa peer is idle (no SDR),
+    # airplanes-978 publishes enabled/peer_no_hardware. The dashboard
+    # classifies that as the actionable "978 peer unreachable" chip.
+    printf 'REPORT_STATUS=true\nUAT_INPUT=driver=0bda:2838,serial=978\n' \
+        > "$ROOT_DIR/etc/airplanes/feed.env"
+    cat > "$STUB_DIR/systemctl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+    "show airplanes-feed "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-mlat "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-978 "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    *) ;;
+esac
+exit 0
+SH
+    chmod +x "$STUB_DIR/systemctl"
+    _write_state_file /run/airplanes-978/state enabled peer_no_hardware
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.services[] | select(.name=="airplanes-978") | .state' "$BODY_LOG"
+    [ "$output" = 'enabled' ]
+    run jq -er '.services[] | select(.name=="airplanes-978") | .reason' "$BODY_LOG"
+    [ "$output" = 'peer_no_hardware' ]
+}
+
+@test "build_service_json uses rooted /run path (AIRPLANES_DIAGNOSTICS_ROOT honoured)" {
+    # Regression guard against a future refactor that hardcodes /run/... —
+    # the test seam roots everything under $ROOT_DIR, and the script must
+    # route the state file path through root_path() so the seam works.
+    _write_state_file /run/airplanes-mlat/state disabled geo_not_configured
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.services[] | select(.name=="airplanes-mlat") | .reason' "$BODY_LOG"
+    [ "$output" = 'geo_not_configured' ]
+}
+
+@test "POST body omits state/reason when state file has state but no reason" {
+    # Schema-valid but orphan: only `state=` present. The publisher must
+    # refuse to send half a pair — that would let the dashboard see
+    # ``state=disabled`` with no reason and fall through to the catchall.
+    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'schema_version=1\n'
+        printf 'state=disabled\n'
+    } > "$rooted"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .reason // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "POST body omits state/reason when state file has reason but no state" {
+    # Mirror of the above: orphan reason. All-or-nothing publish keeps the
+    # server free of partial pairs even on schema-valid-but-corrupt files.
+    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'schema_version=1\n'
+        printf 'reason=mlat_enabled_false\n'
+    } > "$rooted"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .reason // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "POST body omits state/reason when state file value contains CR" {
+    # state-writer.sh promises no CR in values; a CR in the on-disk file
+    # is a corruption signal and must invalidate the whole record.
+    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'schema_version=1\n'
+        printf 'state=disabled\r\n'
+        printf 'reason=mlat_enabled_false\n'
+    } > "$rooted"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
     [ -z "$output" ]
 }

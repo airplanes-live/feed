@@ -33,8 +33,40 @@ _resolve_website_url() {
     printf 'https://airplanes.live'
 }
 
-# shellcheck disable=SC2034  # WEBSITE_URL/MAX_RETRY_TIME/DRY_RUN/FORCE are read by sibling modules sourced from apl-feed.sh
+# Derive WEBSITE_HOST (host[:port], no scheme/userinfo/path/query/fragment)
+# from WEBSITE_URL. Used as a `host=` tag in structured journal lines emitted
+# by airplanes-diagnostics.sh and apl-feed/config.sh so operators can tell at
+# a glance which backend a request hit (production vs FEED_HOST-overridden
+# staging). Re-derived from parse_common_option's --website-url branch so CLI
+# overrides propagate before any log call.
+#
+# Order is path-then-userinfo, not the other way around: a path with an
+# embedded `@` (e.g. https://airplanes.live/api/user@example) would otherwise
+# get mis-tagged as host=example. We also greedy-strip userinfo (##*@) so a
+# pathological double-@ in userinfo lands on the canonical separator.
+#
+# The result is then validated against a hostname charset (alnum, hyphen,
+# dot, colon). If the source URL contains anything outside that set (CRLF,
+# spaces, `=` from a deliberate ` level=error` smuggle), WEBSITE_HOST is
+# set to `invalid` rather than risking a journal-line injection.
+_set_website_host() {
+    local s="${WEBSITE_URL#*://}"
+    s="${s%%/*}"          # strip path
+    s="${s%%\?*}"         # strip query
+    s="${s%%#*}"          # strip fragment
+    s="${s##*@}"          # strip userinfo (greedy: pick last @)
+    if [[ "$s" =~ ^[A-Za-z0-9.:-]+$ ]]; then
+        WEBSITE_HOST="$s"
+    else
+        WEBSITE_HOST="invalid"
+    fi
+}
+
+# shellcheck disable=SC2034  # WEBSITE_URL/WEBSITE_HOST/MAX_RETRY_TIME/DRY_RUN/FORCE are read by sibling modules sourced from apl-feed.sh
 WEBSITE_URL="$(_resolve_website_url)"
+# shellcheck disable=SC2034
+WEBSITE_HOST=""
+_set_website_host
 # shellcheck disable=SC2034
 MAX_RETRY_TIME="${APL_FEED_MAX_RETRY_TIME:-60}"
 # shellcheck disable=SC2034
@@ -489,6 +521,7 @@ parse_common_option() {
             [[ $# -ge 2 ]] || die "--website-url requires URL"
             # shellcheck disable=SC2034  # consumed by http.sh/claim.sh after parse
             WEBSITE_URL="$2"
+            _set_website_host
             return 2
             ;;
         --max-retry-time)

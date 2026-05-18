@@ -254,6 +254,17 @@ EOF
     fi
 }
 
+@test "log line carries host= tag from WEBSITE_URL" {
+    seed_feed_env
+    set_canned 200 '{"schema_version":1,"server_time":"2026-05-14T12:00:00Z","owned":false}'
+    # apl-feed.sh runs in a subshell — must export so common.sh picks it up.
+    export APL_FEED_WEBSITE_URL='http://feed.airplanes.test:8080/v1'
+    run_sync
+    unset APL_FEED_WEBSITE_URL
+    [ "$SYNC_RC" -eq 0 ]
+    [[ "$SYNC_ERR" == *"host=feed.airplanes.test:8080"* ]]
+}
+
 @test "200 applied response runs apl_feed_apply with server tuples" {
     seed_feed_env
     seed_feed_meta MLAT_USER "2026-05-10T00:00:00Z"
