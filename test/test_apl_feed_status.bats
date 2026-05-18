@@ -564,7 +564,7 @@ STUB
 @test "airplanes_link_status_line: ss output shows :30004 → ok" {
     cat > "$STUB_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
-printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:30004 \n'
+printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:30004\n'
 exit 0
 STUB
     chmod +x "$STUB_DIR/ss"
@@ -578,7 +578,7 @@ STUB
 @test "airplanes_link_status_line: ss output shows :31090 → ok (mlat)" {
     cat > "$STUB_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
-printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:31090 \n'
+printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:31090\n'
 exit 0
 STUB
     chmod +x "$STUB_DIR/ss"
