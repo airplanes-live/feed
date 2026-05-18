@@ -34,13 +34,26 @@ case "$*" in
 esac
 exit 0
 STUB
+    # nc serves two callers in status.sh: `nc -z <ip> <port>` for the
+    # receiver connectivity probe (exit 0 = reachable), and bare
+    # `nc <ip> <port>` for the receiver-activity byte sniff (must emit
+    # some bytes so the data-flowing branch is exercised).
     cat > "$STUB_BIN_DIR/nc" <<'STUB'
 #!/usr/bin/env bash
+if [[ "$1" == "-z" ]]; then
+    exit 0
+fi
+printf 'beast-bytes-fixture'
 exit 0
 STUB
+    # ADS-B uplink check parses ss's last column (peer address:port) and
+    # accepts :30004 (primary) or :64004 (failover); default-healthy
+    # fixture emits an established socket to :30004 with the header row
+    # the awk parser expects to skip.
     cat > "$STUB_BIN_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
-printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:31090\n'
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
+printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:30004\n'
 exit 0
 STUB
     chmod +x "$STUB_BIN_DIR/systemctl" "$STUB_BIN_DIR/nc" "$STUB_BIN_DIR/ss"
@@ -251,8 +264,13 @@ PY
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Website claim" ]]
-    [[ "$output" =~ "registered and claimed (v3)" ]]
-    [[ "$output" =~ "Website feed" ]]
+    [[ "$output" =~ "registered and claimed" ]]
+    # Version is internal bookkeeping — surfaced via --json
+    # (.claim.version, exercised in the json test below) and the local
+    # mirror file. Not in the human line.
+    [[ ! "$output" =~ "(v3)" ]]
+    [[ "$output" =~ "Server reception" ]]
+    [[ "$output" =~ "currently receiving" ]]
     [[ "$output" =~ "last data seen 1m ago" ]]
     [[ "$output" =~ "Result: feeding looks healthy" ]]
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "3" ]
@@ -292,10 +310,11 @@ EOF
     run "$SCRIPT" status --json --root "$ROOT_DIR" --website-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
-    [ "$(jq -r '.schema_version' <<< "$output")" = "1" ]
+    [ "$(jq -r '.schema_version' <<< "$output")" = "2" ]
     [ "$(jq -r '.claim.version' <<< "$output")" = "3" ]
-    [ "$(jq -r '.website.feed_state' <<< "$output")" = "recent" ]
+    [ "$(jq -r '.website.reception_state' <<< "$output")" = "recent" ]
     [ "$(jq -r '.website.last_seen_age_seconds' <<< "$output")" = "90" ]
+    [ "$(jq -r '.receiver | type' <<< "$output")" = "object" ]
     [[ ! "$output" =~ "ABCDEFGHIJKLMNOP" ]]
     [[ ! "$output" =~ "ABCD-EFGH-IJKL-MNOP" ]]
 }

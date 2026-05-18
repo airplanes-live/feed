@@ -451,58 +451,86 @@ STUB
     [[ "$output" == *'disabled by config (MLAT_ENABLED=false)'* ]]
 }
 
-# --- mlat_privacy_status_line: state-file-driven privacy posture ---
+# --- mlat_status_line: privacy suffix folded into the running line ---
+#
+# Privacy was previously emitted on its own "MLAT name privacy" line by
+# mlat_privacy_status_line. That standalone line was folded into
+# mlat_status_line when decision=enabled and active_state=active, so the
+# data-flow output stays compact (one line per concern).
 
-@test "mlat_privacy_status_line: mlat_private=true → OK 'private' line" {
+@test "mlat_status_line: enabled + active + mlat_private=true → 'running (name: private)'" {
     write_mlat_state enabled ok true
+    stub_systemctl_active_state active
     status_init
     STATUS_OUTPUT_JSON=0
-    run mlat_privacy_status_line
-    [ "$status" -eq 0 ]
+    run mlat_status_line
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'MLAT name privacy'* ]]
-    [[ "$output" == *'private'* ]]
-    [[ "$output" == *'name hidden'* ]]
+    [[ "$output" == *'running (name: private)'* ]]
 }
 
-@test "mlat_privacy_status_line: mlat_private=false → OK 'public' line" {
+@test "mlat_status_line: enabled + active + mlat_private=false → 'running (name: public)'" {
     write_mlat_state enabled ok false
+    stub_systemctl_active_state active
     status_init
     STATUS_OUTPUT_JSON=0
-    run mlat_privacy_status_line
-    [ "$status" -eq 0 ]
+    run mlat_status_line
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'MLAT name privacy'* ]]
-    [[ "$output" == *'public'* ]]
-    [[ "$output" == *'name shown'* ]]
+    [[ "$output" == *'running (name: public)'* ]]
 }
 
-@test "mlat_privacy_status_line: state file absent → no line emitted (silent skip)" {
-    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+@test "mlat_status_line: enabled + active + mlat_private missing → bare 'running' (no suffix)" {
+    write_mlat_state enabled ok ''  # no mlat_private key
+    stub_systemctl_active_state active
     status_init
     STATUS_OUTPUT_JSON=0
-    run mlat_privacy_status_line
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
+    run mlat_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'running'* ]]
+    [[ "$output" != *'(name:'* ]]
 }
 
-@test "mlat_privacy_status_line: state file lacks mlat_private key → silent skip" {
-    write_mlat_state enabled ok ''  # no mlat_private key written
+@test "mlat_status_line: disabled + mlat_private=true → 'disabled by config' (no privacy suffix when disabled)" {
+    # Privacy is irrelevant when MLAT is disabled — the daemon publishes
+    # nothing — so the suffix must not appear.
+    write_mlat_state disabled mlat_enabled_false true
+    stub_systemctl_active_state active
     status_init
     STATUS_OUTPUT_JSON=0
-    run mlat_privacy_status_line
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
+    run mlat_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'disabled by config (MLAT_ENABLED=false)'* ]]
+    [[ "$output" != *'(name:'* ]]
 }
 
-@test "mlat_privacy_status_line: unknown value → warn (forward-compat)" {
-    write_mlat_state enabled ok futureschema
+@test "mlat_status_line: enabled + activating + mlat_private=true → 'starting up' (no suffix mid-transition)" {
+    # Suffix is only relevant when the daemon is fully running. During
+    # activating/reloading we surface the transitional state instead.
+    write_mlat_state enabled ok true
+    stub_systemctl_active_state activating
     status_init
     STATUS_OUTPUT_JSON=0
-    run mlat_privacy_status_line
+    run mlat_status_line
     [[ "$output" == *'CHECK'* ]]
-    [[ "$output" == *'unknown value'* ]]
-    [[ "$output" == *'futureschema'* ]]
+    [[ "$output" == *'starting up (activating)'* ]]
+    [[ "$output" != *'(name:'* ]]
+}
+
+@test "mlat_status_line: enabled + active + unknown mlat_private value → 'running' + warn 'unknown value' (forward-compat)" {
+    # An unrecognised mlat_private token (future schema) must not be
+    # silently swallowed when the privacy suffix is folded into the
+    # MLAT service line. _mlat_privacy_unknown_value surfaces it as a
+    # separate CHECK so a forward-compat regression stays visible.
+    write_mlat_state enabled ok futureschema
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'running'* ]]
+    [[ "$output" != *'running (name:'* ]]
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'MLAT name privacy'* ]]
+    [[ "$output" == *'unknown value: futureschema'* ]]
 }
 
 # --- receiver_status_line ---
@@ -559,36 +587,204 @@ STUB
     [[ "$output" == *'no data source reachable'* ]]
 }
 
-# --- airplanes_link_status_line ---
+@test "receiver_status_line: sets STATUS_RECEIVER_INPUT_STATE for the activity check to consume" {
+    : > "$ROOT_DIR/etc/airplanes/feed.env"
+    cat > "$STUB_DIR/nc" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+    chmod +x "$STUB_DIR/nc"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    receiver_status_line >/dev/null
+    [ "$STATUS_RECEIVER_INPUT_STATE" = "ok" ]
+    [ "$STATUS_RECEIVER_INPUT_IP" = "127.0.0.1" ]
+    [ "$STATUS_RECEIVER_INPUT_PORT" = "30005" ]
+}
 
-@test "airplanes_link_status_line: ss output shows :30004 → ok" {
+# --- receiver_activity_status_line ---
+#
+# Protocol-agnostic byte sniff. Any bytes within the sample window → ok.
+# `head -c` early-exit (SIGPIPE on nc) and `timeout` rc=124 both produce
+# non-zero pipelines by design; the function wraps in `set +o pipefail`
+# and ignores the rc — $bytes is the only signal.
+
+@test "receiver_activity_status_line: nc emits bytes → ok 'data flowing'" {
+    cat > "$STUB_DIR/nc" <<'STUB'
+#!/usr/bin/env bash
+# Emit some Beast-shaped bytes (binary; non-printable is fine).
+printf '\x1a\x32\xa1\xb2\xc3\xd4\xe5\xf6'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/nc"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='ok'
+    STATUS_RECEIVER_INPUT_IP='127.0.0.1'
+    STATUS_RECEIVER_INPUT_PORT='30005'
+    run receiver_activity_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'Receiver activity'* ]]
+    [[ "$output" == *'data flowing'* ]]
+    [[ "$output" == *'8b in'* ]]
+}
+
+@test "receiver_activity_status_line: nc exits with no output → warn 'no data'" {
+    cat > "$STUB_DIR/nc" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+    chmod +x "$STUB_DIR/nc"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='ok'
+    STATUS_RECEIVER_INPUT_IP='127.0.0.1'
+    STATUS_RECEIVER_INPUT_PORT='30005'
+    run receiver_activity_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'no data'* ]]
+}
+
+@test "receiver_activity_status_line: STATUS_RECEIVER_INPUT_STATE=fail → skipped (no line emitted)" {
+    # Connection-level failure is already on the line above; the activity
+    # check has nothing to add and must not emit a redundant line.
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='fail'
+    STATUS_RECEIVER_INPUT_IP='127.0.0.1'
+    STATUS_RECEIVER_INPUT_PORT='30005'
+    run receiver_activity_status_line
+    [ -z "$output" ]
+}
+
+@test "receiver_activity_status_line: STATUS_RECEIVER_INPUT_STATE=warn → skipped (malformed INPUT etc.)" {
+    # `warn` covers malformed INPUT or nc-missing on the input line; the
+    # parsed IP/PORT may be garbage. Running the activity probe against
+    # garbage produces a misleading second "no data" line — skip instead.
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='warn'
+    STATUS_RECEIVER_INPUT_IP='badvalue'
+    STATUS_RECEIVER_INPUT_PORT='badvalue'
+    run receiver_activity_status_line
+    [ -z "$output" ]
+}
+
+@test "receiver_activity_status_line: INPUT IP/PORT unresolved → warn (defensive)" {
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='ok'
+    STATUS_RECEIVER_INPUT_IP=''
+    STATUS_RECEIVER_INPUT_PORT=''
+    run receiver_activity_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'INPUT not resolved'* ]]
+}
+
+@test "receiver_activity_status_line: nc unavailable → warn 'nc unavailable'" {
+    rm -f "$STUB_DIR/nc"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='ok'
+    STATUS_RECEIVER_INPUT_IP='127.0.0.1'
+    STATUS_RECEIVER_INPUT_PORT='30005'
+    output="$(PATH="$STUB_DIR" receiver_activity_status_line)"
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'nc unavailable'* ]]
+}
+
+@test "receiver_activity_status_line: caller's pipefail state is preserved across the sample" {
+    # The sample uses `timeout | nc | head | wc` which routinely fails
+    # under pipefail (timeout exits 124, head SIGPIPEs nc); the function
+    # toggles pipefail off internally and must restore the caller's
+    # original setting. Verifying this protects the production path where
+    # apl-feed.sh sets `set -euo pipefail`.
+    cat > "$STUB_DIR/nc" <<'STUB'
+#!/usr/bin/env bash
+printf 'x'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/nc"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='ok'
+    STATUS_RECEIVER_INPUT_IP='127.0.0.1'
+    STATUS_RECEIVER_INPUT_PORT='30005'
+    set -o pipefail
+    receiver_activity_status_line >/dev/null
+    [[ -o pipefail ]]
+    set +o pipefail
+}
+
+@test "receiver_activity_status_line: pipefail-off caller stays pipefail-off" {
+    cat > "$STUB_DIR/nc" <<'STUB'
+#!/usr/bin/env bash
+printf 'x'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/nc"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='ok'
+    STATUS_RECEIVER_INPUT_IP='127.0.0.1'
+    STATUS_RECEIVER_INPUT_PORT='30005'
+    set +o pipefail
+    receiver_activity_status_line >/dev/null
+    ! [[ -o pipefail ]]
+}
+
+# --- adsb_uplink_status_line ---
+
+@test "adsb_uplink_status_line: ss output shows :30004 in peer column → ok" {
     cat > "$STUB_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
 printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:30004\n'
 exit 0
 STUB
     chmod +x "$STUB_DIR/ss"
     status_init
     STATUS_OUTPUT_JSON=0
-    run airplanes_link_status_line
+    run adsb_uplink_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'ADS-B uplink'* ]]
+    [[ "$output" == *'connected'* ]]
+}
+
+@test "adsb_uplink_status_line: ss output shows :64004 (failover) in peer column → ok" {
+    cat > "$STUB_DIR/ss" <<'STUB'
+#!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
+printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.19:64004\n'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/ss"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run adsb_uplink_status_line
     [[ "$output" == *'OK'* ]]
     [[ "$output" == *'connected'* ]]
 }
 
-@test "airplanes_link_status_line: ss output shows :31090 → ok (mlat)" {
+@test "adsb_uplink_status_line: ss output shows ONLY :31090 (mlat) → warn (no ADS-B)" {
+    # :31090 is the MLAT uplink; this check is ADS-B only. A MLAT-only
+    # connection used to wrongly flip this check to ok and masked an
+    # ADS-B-down state — the narrowed grep prevents that regression.
     cat > "$STUB_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
 printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:31090\n'
 exit 0
 STUB
     chmod +x "$STUB_DIR/ss"
     status_init
     STATUS_OUTPUT_JSON=0
-    run airplanes_link_status_line
-    [[ "$output" == *'OK'* ]]
+    run adsb_uplink_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'no connection'* ]]
 }
 
-@test "airplanes_link_status_line: ss output empty → warn" {
+@test "adsb_uplink_status_line: ss output empty → warn" {
     cat > "$STUB_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
 exit 0
@@ -596,58 +792,152 @@ STUB
     chmod +x "$STUB_DIR/ss"
     status_init
     STATUS_OUTPUT_JSON=0
-    run airplanes_link_status_line
+    run adsb_uplink_status_line
     [[ "$output" == *'CHECK'* ]]
     [[ "$output" == *'no connection'* ]]
 }
 
-@test "airplanes_link_status_line: neither ss nor netstat available → warn" {
+@test "adsb_uplink_status_line: neither ss nor netstat available → warn" {
     rm -f "$STUB_DIR/ss"
     status_init
     STATUS_OUTPUT_JSON=0
-    output="$(PATH="$ROOT_DIR/empty" airplanes_link_status_line)"
+    output="$(PATH="$ROOT_DIR/empty" adsb_uplink_status_line)"
     [[ "$output" == *'CHECK'* ]]
     [[ "$output" == *'ss/netstat unavailable'* ]]
 }
 
-# --- website_feed_status_line ---
+@test "adsb_uplink_status_line: local listener on :30004 (peer port is different) → warn" {
+    # A local process listening on :30004 puts that port in the LOCAL
+    # column, peer port is unrelated. Old grep matched anywhere on the
+    # line and false-positived; the peer-column parser must not.
+    cat > "$STUB_DIR/ss" <<'STUB'
+#!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
+printf 'ESTAB 0 0 127.0.0.1:30004 1.2.3.4:55555\n'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/ss"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run adsb_uplink_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'no connection'* ]]
+}
 
-@test "website_feed_status_line: STATUS_LAST_SEEN_AT empty → not_seen warn" {
+# Helper: hide ss from `command -v` so the netstat fallback branch is
+# reachable in tests. Necessary because CI runners (and most dev boxes)
+# have /usr/bin/ss preinstalled — rm'ing the STUB_DIR/ss stub isn't
+# enough; the system ss is still on PATH. Defines a `command` function
+# in the current shell that BATS `run` inherits into its subshell.
+_hide_ss_from_command_v() {
+    command() {
+        if [[ "$1" = "-v" && "$2" = "ss" ]]; then
+            return 1
+        fi
+        builtin command "$@"
+    }
+}
+
+@test "adsb_uplink_status_line: netstat TIME_WAIT to :30004 → warn (only ESTABLISHED counts)" {
+    _hide_ss_from_command_v
+    cat > "$STUB_DIR/netstat" <<'STUB'
+#!/usr/bin/env bash
+printf 'Active Internet connections (w/o servers)\n'
+printf 'Proto Recv-Q Send-Q Local-Address Foreign-Address State\n'
+printf 'tcp 0 0 127.0.0.1:43530 78.46.234.18:30004 TIME_WAIT\n'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/netstat"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run adsb_uplink_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'no connection'* ]]
+}
+
+@test "adsb_uplink_status_line: netstat ESTABLISHED to :30004 → ok" {
+    _hide_ss_from_command_v
+    cat > "$STUB_DIR/netstat" <<'STUB'
+#!/usr/bin/env bash
+printf 'Active Internet connections (w/o servers)\n'
+printf 'Proto Recv-Q Send-Q Local-Address Foreign-Address State\n'
+printf 'tcp 0 0 127.0.0.1:43530 78.46.234.18:30004 ESTABLISHED\n'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/netstat"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run adsb_uplink_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'connected'* ]]
+}
+
+# --- server_reception_status_line ---
+#
+# Tier thresholds reflect the 5-min feeder_sync cron on the website
+# side: ok ≤ 480 s, warn ≤ 1200 s, fail > 1200 s.
+
+@test "server_reception_status_line: STATUS_LAST_SEEN_AT empty → not_seen warn with first-connect hint" {
     status_init
     STATUS_OUTPUT_JSON=0
     STATUS_LAST_SEEN_AT=''
-    run website_feed_status_line
+    run server_reception_status_line
     [[ "$output" == *'CHECK'* ]]
     [[ "$output" == *'not seen yet'* ]]
+    [[ "$output" == *'first connect'* ]]
 }
 
-@test "website_feed_status_line: age 900 (boundary inclusive) → ok 'recent'" {
+@test "server_reception_status_line: age 480 (ok boundary inclusive) → ok 'currently receiving'" {
     status_init
     STATUS_OUTPUT_JSON=0
     STATUS_LAST_SEEN_AT='2026-04-28T00:00:00Z'
-    STATUS_LAST_SEEN_AGE_SECONDS='900'
-    STATUS_WEBSITE_FEED_STATE=''
-    run website_feed_status_line
+    STATUS_LAST_SEEN_AGE_SECONDS='480'
+    STATUS_SERVER_RECEPTION_STATE=''
+    run server_reception_status_line
     [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'currently receiving'* ]]
 }
 
-@test "website_feed_status_line: age 901 (boundary exclusive) → warn 'stale'" {
+@test "server_reception_status_line: age 481 → warn 'lagging'" {
     status_init
     STATUS_OUTPUT_JSON=0
     STATUS_LAST_SEEN_AT='2026-04-28T00:00:00Z'
-    STATUS_LAST_SEEN_AGE_SECONDS='901'
-    STATUS_WEBSITE_FEED_STATE=''
-    run website_feed_status_line
+    STATUS_LAST_SEEN_AGE_SECONDS='481'
+    STATUS_SERVER_RECEPTION_STATE=''
+    run server_reception_status_line
     [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'lagging'* ]]
 }
 
-@test "website_feed_status_line: non-numeric age → warn 'unavailable'" {
+@test "server_reception_status_line: age 1200 (warn boundary inclusive) → warn 'lagging'" {
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_LAST_SEEN_AT='2026-04-28T00:00:00Z'
+    STATUS_LAST_SEEN_AGE_SECONDS='1200'
+    STATUS_SERVER_RECEPTION_STATE=''
+    run server_reception_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'lagging'* ]]
+}
+
+@test "server_reception_status_line: age 1201 → fail 'not receiving'" {
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_LAST_SEEN_AT='2026-04-28T00:00:00Z'
+    STATUS_LAST_SEEN_AGE_SECONDS='1201'
+    STATUS_SERVER_RECEPTION_STATE=''
+    run server_reception_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'not receiving'* ]]
+}
+
+@test "server_reception_status_line: non-numeric age → warn 'unavailable'" {
     status_init
     STATUS_OUTPUT_JSON=0
     STATUS_LAST_SEEN_AT='2026-04-28T00:00:00Z'
     STATUS_LAST_SEEN_AGE_SECONDS=''
-    STATUS_WEBSITE_FEED_STATE=''
-    run website_feed_status_line
+    STATUS_SERVER_RECEPTION_STATE=''
+    run server_reception_status_line
     [[ "$output" == *'CHECK'* ]]
     [[ "$output" == *'unavailable'* ]]
 }
@@ -699,7 +989,10 @@ setup_claim_state() {
     STATUS_OUTPUT_JSON=0
     run claim_registration_status_line
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'registered and claimed (v5)'* ]]
+    [[ "$output" == *'registered and claimed'* ]]
+    # Version intentionally omitted from human output — it's internal
+    # bookkeeping; the JSON path (.claim.version) keeps it for tooling.
+    [[ "$output" != *'(v'* ]]
 }
 
 @test "claim_registration_status_line: 200 + registered:true + version + owner_present:false → ok 'not yet claimed'" {
@@ -709,7 +1002,8 @@ setup_claim_state() {
     STATUS_OUTPUT_JSON=0
     run claim_registration_status_line
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'not yet claimed (v5)'* ]]
+    [[ "$output" == *'not yet claimed'* ]]
+    [[ "$output" != *'(v'* ]]
 }
 
 @test "claim_registration_status_line: 200 + registered:true + missing version → warn 'did not authenticate'" {
@@ -732,17 +1026,17 @@ setup_claim_state() {
     [[ "$output" == *'not registered'* ]]
 }
 
-@test "claim_registration_status_line: 200 with last_seen_at key absent → no website_feed line" {
+@test "claim_registration_status_line: 200 with last_seen_at key absent → no Server reception line" {
     # When the response omits last_seen_at entirely, json_has_key
-    # returns false and the website_feed line is skipped. (When the
+    # returns false and the server-reception line is skipped. (When the
     # key is present but null, the line IS emitted as warn 'not seen
-    # yet' — see status.sh:271-277.)
+    # yet'.)
     setup_claim_state 1
     stub_post_json 200 '{"registered":true,"version":5,"owner_present":true}'
     status_init
     STATUS_OUTPUT_JSON=0
     run claim_registration_status_line
-    [[ "$output" != *'Website feed'* ]]
+    [[ "$output" != *'Server reception'* ]]
 }
 
 @test "claim_registration_status_line: 200 with last_seen_at:null emits 'not seen yet' warn" {
@@ -751,7 +1045,7 @@ setup_claim_state() {
     status_init
     STATUS_OUTPUT_JSON=0
     run claim_registration_status_line
-    [[ "$output" == *'Website feed'* ]]
+    [[ "$output" == *'Server reception'* ]]
     [[ "$output" == *'not seen yet'* ]]
 }
 
@@ -851,5 +1145,5 @@ stop_python_mock() {
     run claim_registration_status_line
     stop_python_mock
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'registered and claimed (v5)'* ]]
+    [[ "$output" == *'registered and claimed'* ]]
 }

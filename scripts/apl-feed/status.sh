@@ -21,12 +21,17 @@ STATUS_CHECKS_FILE=''
 STATUS_FAIL_COUNT=0
 STATUS_WARN_COUNT=0
 STATUS_FEEDER_UUID=''
+STATUS_RECEIVER_INPUT_IP=''
+STATUS_RECEIVER_INPUT_PORT=''
+STATUS_RECEIVER_INPUT_STATE=''
+STATUS_RECEIVER_ACTIVITY_STATE=''
+STATUS_RECEIVER_ACTIVITY_BYTES=''
 STATUS_CLAIM_REGISTERED=''
 STATUS_CLAIM_VERSION=''
 STATUS_OWNER_PRESENT=''
 STATUS_LAST_SEEN_AT=''
 STATUS_LAST_SEEN_AGE_SECONDS=''
-STATUS_WEBSITE_FEED_STATE=''
+STATUS_SERVER_RECEPTION_STATE=''
 STATUS_DIAGNOSTICS_TOGGLE=''
 STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS=''
 
@@ -35,12 +40,17 @@ status_init() {
     STATUS_FAIL_COUNT=0
     STATUS_WARN_COUNT=0
     STATUS_FEEDER_UUID=''
+    STATUS_RECEIVER_INPUT_IP=''
+    STATUS_RECEIVER_INPUT_PORT=''
+    STATUS_RECEIVER_INPUT_STATE=''
+    STATUS_RECEIVER_ACTIVITY_STATE=''
+    STATUS_RECEIVER_ACTIVITY_BYTES=''
     STATUS_CLAIM_REGISTERED=''
     STATUS_CLAIM_VERSION=''
     STATUS_OWNER_PRESENT=''
     STATUS_LAST_SEEN_AT=''
     STATUS_LAST_SEEN_AGE_SECONDS=''
-    STATUS_WEBSITE_FEED_STATE=''
+    STATUS_SERVER_RECEPTION_STATE=''
     STATUS_DIAGNOSTICS_TOGGLE=''
     STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS=''
 }
@@ -89,12 +99,15 @@ status_finish() {
         jq -s \
             --arg overall "$overall" \
             --arg feeder_uuid "$STATUS_FEEDER_UUID" \
+            --arg receiver_input_state "$STATUS_RECEIVER_INPUT_STATE" \
+            --arg receiver_activity_state "$STATUS_RECEIVER_ACTIVITY_STATE" \
+            --arg receiver_activity_bytes "$STATUS_RECEIVER_ACTIVITY_BYTES" \
             --arg claim_registered "$STATUS_CLAIM_REGISTERED" \
             --arg claim_version "$STATUS_CLAIM_VERSION" \
             --arg owner_present "$STATUS_OWNER_PRESENT" \
             --arg last_seen_at "$STATUS_LAST_SEEN_AT" \
             --arg last_seen_age_seconds "$STATUS_LAST_SEEN_AGE_SECONDS" \
-            --arg website_feed_state "$STATUS_WEBSITE_FEED_STATE" \
+            --arg reception_state "$STATUS_SERVER_RECEPTION_STATE" \
             --arg diagnostics_toggle "$STATUS_DIAGNOSTICS_TOGGLE" \
             --arg diagnostics_last_push_age "$STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS" \
             '
@@ -106,16 +119,21 @@ status_finish() {
               else null end;
             def numberish: if . == "" then null else tonumber end;
             {
-              schema_version: 1,
+              schema_version: 2,
               overall: $overall,
               feeder_uuid: ($feeder_uuid | nullempty),
+              receiver: {
+                input_state: ($receiver_input_state | nullempty),
+                activity_state: ($receiver_activity_state | nullempty),
+                activity_bytes: ($receiver_activity_bytes | numberish)
+              },
               claim: {
                 registered: ($claim_registered | boolish),
                 version: ($claim_version | numberish),
                 owner_present: ($owner_present | boolish)
               },
               website: {
-                feed_state: ($website_feed_state | nullempty),
+                reception_state: ($reception_state | nullempty),
                 last_seen_at: ($last_seen_at | nullempty),
                 last_seen_age_seconds: ($last_seen_age_seconds | numberish)
               },
@@ -245,13 +263,51 @@ mlat_status_line() {
     esac
 }
 
+# _mlat_privacy_suffix — read the daemon's published privacy posture
+# from /run/airplanes-mlat/state and render the inline suffix appended
+# to a "running" MLAT line. Empty string when the state file is
+# unreadable, the value is missing, or the value is unrecognised (an
+# unknown value is surfaced separately via _mlat_privacy_unknown_value
+# so forward-schema visibility isn't lost when the suffix is folded in).
+_mlat_privacy_suffix() {
+    local state_file mlat_private
+    state_file="$(root_path /run/airplanes-mlat/state)"
+    if ! mlat_private="$(airplanes_read_state "$state_file" mlat_private 2>/dev/null)"; then
+        return 0
+    fi
+    case "$mlat_private" in
+        true)  printf ' (name: private)' ;;
+        false) printf ' (name: public)' ;;
+    esac
+}
+
+# _mlat_privacy_unknown_value — if the state file's mlat_private key
+# carries a token we don't recognise, return it for the caller to
+# surface as a warn line. Empty when absent or recognised.
+_mlat_privacy_unknown_value() {
+    local state_file mlat_private
+    state_file="$(root_path /run/airplanes-mlat/state)"
+    if ! mlat_private="$(airplanes_read_state "$state_file" mlat_private 2>/dev/null)"; then
+        return 0
+    fi
+    case "$mlat_private" in
+        ''|true|false) return 0 ;;
+        *) printf '%s' "$mlat_private" ;;
+    esac
+}
+
 _render_mlat_decision() {
     local active_state="$1" decision="$2" reason="$3"
     local label="MLAT service"
     case "$decision" in
         enabled)
             if [[ "$active_state" == "active" ]]; then
-                status_line ok "$label" "running"
+                status_line ok "$label" "running$(_mlat_privacy_suffix)"
+                local unknown
+                unknown="$(_mlat_privacy_unknown_value)"
+                if [[ -n "$unknown" ]]; then
+                    status_line warn "MLAT name privacy" "unknown value: $unknown"
+                fi
             else
                 status_line warn "$label" "starting up ($active_state)"
             fi
@@ -288,25 +344,6 @@ _render_mlat_misconfig_reason() {
     esac
 }
 
-# Read the daemon's published privacy posture from /run/airplanes-mlat/state.
-# Daemon-state-file rule: never fall back to feed.env. If the state file
-# is unavailable (daemon down, partial install) we emit no privacy line
-# at all rather than re-deriving — mlat_status_line already covers the
-# "daemon down" actionable signal.
-mlat_privacy_status_line() {
-    local state_file mlat_private
-    state_file="$(root_path /run/airplanes-mlat/state)"
-    if ! mlat_private="$(airplanes_read_state "$state_file" mlat_private)"; then
-        return 0
-    fi
-    case "$mlat_private" in
-        true)  status_line ok "MLAT name privacy" "private (--privacy; name hidden on map)" ;;
-        false) status_line ok "MLAT name privacy" "public (name shown on map)" ;;
-        '')    return 0 ;;
-        *)     status_line warn "MLAT name privacy" "unknown value: $mlat_private" ;;
-    esac
-}
-
 receiver_status_line() {
     local input input_ip input_port
     input="$(feed_env_get INPUT || true)"
@@ -314,58 +351,154 @@ receiver_status_line() {
     input_ip="${input%:*}"
     input_port="${input##*:}"
 
+    STATUS_RECEIVER_INPUT_IP="$input_ip"
+    STATUS_RECEIVER_INPUT_PORT="$input_port"
+
     if [[ -z "$input_ip" || -z "$input_port" || "$input_ip" == "$input_port" ]]; then
+        STATUS_RECEIVER_INPUT_STATE='warn'
         status_line warn "Receiver input" "could not parse INPUT from $(feed_env_path)"
         return
     fi
     if ! command -v nc >/dev/null 2>&1; then
+        STATUS_RECEIVER_INPUT_STATE='warn'
         status_line warn "Receiver input" "nc unavailable; expected input is $input"
         return
     fi
     if timeout 3 nc -z "$input_ip" "$input_port" >/dev/null 2>&1; then
+        STATUS_RECEIVER_INPUT_STATE='ok'
         status_line ok "Receiver input" "connected at $input"
     else
+        STATUS_RECEIVER_INPUT_STATE='fail'
         status_line fail "Receiver input" "no data source reachable at $input"
     fi
 }
 
-airplanes_link_status_line() {
-    local output
-    if command -v ss >/dev/null 2>&1; then
-        output="$(ss -tn state established 2>/dev/null || true)"
-    elif command -v netstat >/dev/null 2>&1; then
-        output="$(netstat -t -n 2>/dev/null || true)"
-    else
-        status_line warn "Airplanes.live link" "ss/netstat unavailable"
+# receiver_activity_status_line — protocol-agnostic byte sniff of the
+# INPUT socket. Answers "is the source emitting data right now?", not
+# "how many aircraft" (Beast is binary; INPUT is consumed as beast_in
+# in airplanes-feed.sh, so a BaseStation MSG parser would silently warn
+# on the default-feeder happy path).
+#
+# `head -c N` early-exits as soon as any bytes arrive (sub-second on a
+# healthy feeder) by closing the pipe and SIGPIPE'ing nc; `timeout`
+# caps the no-data case. Both produce a non-zero pipeline by design,
+# so the helper is wrapped in `set +o pipefail` and the rc is
+# deliberately not checked — $bytes is the only signal.
+receiver_activity_status_line() {
+    local label="Receiver activity"
+    local timeout_secs="${RECEIVER_ACTIVITY_TIMEOUT:-2}"
+    local sample_bytes="${RECEIVER_ACTIVITY_SAMPLE_BYTES:-256}"
+
+    if [[ "$STATUS_RECEIVER_INPUT_STATE" != "ok" ]]; then
+        # Anything other than a clean reachable input on the line above
+        # has already been reported (fail = unreachable, warn = malformed
+        # INPUT or nc unavailable). An activity probe against unresolved
+        # or unreachable input only adds a misleading second line.
+        return
+    fi
+    if [[ -z "${STATUS_RECEIVER_INPUT_IP:-}" || -z "${STATUS_RECEIVER_INPUT_PORT:-}" ]]; then
+        STATUS_RECEIVER_ACTIVITY_STATE='warn'
+        status_line warn "$label" "INPUT not resolved"
+        return
+    fi
+    if ! command -v nc >/dev/null 2>&1; then
+        STATUS_RECEIVER_ACTIVITY_STATE='warn'
+        status_line warn "$label" "nc unavailable"
         return
     fi
 
-    if printf '%s\n' "$output" | grep -Eq ':(30004|31090)([[:space:]]|$)'; then
-        status_line ok "Airplanes.live link" "connected"
+    local bytes pipefail_was_set=0
+    if [[ -o pipefail ]]; then pipefail_was_set=1; fi
+    set +o pipefail
+    bytes="$(timeout "$timeout_secs" nc "$STATUS_RECEIVER_INPUT_IP" "$STATUS_RECEIVER_INPUT_PORT" 2>/dev/null \
+        | head -c "$sample_bytes" \
+        | wc -c \
+        | tr -d ' ')"
+    if (( pipefail_was_set )); then set -o pipefail; fi
+    : "${bytes:=0}"
+
+    STATUS_RECEIVER_ACTIVITY_BYTES="$bytes"
+    if (( bytes > 0 )); then
+        STATUS_RECEIVER_ACTIVITY_STATE='ok'
+        status_line ok "$label" "data flowing (${bytes}b in ${timeout_secs}s sample)"
     else
-        status_line warn "Airplanes.live link" "no connection found yet"
+        STATUS_RECEIVER_ACTIVITY_STATE='warn'
+        status_line warn "$label" "no data (last ${timeout_secs}s)"
     fi
 }
 
-website_feed_status_line() {
+# adsb_uplink_status_line — checks for an established outbound TCP
+# socket to the ADS-B aggregator ports. TARGET in airplanes-feed.sh
+# binds to feed.airplanes.live:30004 with failover to
+# feed2.airplanes.live:64004; either established peer socket means the
+# feed binary has wired its uplink. MLAT (:31090) is intentionally
+# excluded — the MLAT service line already speaks for that path; a
+# MLAT-only connection used to flip this check to ok and hid an
+# ADS-B-down state.
+#
+# Matches the PEER address:port (last column of `ss -tn`) so a local
+# listener on :30004 / :64004 (a different process binding the same port
+# locally) can't false-positive. `ss -tn state established` already
+# filters by state; the netstat fallback enforces ESTABLISHED itself.
+adsb_uplink_status_line() {
+    local label="ADS-B uplink"
+    local peer_ports
+    if command -v ss >/dev/null 2>&1; then
+        # ss output: State Recv-Q Send-Q Local-Address:Port Peer-Address:Port
+        # The peer address:port is the LAST whitespace-separated field.
+        peer_ports="$(ss -tn state established 2>/dev/null | awk 'NR>1 {print $NF}' || true)"
+    elif command -v netstat >/dev/null 2>&1; then
+        # netstat -t -n output (Linux): Proto Recv-Q Send-Q Local-Address Foreign-Address State
+        # Filter to ESTABLISHED, then take the foreign address:port (5th field).
+        peer_ports="$(netstat -t -n 2>/dev/null | awk '$NF=="ESTABLISHED" {print $5}' || true)"
+    else
+        status_line warn "$label" "ss/netstat unavailable"
+        return
+    fi
+
+    if printf '%s\n' "$peer_ports" | grep -Eq ':(30004|64004)$'; then
+        status_line ok "$label" "connected"
+    else
+        status_line warn "$label" "no connection found yet"
+    fi
+}
+
+# server_reception_status_line — renders the server-side data-reception
+# signal from STATUS_LAST_SEEN_AT / STATUS_LAST_SEEN_AGE_SECONDS, which
+# claim_registration_status_line populates from POST /api/feeders/status.
+#
+# Tier thresholds reflect the aether → Redis snapshot → feeder_sync cron
+# pipeline that powers Feeder.last_seen on the website side
+# (FEEDER_SYNC_REDIS_URL cron runs every 5 min — see the website's
+# project settings). Healthy feeders therefore see last_seen_age in the
+# 0–~5 min range; the ok ceiling absorbs one cron interval plus slack:
+#
+#   ≤ 480 s   (8 min)  → ok    currently receiving
+#   480-1200 s (≤20m)  → warn  lagging
+#   > 1200 s            → fail  not receiving
+server_reception_status_line() {
+    local label="Server reception"
     local age_text
     if [[ -z "$STATUS_LAST_SEEN_AT" ]]; then
-        STATUS_WEBSITE_FEED_STATE='not_seen'
-        status_line warn "Website feed" "not seen yet"
+        STATUS_SERVER_RECEPTION_STATE='not_seen'
+        status_line warn "$label" "not seen yet (server confirms reception ~5–8 min after first connect)"
         return
     fi
     if [[ "$STATUS_LAST_SEEN_AGE_SECONDS" =~ ^[0-9]+$ ]]; then
         age_text="$(human_duration_ago "$STATUS_LAST_SEEN_AGE_SECONDS")"
-        if (( STATUS_LAST_SEEN_AGE_SECONDS <= 900 )); then
-            STATUS_WEBSITE_FEED_STATE='recent'
-            status_line ok "Website feed" "last data seen $age_text"
+        if (( STATUS_LAST_SEEN_AGE_SECONDS <= 480 )); then
+            STATUS_SERVER_RECEPTION_STATE='recent'
+            status_line ok "$label" "currently receiving (last data seen $age_text)"
+        elif (( STATUS_LAST_SEEN_AGE_SECONDS <= 1200 )); then
+            STATUS_SERVER_RECEPTION_STATE='lagging'
+            status_line warn "$label" "lagging (last data seen $age_text)"
         else
-            STATUS_WEBSITE_FEED_STATE='stale'
-            status_line warn "Website feed" "last data seen $age_text"
+            STATUS_SERVER_RECEPTION_STATE='stale'
+            status_line fail "$label" "not receiving (last data seen $age_text)"
         fi
     else
-        STATUS_WEBSITE_FEED_STATE='unknown'
-        status_line warn "Website feed" "last data time unavailable"
+        STATUS_SERVER_RECEPTION_STATE='unknown'
+        status_line warn "$label" "last data time unavailable"
     fi
 }
 
@@ -430,10 +563,16 @@ claim_registration_status_line() {
                 STATUS_CLAIM_VERSION="$version"
                 STATUS_OWNER_PRESENT="$owner_present"
                 write_version_file "$version"
+                # Claim-secret version is internal bookkeeping; exposed
+                # via --json (.claim.version) and the local mirror file
+                # ($IPATH/feeder-claim-secret.version) for tooling.
+                # Omitting it from the human line keeps the output
+                # readable — a `v1`-vs-`vN` number tells operators
+                # nothing actionable.
                 if [[ "$owner_present" == "true" ]]; then
-                    status_line ok "Website claim" "registered and claimed (v$version)"
+                    status_line ok "Website claim" "registered and claimed"
                 else
-                    status_line ok "Website claim" "registered, not yet claimed (v$version)"
+                    status_line ok "Website claim" "registered, not yet claimed"
                 fi
                 if [[ -n "$reset_until" && "$reset_until" != "null" ]]; then
                     status_line warn "Claim reset" "locked until $reset_until"
@@ -444,7 +583,7 @@ claim_registration_status_line() {
                     last_seen_age="$(parse_field_from "$response_file" '.last_seen_age_seconds')"
                     STATUS_LAST_SEEN_AT="$last_seen_at"
                     STATUS_LAST_SEEN_AGE_SECONDS="$last_seen_age"
-                    website_feed_status_line
+                    server_reception_status_line
                 fi
             else
                 status_line warn "Website claim" "registered, but local secret did not authenticate"
@@ -574,12 +713,16 @@ feed_status() {
         echo "airplanes.live feed check"
         echo
     fi
-    service_status_line airplanes-feed "Feed service"
-    mlat_status_line
-    mlat_privacy_status_line
+    # Order models the ADS-B data path top-to-bottom: source → mover →
+    # outbound socket, then identity (gates the server-side ack query),
+    # then the server-side reception ack, then MLAT (parallel feed) and
+    # diagnostics (telemetry side-channel) below.
     receiver_status_line
-    airplanes_link_status_line
+    receiver_activity_status_line
+    service_status_line airplanes-feed "Feed service"
+    adsb_uplink_status_line
     claim_registration_status_line
+    mlat_status_line
     diagnostics_status_line
     status_finish
 }
