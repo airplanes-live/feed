@@ -264,7 +264,11 @@ PY
 
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Website claim" ]]
-    [[ "$output" =~ "registered and claimed (v3)" ]]
+    [[ "$output" =~ "registered and claimed" ]]
+    # Version is internal bookkeeping — surfaced via --json
+    # (.claim.version, exercised in the json test below) and the local
+    # mirror file. Not in the human line.
+    [[ ! "$output" =~ "(v3)" ]]
     [[ "$output" =~ "Server reception" ]]
     [[ "$output" =~ "currently receiving" ]]
     [[ "$output" =~ "last data seen 1m ago" ]]

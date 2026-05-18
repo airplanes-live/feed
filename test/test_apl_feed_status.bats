@@ -989,7 +989,10 @@ setup_claim_state() {
     STATUS_OUTPUT_JSON=0
     run claim_registration_status_line
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'registered and claimed (v5)'* ]]
+    [[ "$output" == *'registered and claimed'* ]]
+    # Version intentionally omitted from human output — it's internal
+    # bookkeeping; the JSON path (.claim.version) keeps it for tooling.
+    [[ "$output" != *'(v'* ]]
 }
 
 @test "claim_registration_status_line: 200 + registered:true + version + owner_present:false → ok 'not yet claimed'" {
@@ -999,7 +1002,8 @@ setup_claim_state() {
     STATUS_OUTPUT_JSON=0
     run claim_registration_status_line
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'not yet claimed (v5)'* ]]
+    [[ "$output" == *'not yet claimed'* ]]
+    [[ "$output" != *'(v'* ]]
 }
 
 @test "claim_registration_status_line: 200 + registered:true + missing version → warn 'did not authenticate'" {
@@ -1141,5 +1145,5 @@ stop_python_mock() {
     run claim_registration_status_line
     stop_python_mock
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'registered and claimed (v5)'* ]]
+    [[ "$output" == *'registered and claimed'* ]]
 }

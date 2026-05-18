@@ -563,10 +563,16 @@ claim_registration_status_line() {
                 STATUS_CLAIM_VERSION="$version"
                 STATUS_OWNER_PRESENT="$owner_present"
                 write_version_file "$version"
+                # Claim-secret version is internal bookkeeping; exposed
+                # via --json (.claim.version) and the local mirror file
+                # ($IPATH/feeder-claim-secret.version) for tooling.
+                # Omitting it from the human line keeps the output
+                # readable — a `v1`-vs-`vN` number tells operators
+                # nothing actionable.
                 if [[ "$owner_present" == "true" ]]; then
-                    status_line ok "Website claim" "registered and claimed (v$version)"
+                    status_line ok "Website claim" "registered and claimed"
                 else
-                    status_line ok "Website claim" "registered, not yet claimed (v$version)"
+                    status_line ok "Website claim" "registered, not yet claimed"
                 fi
                 if [[ -n "$reset_until" && "$reset_until" != "null" ]]; then
                     status_line warn "Claim reset" "locked until $reset_until"
