@@ -143,3 +143,167 @@ bar"
     grep -qx 'service=second' "$TARGET"
     ! grep -qx 'service=first' "$TARGET"
 }
+
+# --- Dedupe path ---
+# The writer skips the atomic rename when the proposed content matches
+# the current target ignoring decided_at= lines. This kills inotify
+# wakeups on no-op wrapper re-runs (Restart=always + sleep + exit 0)
+# without changing the on-disk content readers see.
+
+@test "dedupe: identical content with same decided_at → no rename, mtime preserved" {
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=enabled \
+        reason=ok \
+        decided_at=2026-05-18T10:00:00Z
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1  # widen mtime resolution window
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=enabled \
+        reason=ok \
+        decided_at=2026-05-18T10:00:00Z
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -eq "$mtime_before" ]
+}
+
+@test "dedupe: identical content with fresh decided_at → no rename" {
+    # Every wrapper restart cycle re-computes decided_at. Without
+    # ignoring it the file would be atomically replaced ~1200 times/day
+    # on a feeder where the daemon's classify produces the same result
+    # cycle after cycle.
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=disabled \
+        reason=mlat_enabled_false \
+        decided_at=2026-05-18T10:00:00Z
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=disabled \
+        reason=mlat_enabled_false \
+        decided_at=2026-05-18T10:00:30Z
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -eq "$mtime_before" ]
+    # Old decided_at stays — readers see the time of the last material
+    # decision, not the time of the last wrapper restart.
+    grep -qx 'decided_at=2026-05-18T10:00:00Z' "$TARGET"
+}
+
+@test "dedupe: changed non-timestamp field → full rename happens" {
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=enabled \
+        reason=ok \
+        decided_at=2026-05-18T10:00:00Z
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=disabled \
+        reason=mlat_enabled_false \
+        decided_at=2026-05-18T10:00:30Z
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -gt "$mtime_before" ]
+    grep -qx 'state=disabled' "$TARGET"
+    grep -qx 'reason=mlat_enabled_false' "$TARGET"
+    grep -qx 'decided_at=2026-05-18T10:00:30Z' "$TARGET"
+}
+
+@test "dedupe: added field → full rename happens" {
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=disabled \
+        decided_at=2026-05-18T10:00:00Z
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=disabled \
+        decided_at=2026-05-18T10:00:30Z \
+        new_field=v1
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -gt "$mtime_before" ]
+    grep -qx 'new_field=v1' "$TARGET"
+}
+
+@test "dedupe: removed field → full rename happens" {
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=enabled \
+        reason=ok \
+        decided_at=2026-05-18T10:00:00Z \
+        extra=v
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1
+    airplanes_write_state "$TARGET" \
+        service=airplanes-mlat \
+        state=enabled \
+        reason=ok \
+        decided_at=2026-05-18T10:00:30Z
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -gt "$mtime_before" ]
+    ! grep -qx 'extra=v' "$TARGET"
+}
+
+@test "dedupe: reordered fields → full rename happens (order is semantic)" {
+    # KEY=VALUE order is part of the writer's contract (caller-provided
+    # order). A reorder is a content change.
+    airplanes_write_state "$TARGET" \
+        service=foo \
+        state=enabled \
+        decided_at=2026-05-18T10:00:00Z
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1
+    airplanes_write_state "$TARGET" \
+        state=enabled \
+        service=foo \
+        decided_at=2026-05-18T10:00:30Z
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -gt "$mtime_before" ]
+}
+
+@test "dedupe: AIRPLANES_WRITE_STATE_FORCE=1 always renames" {
+    airplanes_write_state "$TARGET" \
+        service=foo \
+        state=enabled \
+        decided_at=2026-05-18T10:00:00Z
+    local mtime_before
+    mtime_before="$(stat -c %Y "$TARGET")"
+    sleep 1
+    AIRPLANES_WRITE_STATE_FORCE=1 airplanes_write_state "$TARGET" \
+        service=foo \
+        state=enabled \
+        decided_at=2026-05-18T10:00:30Z
+    local mtime_after
+    mtime_after="$(stat -c %Y "$TARGET")"
+    [ "$mtime_after" -gt "$mtime_before" ]
+    grep -qx 'decided_at=2026-05-18T10:00:30Z' "$TARGET"
+}
+
+@test "dedupe: target missing → write proceeds (no dedupe path engaged)" {
+    [ ! -e "$TARGET" ]
+    airplanes_write_state "$TARGET" service=foo state=enabled
+    [ -f "$TARGET" ]
+    grep -qx 'service=foo' "$TARGET"
+}
+
+@test "dedupe: validation failure short-circuits before dedupe check" {
+    airplanes_write_state "$TARGET" service=before
+    run airplanes_write_state "$TARGET" service=after 'bad-key=value'
+    [ "$status" -eq 1 ]
+    grep -qx 'service=before' "$TARGET"
+}
