@@ -824,10 +824,22 @@ STUB
     [[ "$output" == *'no connection'* ]]
 }
 
+# Helper: hide ss from `command -v` so the netstat fallback branch is
+# reachable in tests. Necessary because CI runners (and most dev boxes)
+# have /usr/bin/ss preinstalled — rm'ing the STUB_DIR/ss stub isn't
+# enough; the system ss is still on PATH. Defines a `command` function
+# in the current shell that BATS `run` inherits into its subshell.
+_hide_ss_from_command_v() {
+    command() {
+        if [[ "$1" = "-v" && "$2" = "ss" ]]; then
+            return 1
+        fi
+        builtin command "$@"
+    }
+}
+
 @test "adsb_uplink_status_line: netstat TIME_WAIT to :30004 → warn (only ESTABLISHED counts)" {
-    # Scope PATH to STUB_DIR only — otherwise the system ss is still on
-    # PATH and command -v ss matches first, skipping the netstat branch.
-    rm -f "$STUB_DIR/ss"
+    _hide_ss_from_command_v
     cat > "$STUB_DIR/netstat" <<'STUB'
 #!/usr/bin/env bash
 printf 'Active Internet connections (w/o servers)\n'
@@ -836,18 +848,15 @@ printf 'tcp 0 0 127.0.0.1:43530 78.46.234.18:30004 TIME_WAIT\n'
 exit 0
 STUB
     chmod +x "$STUB_DIR/netstat"
-    # Mirror minimal posix utilities the function needs (printf, grep,
-    # awk) from /usr/bin if STUB_DIR lacks them — but they're builtins
-    # or core utils available in BATS's shell already.
     status_init
     STATUS_OUTPUT_JSON=0
-    output="$(PATH="$STUB_DIR:/usr/bin:/bin" adsb_uplink_status_line)"
+    run adsb_uplink_status_line
     [[ "$output" == *'CHECK'* ]]
     [[ "$output" == *'no connection'* ]]
 }
 
 @test "adsb_uplink_status_line: netstat ESTABLISHED to :30004 → ok" {
-    rm -f "$STUB_DIR/ss"
+    _hide_ss_from_command_v
     cat > "$STUB_DIR/netstat" <<'STUB'
 #!/usr/bin/env bash
 printf 'Active Internet connections (w/o servers)\n'
@@ -858,7 +867,7 @@ STUB
     chmod +x "$STUB_DIR/netstat"
     status_init
     STATUS_OUTPUT_JSON=0
-    output="$(PATH="$STUB_DIR:/usr/bin:/bin" adsb_uplink_status_line)"
+    run adsb_uplink_status_line
     [[ "$output" == *'OK'* ]]
     [[ "$output" == *'connected'* ]]
 }
