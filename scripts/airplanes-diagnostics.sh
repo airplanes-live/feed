@@ -59,6 +59,24 @@ source "$_COMMON_SH"
 # shellcheck source=apl-feed/http.sh
 source "$_HTTP_SH"
 
+# state-reader.sh lives in scripts/lib/ (production: lib/ next to this
+# script under /usr/local/share/airplanes/). Defensive: when the lib is
+# missing (mid-update or a partial install), service entries simply omit
+# ``state``/``reason`` and the server falls back to systemd-only
+# classification — same fail-soft posture as the rest of the script.
+for _state_reader in \
+    "$_INSTALL_DIR/lib/state-reader.sh" \
+    "$_INSTALL_DIR/../scripts/lib/state-reader.sh"; do
+    if [[ -r "$_state_reader" ]]; then
+        # shellcheck source=lib/state-reader.sh
+        source "$_state_reader"
+        break
+    fi
+done
+if ! declare -F airplanes_read_state >/dev/null 2>&1; then
+    airplanes_read_state() { return 1; }
+fi
+
 # common.sh unconditionally sets ROOT='/' on source. Reapply the override
 # after sourcing so callers can re-root the script's filesystem reads
 # (useful for tests / chroot smokes).
@@ -357,8 +375,18 @@ get_service_version() {
 
 # Build a single service object as JSON (or print "null" if the unit is
 # load_state=not-found / systemctl unavailable / probe failed).
+#
+# The optional second positional argument is the path to the daemon's
+# runtime state file (``/run/<service>/state``); when readable and
+# schema_version=1 valid, the daemon's published ``state`` / ``reason``
+# tokens are added to the JSON so the dashboard can distinguish
+# user-disabled from runtime hardware-missing without re-deriving
+# either predicate. State-file read failure is silent — the entry simply
+# omits the two fields and the server falls back to systemd-only
+# classification.
 build_service_json() {
     local name="$1"
+    local state_file="${2:-}"
     command -v systemctl >/dev/null 2>&1 || { printf 'null'; return; }
     local show_out
     show_out="$(timeout 3s systemctl show "$name" \
@@ -377,6 +405,11 @@ build_service_json() {
     [[ "$nrestarts" =~ ^[0-9]+$ ]] || nrestarts=0
     local version
     version="$(get_service_version "$name" || true)"
+    local state='' reason=''
+    if [[ -n "$state_file" ]]; then
+        state="$(airplanes_read_state "$state_file" state 2>/dev/null || true)"
+        reason="$(airplanes_read_state "$state_file" reason 2>/dev/null || true)"
+    fi
     jq -nc \
         --arg name "$name" \
         --arg load_state "${load_state:-}" \
@@ -385,13 +418,17 @@ build_service_json() {
         --arg sub_state "${sub_state:-}" \
         --argjson restart_count_total "$nrestarts" \
         --arg version "${version:-}" \
+        --arg state "${state:-}" \
+        --arg reason "${reason:-}" \
         '{name: $name,
           load_state: $load_state,
           unit_file_state: $unit_file_state,
           active_state: $active_state,
           sub_state: $sub_state,
           restart_count_total: $restart_count_total,
-          version: $version}
+          version: $version,
+          state: $state,
+          reason: $reason}
          | with_entries(select(.value != null and .value != ""))'
 }
 
@@ -605,22 +642,23 @@ main() {
         collect_network || true
 
         local svc_feed svc_mlat svc_readsb svc_dump978 svc_978
+        # airplanes-feed has no user-disable predicate today, so its state
+        # file would always say enabled/ok — no value in plumbing it.
+        # readsb has no state file at all.
         svc_feed="$(build_service_json airplanes-feed)"
-        svc_mlat="$(build_service_json airplanes-mlat)"
+        svc_mlat="$(build_service_json airplanes-mlat "$(root_path /run/airplanes-mlat/state)")"
         svc_readsb="$(build_service_json readsb)"
-        svc_dump978="$(build_service_json dump978-fa)"
+        svc_dump978="$(build_service_json dump978-fa "$(root_path /run/dump978-fa/state)")"
         # airplanes-978 is the readsb UAT instance — only relevant when
         # the user has actually configured UAT. Without this gate, every
-        # non-UAT feeder would report a "stopped" airplanes-978 unit
-        # because the image ships the unit file even when UAT is off
-        # (the unit self-disables at runtime). Gating here keeps the
-        # dashboard quiet for the common no-978-dongle case until the
-        # collector grows a per-service `configured` field.
+        # non-UAT feeder would report an idle airplanes-978 unit and add
+        # noise to the dashboard. Globally most users don't have a 978
+        # dongle so the chip stays hidden until they wire one up.
         local uat_input
         uat_input="$(feed_env_get UAT_INPUT 2>/dev/null || true)"
         svc_978='null'
         if [[ -n "$uat_input" ]]; then
-            svc_978="$(build_service_json airplanes-978)"
+            svc_978="$(build_service_json airplanes-978 "$(root_path /run/airplanes-978/state)")"
         fi
 
         local pi_health_json
