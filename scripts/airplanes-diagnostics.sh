@@ -59,23 +59,6 @@ source "$_COMMON_SH"
 # shellcheck source=apl-feed/http.sh
 source "$_HTTP_SH"
 
-# state-reader.sh lives in scripts/lib/ (production: lib/ next to this
-# script under /usr/local/share/airplanes/). Defensive: when the lib is
-# missing (mid-update or a partial install), service entries simply omit
-# ``state``/``reason`` and the server falls back to systemd-only
-# classification — same fail-soft posture as the rest of the script.
-for _state_reader in \
-    "$_INSTALL_DIR/lib/state-reader.sh" \
-    "$_INSTALL_DIR/../scripts/lib/state-reader.sh"; do
-    if [[ -r "$_state_reader" ]]; then
-        # shellcheck source=lib/state-reader.sh
-        source "$_state_reader"
-        break
-    fi
-done
-if ! declare -F airplanes_read_state >/dev/null 2>&1; then
-    airplanes_read_state() { return 1; }
-fi
 
 # common.sh unconditionally sets ROOT='/' on source. Reapply the override
 # after sourcing so callers can re-root the script's filesystem reads
@@ -373,17 +356,59 @@ get_service_version() {
     printf '%s' "$raw"
 }
 
+# _read_service_decision <state_file>
+#   Single-open read of the daemon-published state file. Echoes
+#   "<state>|<reason>" on success when BOTH keys are present and the
+#   schema_version line passes. Returns 1 (no stdout) on any read or
+#   validation failure.
+#
+# Single open matters: the state-writer renames a temp file atomically
+# into place, so two separate `airplanes_read_state` calls could pick
+# up `state` from the old file and `reason` from the new one, publishing
+# a mixed pair on the wire. Reading both keys from one open snapshot
+# of the file rules that out. The all-or-nothing return also handles a
+# schema-valid-but-truncated file (e.g. only `reason=` present) without
+# emitting an orphan field.
+#
+# Mirrors state-reader.sh's validation rules: schema_version=1 first
+# line, KEY=VALUE shape with [A-Za-z_][A-Za-z0-9_]* keys, no CR in
+# values. Locally re-implemented rather than calling the lib twice so
+# the read is provably single-open.
+_read_service_decision() {
+    local path="$1"
+    [[ -f "$path" && -r "$path" ]] || return 1
+    local first state='' reason=''
+    {
+        IFS= read -r first || return 1
+        [[ "$first" == "schema_version=1" ]] || return 1
+        local line key val
+        while IFS= read -r line; do
+            [[ "$line" == *=* ]] || continue
+            key="${line%%=*}"
+            val="${line#*=}"
+            [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+            case "$val" in *$'\r'*) return 1 ;; esac
+            case "$key" in
+                state)  state="$val" ;;
+                reason) reason="$val" ;;
+            esac
+        done
+    } < "$path"
+    [[ -n "$state" && -n "$reason" ]] || return 1
+    printf '%s|%s' "$state" "$reason"
+}
+
 # Build a single service object as JSON (or print "null" if the unit is
 # load_state=not-found / systemctl unavailable / probe failed).
 #
 # The optional second positional argument is the path to the daemon's
 # runtime state file (``/run/<service>/state``); when readable and
-# schema_version=1 valid, the daemon's published ``state`` / ``reason``
-# tokens are added to the JSON so the dashboard can distinguish
-# user-disabled from runtime hardware-missing without re-deriving
-# either predicate. State-file read failure is silent — the entry simply
-# omits the two fields and the server falls back to systemd-only
-# classification.
+# schema_version=1 valid AND both ``state`` and ``reason`` keys are
+# present, the daemon's published tokens are added to the JSON so the
+# dashboard can distinguish user-disabled from runtime hardware-missing
+# without re-deriving either predicate. Any read failure (missing file,
+# bad schema, orphan field) silently omits both — the server falls back
+# to systemd-only classification.
 build_service_json() {
     local name="$1"
     local state_file="${2:-}"
@@ -407,8 +432,11 @@ build_service_json() {
     version="$(get_service_version "$name" || true)"
     local state='' reason=''
     if [[ -n "$state_file" ]]; then
-        state="$(airplanes_read_state "$state_file" state 2>/dev/null || true)"
-        reason="$(airplanes_read_state "$state_file" reason 2>/dev/null || true)"
+        local pair
+        if pair="$(_read_service_decision "$state_file" 2>/dev/null)"; then
+            state="${pair%%|*}"
+            reason="${pair#*|}"
+        fi
     fi
     jq -nc \
         --arg name "$name" \

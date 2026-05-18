@@ -901,3 +901,54 @@ SH
     run jq -er '.services[] | select(.name=="airplanes-mlat") | .reason' "$BODY_LOG"
     [ "$output" = 'geo_not_configured' ]
 }
+
+@test "POST body omits state/reason when state file has state but no reason" {
+    # Schema-valid but orphan: only `state=` present. The publisher must
+    # refuse to send half a pair — that would let the dashboard see
+    # ``state=disabled`` with no reason and fall through to the catchall.
+    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'schema_version=1\n'
+        printf 'state=disabled\n'
+    } > "$rooted"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .reason // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "POST body omits state/reason when state file has reason but no state" {
+    # Mirror of the above: orphan reason. All-or-nothing publish keeps the
+    # server free of partial pairs even on schema-valid-but-corrupt files.
+    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'schema_version=1\n'
+        printf 'reason=mlat_enabled_false\n'
+    } > "$rooted"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .reason // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
+
+@test "POST body omits state/reason when state file value contains CR" {
+    # state-writer.sh promises no CR in values; a CR in the on-disk file
+    # is a corruption signal and must invalidate the whole record.
+    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    mkdir -p "$(dirname "$rooted")"
+    {
+        printf 'schema_version=1\n'
+        printf 'state=disabled\r\n'
+        printf 'reason=mlat_enabled_false\n'
+    } > "$rooted"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
+    [ -z "$output" ]
+}
