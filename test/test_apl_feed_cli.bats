@@ -40,7 +40,7 @@ exit 0
 STUB
     cat > "$STUB_BIN_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
-printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:31090 \n'
+printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:31090\n'
 exit 0
 STUB
     chmod +x "$STUB_BIN_DIR/systemctl" "$STUB_BIN_DIR/nc" "$STUB_BIN_DIR/ss"
