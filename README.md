@@ -33,14 +33,16 @@ Example:
 ```
 airplanes.live feed check
 
-OK    Feed service         running
-OK    MLAT service         running
 OK    Receiver input       connected at 127.0.0.1:30005
-OK    Airplanes.live link  connected
+OK    Receiver activity    data flowing (256b in 2s sample)
+OK    Feed service         running
+OK    ADS-B uplink         connected
 OK    Feeder ID            11111111-2222-3333-4444-555555555555
 OK    Claim secret         present
 OK    Website claim        registered, not yet claimed (v1)
-OK    Website feed         last data seen 1m ago
+OK    Server reception     currently receiving (last data seen 1m ago)
+OK    MLAT service         running (name: public)
+OK    Diagnostics push     enabled (default), last push 4m ago
 
 Result: feeding looks healthy
 ```
