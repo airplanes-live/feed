@@ -760,10 +760,10 @@ echo "---------------------"
 ENDTEXT="
 Thanks for choosing to share your data with airplanes.live!
 
-Check https://airplanes.live/myfeed/ for feeder status!
+Your feed should be active within 5 minutes. To verify, run:
+sudo apl-feed status
 
-Your feed should be active within 5 minutes, you can confirm by running the following command and looking for the IP address 78.46.234.18
-netstat -t -n | grep -E '30004|31090'
+You can also check on the web at https://airplanes.live/myfeed/
 
 Question? Issues? Go here:
 https://discord.gg/jfVRF2XRwF
