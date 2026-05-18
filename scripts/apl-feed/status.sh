@@ -340,7 +340,7 @@ airplanes_link_status_line() {
         return
     fi
 
-    if printf '%s\n' "$output" | grep -Eq ':(30004|31090)[[:space:]]'; then
+    if printf '%s\n' "$output" | grep -Eq ':(30004|31090)([[:space:]]|$)'; then
         status_line ok "Airplanes.live link" "connected"
     else
         status_line warn "Airplanes.live link" "no connection found yet"
