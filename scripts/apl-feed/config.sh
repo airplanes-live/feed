@@ -62,7 +62,7 @@ CONFIG_SYNC_LAST_SUCCESS_FILE="${AIRPLANES_CONFIG_SYNC_LAST_SUCCESS:-/var/lib/ai
 _config_sync_log() {
     local level="$1"
     shift
-    printf 'apl-feed-config-sync level=%s %s\n' "$level" "$*" >&2
+    printf 'apl-feed-config-sync level=%s %s host=%s\n' "$level" "$*" "$WEBSITE_HOST" >&2
 }
 
 # True if feed.env has a (non-comment) line matching `^[[:space:]]*KEY=`.

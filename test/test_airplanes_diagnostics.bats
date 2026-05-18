@@ -174,7 +174,7 @@ run_script() {
         AIRPLANES_DIAGNOSTICS_ROOT="$ROOT_DIR" \
         AIRPLANES_DIAGNOSTICS_LAST_SUCCESS="$LAST_SUCCESS" \
         AIRPLANES_DIAGNOSTICS_INTENT_ACK_FILE="$INTENT_ACK" \
-        APL_FEED_WEBSITE_URL='http://127.0.0.1:0' \
+        APL_FEED_WEBSITE_URL="${APL_FEED_WEBSITE_URL:-http://127.0.0.1:0}" \
         COMMAND_LOG="$COMMAND_LOG" \
         BODY_LOG="$BODY_LOG" \
         HEADER_LOG="$HEADER_LOG" \
@@ -726,7 +726,35 @@ SH
     [ "$status" -eq 0 ]
     [[ "$output" == *"status=client_error"* ]]
     [[ "$output" == *"http=400"* ]]
+    [[ "$output" == *"level=warn"* ]]
     [ ! -f "$LAST_SUCCESS" ]
+}
+
+@test "HTTP 403 feeder_unclaimed downgrades to level=info status=unclaimed" {
+    CURL_STATUS=403 CURL_RESPONSE='{"error":"feeder_unclaimed"}' run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"level=info"* ]]
+    [[ "$output" == *"status=unclaimed"* ]]
+    [[ "$output" == *"http=403"* ]]
+    [[ "$output" == *"error=feeder_unclaimed"* ]]
+    [[ "$output" != *"status=client_error"* ]]
+    [[ "$output" != *"level=warn"* ]]
+    [ ! -f "$LAST_SUCCESS" ]
+}
+
+@test "HTTP 403 with non-feeder_unclaimed body stays at level=warn status=client_error" {
+    CURL_STATUS=403 CURL_RESPONSE='{"error":"signature_invalid"}' run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"level=warn"* ]]
+    [[ "$output" == *"status=client_error"* ]]
+    [[ "$output" == *"error=signature_invalid"* ]]
+    [[ "$output" != *"status=unclaimed"* ]]
+}
+
+@test "log line carries host= tag from WEBSITE_URL" {
+    APL_FEED_WEBSITE_URL='http://feed.airplanes.test:8080/v1' run_script
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"host=feed.airplanes.test:8080"* ]]
 }
 
 @test "HTTP 5xx logs server_error and exits 0" {

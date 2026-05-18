@@ -67,7 +67,7 @@ ROOT="${AIRPLANES_DIAGNOSTICS_ROOT:-/}"
 
 log() {
     local level="$1"; shift
-    printf '%s level=%s %s\n' "$SCRIPT_NAME" "$level" "$*" >&2
+    printf '%s level=%s %s host=%s\n' "$SCRIPT_NAME" "$level" "$*" "$WEBSITE_HOST" >&2
 }
 
 # parse_report_status RAW
@@ -876,7 +876,18 @@ main() {
         4*)
             local body_err
             body_err="$(parse_field_from "$response_file" '.error')"
-            log warn "status=client_error http=$status mode=$mode error=${body_err:-unknown}"
+            # feeder_unclaimed is the expected pre-claim state on a fresh
+            # feeder until someone redeems the claim secret on the website.
+            # Logging it at level=warn every ~10 min causes alarm fatigue
+            # and hides legitimate warnings under journalctl priority
+            # filtering. Promote to a named status so operators can grep
+            # status=unclaimed; keep error=feeder_unclaimed for any consumer
+            # already counting that field.
+            if [[ "${body_err:-}" == "feeder_unclaimed" ]]; then
+                log info "status=unclaimed http=$status mode=$mode error=feeder_unclaimed"
+            else
+                log warn "status=client_error http=$status mode=$mode error=${body_err:-unknown}"
+            fi
             ;;
         5*)
             log warn "status=server_error http=$status mode=$mode"
