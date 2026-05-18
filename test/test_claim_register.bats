@@ -257,11 +257,14 @@ mock_url() {
     [ "$status" -eq 1 ]
 }
 
-@test "network unreachable (RFC 2606 .invalid) exits 2" {
+@test "network unreachable (RFC 2606 .invalid) exits 75 (EX_TEMPFAIL)" {
+    # 75 (EX_TEMPFAIL) instead of 2 so a systemd unit with
+    # SuccessExitStatus=75 stays out of `failed` state and its timer
+    # re-arms cleanly. Exit 2 stays reserved for argv / config errors.
     run "$SCRIPT" claim register --root "$ROOT_DIR" \
         --website-url "http://nonexistent-host-deliberately-broken.invalid" \
         --max-retry-time 5
-    [ "$status" -eq 2 ]
+    [ "$status" -eq 75 ]
 }
 
 
@@ -290,8 +293,8 @@ mock_url() {
     run timeout 4 "$SCRIPT" claim register --root "$ROOT_DIR" \
         --website-url "http://127.0.0.1:1" \
         --max-retry-time 1
-    # Either curl-rc network-error (exit 2) or rate-limit-cap (exit 3).
-    [ "$status" -eq 2 ] || [ "$status" -eq 3 ]
+    # Either curl-rc network-error (exit 75 EX_TEMPFAIL) or rate-limit-cap (exit 3).
+    [ "$status" -eq 75 ] || [ "$status" -eq 3 ]
     # The pending file must exist because we wrote it pre-POST.
     [ -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
     # Final must NOT exist (POST didn't succeed).
