@@ -515,6 +515,24 @@ STUB
     [[ "$output" != *'(name:'* ]]
 }
 
+@test "mlat_status_line: enabled + active + unknown mlat_private value → 'running' + warn 'unknown value' (forward-compat)" {
+    # An unrecognised mlat_private token (future schema) must not be
+    # silently swallowed when the privacy suffix is folded into the
+    # MLAT service line. _mlat_privacy_unknown_value surfaces it as a
+    # separate CHECK so a forward-compat regression stays visible.
+    write_mlat_state enabled ok futureschema
+    stub_systemctl_active_state active
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run mlat_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'running'* ]]
+    [[ "$output" != *'running (name:'* ]]
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'MLAT name privacy'* ]]
+    [[ "$output" == *'unknown value: futureschema'* ]]
+}
+
 # --- receiver_status_line ---
 
 @test "receiver_status_line: default INPUT (no env), nc fails → fail" {
@@ -639,6 +657,19 @@ STUB
     [ -z "$output" ]
 }
 
+@test "receiver_activity_status_line: STATUS_RECEIVER_INPUT_STATE=warn → skipped (malformed INPUT etc.)" {
+    # `warn` covers malformed INPUT or nc-missing on the input line; the
+    # parsed IP/PORT may be garbage. Running the activity probe against
+    # garbage produces a misleading second "no data" line — skip instead.
+    status_init
+    STATUS_OUTPUT_JSON=0
+    STATUS_RECEIVER_INPUT_STATE='warn'
+    STATUS_RECEIVER_INPUT_IP='badvalue'
+    STATUS_RECEIVER_INPUT_PORT='badvalue'
+    run receiver_activity_status_line
+    [ -z "$output" ]
+}
+
 @test "receiver_activity_status_line: INPUT IP/PORT unresolved → warn (defensive)" {
     status_init
     STATUS_OUTPUT_JSON=0
@@ -704,9 +735,10 @@ STUB
 
 # --- adsb_uplink_status_line ---
 
-@test "adsb_uplink_status_line: ss output shows :30004 → ok" {
+@test "adsb_uplink_status_line: ss output shows :30004 in peer column → ok" {
     cat > "$STUB_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
 printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:30004\n'
 exit 0
 STUB
@@ -719,9 +751,10 @@ STUB
     [[ "$output" == *'connected'* ]]
 }
 
-@test "adsb_uplink_status_line: ss output shows :64004 (failover) → ok" {
+@test "adsb_uplink_status_line: ss output shows :64004 (failover) in peer column → ok" {
     cat > "$STUB_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
 printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.19:64004\n'
 exit 0
 STUB
@@ -739,6 +772,7 @@ STUB
     # ADS-B-down state — the narrowed grep prevents that regression.
     cat > "$STUB_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
 printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:31090\n'
 exit 0
 STUB
@@ -770,6 +804,63 @@ STUB
     output="$(PATH="$ROOT_DIR/empty" adsb_uplink_status_line)"
     [[ "$output" == *'CHECK'* ]]
     [[ "$output" == *'ss/netstat unavailable'* ]]
+}
+
+@test "adsb_uplink_status_line: local listener on :30004 (peer port is different) → warn" {
+    # A local process listening on :30004 puts that port in the LOCAL
+    # column, peer port is unrelated. Old grep matched anywhere on the
+    # line and false-positived; the peer-column parser must not.
+    cat > "$STUB_DIR/ss" <<'STUB'
+#!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
+printf 'ESTAB 0 0 127.0.0.1:30004 1.2.3.4:55555\n'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/ss"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run adsb_uplink_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'no connection'* ]]
+}
+
+@test "adsb_uplink_status_line: netstat TIME_WAIT to :30004 → warn (only ESTABLISHED counts)" {
+    # Scope PATH to STUB_DIR only — otherwise the system ss is still on
+    # PATH and command -v ss matches first, skipping the netstat branch.
+    rm -f "$STUB_DIR/ss"
+    cat > "$STUB_DIR/netstat" <<'STUB'
+#!/usr/bin/env bash
+printf 'Active Internet connections (w/o servers)\n'
+printf 'Proto Recv-Q Send-Q Local-Address Foreign-Address State\n'
+printf 'tcp 0 0 127.0.0.1:43530 78.46.234.18:30004 TIME_WAIT\n'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/netstat"
+    # Mirror minimal posix utilities the function needs (printf, grep,
+    # awk) from /usr/bin if STUB_DIR lacks them — but they're builtins
+    # or core utils available in BATS's shell already.
+    status_init
+    STATUS_OUTPUT_JSON=0
+    output="$(PATH="$STUB_DIR:/usr/bin:/bin" adsb_uplink_status_line)"
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'no connection'* ]]
+}
+
+@test "adsb_uplink_status_line: netstat ESTABLISHED to :30004 → ok" {
+    rm -f "$STUB_DIR/ss"
+    cat > "$STUB_DIR/netstat" <<'STUB'
+#!/usr/bin/env bash
+printf 'Active Internet connections (w/o servers)\n'
+printf 'Proto Recv-Q Send-Q Local-Address Foreign-Address State\n'
+printf 'tcp 0 0 127.0.0.1:43530 78.46.234.18:30004 ESTABLISHED\n'
+exit 0
+STUB
+    chmod +x "$STUB_DIR/netstat"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    output="$(PATH="$STUB_DIR:/usr/bin:/bin" adsb_uplink_status_line)"
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'connected'* ]]
 }
 
 # --- server_reception_status_line ---

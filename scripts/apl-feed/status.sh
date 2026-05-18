@@ -266,9 +266,9 @@ mlat_status_line() {
 # _mlat_privacy_suffix — read the daemon's published privacy posture
 # from /run/airplanes-mlat/state and render the inline suffix appended
 # to a "running" MLAT line. Empty string when the state file is
-# unreadable or the value is missing; mlat_status_line already covers
-# the "daemon down" actionable signal so we don't want to double-warn
-# from a privacy probe.
+# unreadable, the value is missing, or the value is unrecognised (an
+# unknown value is surfaced separately via _mlat_privacy_unknown_value
+# so forward-schema visibility isn't lost when the suffix is folded in).
 _mlat_privacy_suffix() {
     local state_file mlat_private
     state_file="$(root_path /run/airplanes-mlat/state)"
@@ -281,6 +281,21 @@ _mlat_privacy_suffix() {
     esac
 }
 
+# _mlat_privacy_unknown_value — if the state file's mlat_private key
+# carries a token we don't recognise, return it for the caller to
+# surface as a warn line. Empty when absent or recognised.
+_mlat_privacy_unknown_value() {
+    local state_file mlat_private
+    state_file="$(root_path /run/airplanes-mlat/state)"
+    if ! mlat_private="$(airplanes_read_state "$state_file" mlat_private 2>/dev/null)"; then
+        return 0
+    fi
+    case "$mlat_private" in
+        ''|true|false) return 0 ;;
+        *) printf '%s' "$mlat_private" ;;
+    esac
+}
+
 _render_mlat_decision() {
     local active_state="$1" decision="$2" reason="$3"
     local label="MLAT service"
@@ -288,6 +303,11 @@ _render_mlat_decision() {
         enabled)
             if [[ "$active_state" == "active" ]]; then
                 status_line ok "$label" "running$(_mlat_privacy_suffix)"
+                local unknown
+                unknown="$(_mlat_privacy_unknown_value)"
+                if [[ -n "$unknown" ]]; then
+                    status_line warn "MLAT name privacy" "unknown value: $unknown"
+                fi
             else
                 status_line warn "$label" "starting up ($active_state)"
             fi
@@ -369,9 +389,11 @@ receiver_activity_status_line() {
     local timeout_secs="${RECEIVER_ACTIVITY_TIMEOUT:-2}"
     local sample_bytes="${RECEIVER_ACTIVITY_SAMPLE_BYTES:-256}"
 
-    if [[ "$STATUS_RECEIVER_INPUT_STATE" == "fail" ]]; then
-        # Connection-level failure is already reported on the line above;
-        # an activity check on an unreachable socket has nothing to add.
+    if [[ "$STATUS_RECEIVER_INPUT_STATE" != "ok" ]]; then
+        # Anything other than a clean reachable input on the line above
+        # has already been reported (fail = unreachable, warn = malformed
+        # INPUT or nc unavailable). An activity probe against unresolved
+        # or unreachable input only adds a misleading second line.
         return
     fi
     if [[ -z "${STATUS_RECEIVER_INPUT_IP:-}" || -z "${STATUS_RECEIVER_INPUT_PORT:-}" ]]; then
@@ -408,23 +430,33 @@ receiver_activity_status_line() {
 # adsb_uplink_status_line — checks for an established outbound TCP
 # socket to the ADS-B aggregator ports. TARGET in airplanes-feed.sh
 # binds to feed.airplanes.live:30004 with failover to
-# feed2.airplanes.live:64004; either established socket means the feed
-# binary has wired its uplink. MLAT (:31090) is intentionally excluded
-# here — the MLAT service line already speaks for that path; a MLAT-only
-# connection used to flip this check to ok and hid an ADS-B-down state.
+# feed2.airplanes.live:64004; either established peer socket means the
+# feed binary has wired its uplink. MLAT (:31090) is intentionally
+# excluded — the MLAT service line already speaks for that path; a
+# MLAT-only connection used to flip this check to ok and hid an
+# ADS-B-down state.
+#
+# Matches the PEER address:port (last column of `ss -tn`) so a local
+# listener on :30004 / :64004 (a different process binding the same port
+# locally) can't false-positive. `ss -tn state established` already
+# filters by state; the netstat fallback enforces ESTABLISHED itself.
 adsb_uplink_status_line() {
     local label="ADS-B uplink"
-    local output
+    local peer_ports
     if command -v ss >/dev/null 2>&1; then
-        output="$(ss -tn state established 2>/dev/null || true)"
+        # ss output: State Recv-Q Send-Q Local-Address:Port Peer-Address:Port
+        # The peer address:port is the LAST whitespace-separated field.
+        peer_ports="$(ss -tn state established 2>/dev/null | awk 'NR>1 {print $NF}' || true)"
     elif command -v netstat >/dev/null 2>&1; then
-        output="$(netstat -t -n 2>/dev/null || true)"
+        # netstat -t -n output (Linux): Proto Recv-Q Send-Q Local-Address Foreign-Address State
+        # Filter to ESTABLISHED, then take the foreign address:port (5th field).
+        peer_ports="$(netstat -t -n 2>/dev/null | awk '$NF=="ESTABLISHED" {print $5}' || true)"
     else
         status_line warn "$label" "ss/netstat unavailable"
         return
     fi
 
-    if printf '%s\n' "$output" | grep -Eq ':(30004|64004)([[:space:]]|$)'; then
+    if printf '%s\n' "$peer_ports" | grep -Eq ':(30004|64004)$'; then
         status_line ok "$label" "connected"
     else
         status_line warn "$label" "no connection found yet"

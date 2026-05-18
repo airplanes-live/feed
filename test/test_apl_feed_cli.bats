@@ -46,10 +46,13 @@ fi
 printf 'beast-bytes-fixture'
 exit 0
 STUB
-    # ADS-B uplink check greps for :30004 (primary) or :64004 (failover);
-    # default-healthy fixture emits an established socket to :30004.
+    # ADS-B uplink check parses ss's last column (peer address:port) and
+    # accepts :30004 (primary) or :64004 (failover); default-healthy
+    # fixture emits an established socket to :30004 with the header row
+    # the awk parser expects to skip.
     cat > "$STUB_BIN_DIR/ss" <<'STUB'
 #!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local-Address:Port Peer-Address:Port\n'
 printf 'ESTAB 0 0 127.0.0.1:43530 78.46.234.18:30004\n'
 exit 0
 STUB
