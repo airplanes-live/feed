@@ -39,13 +39,27 @@ _resolve_website_url() {
 # a glance which backend a request hit (production vs FEED_HOST-overridden
 # staging). Re-derived from parse_common_option's --website-url branch so CLI
 # overrides propagate before any log call.
+#
+# Order is path-then-userinfo, not the other way around: a path with an
+# embedded `@` (e.g. https://airplanes.live/api/user@example) would otherwise
+# get mis-tagged as host=example. We also greedy-strip userinfo (##*@) so a
+# pathological double-@ in userinfo lands on the canonical separator.
+#
+# The result is then validated against a hostname charset (alnum, hyphen,
+# dot, colon). If the source URL contains anything outside that set (CRLF,
+# spaces, `=` from a deliberate ` level=error` smuggle), WEBSITE_HOST is
+# set to `invalid` rather than risking a journal-line injection.
 _set_website_host() {
     local s="${WEBSITE_URL#*://}"
-    s="${s#*@}"          # strip optional userinfo
-    s="${s%%/*}"         # strip path
-    s="${s%%\?*}"        # strip query
-    s="${s%%#*}"         # strip fragment
-    WEBSITE_HOST="$s"
+    s="${s%%/*}"          # strip path
+    s="${s%%\?*}"         # strip query
+    s="${s%%#*}"          # strip fragment
+    s="${s##*@}"          # strip userinfo (greedy: pick last @)
+    if [[ "$s" =~ ^[A-Za-z0-9.:-]+$ ]]; then
+        WEBSITE_HOST="$s"
+    else
+        WEBSITE_HOST="invalid"
+    fi
 }
 
 # shellcheck disable=SC2034  # WEBSITE_URL/WEBSITE_HOST/MAX_RETRY_TIME/DRY_RUN/FORCE are read by sibling modules sourced from apl-feed.sh

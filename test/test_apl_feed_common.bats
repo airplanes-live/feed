@@ -799,12 +799,38 @@ STUB
     [ "$WEBSITE_HOST" = "host.example:9000" ]
 }
 
-@test "_set_website_host: re-derives after --website-url reassignment" {
+@test "_set_website_host: re-derives via parse_common_option --website-url" {
     WEBSITE_URL="https://airplanes.live"
     _set_website_host
     [ "$WEBSITE_HOST" = "airplanes.live" ]
-    # Simulate parse_common_option's --website-url branch.
-    WEBSITE_URL="http://staging.example:8443/v2"
-    _set_website_host
+    # Drive the real parser so the production code path is covered.
+    # Return code 2 is parse_common_option's "consumed 2 args" signal, not
+    # an error — || true keeps `set -e` from aborting the bats run.
+    parse_common_option --website-url "http://staging.example:8443/v2" || true
+    [ "$WEBSITE_URL" = "http://staging.example:8443/v2" ]
     [ "$WEBSITE_HOST" = "staging.example:8443" ]
+}
+
+@test "_set_website_host: @ in path does not capture suffix as host" {
+    WEBSITE_URL="https://airplanes.live/api/user@example"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: log-injection attempt becomes invalid" {
+    WEBSITE_URL="https://good.example level=error injected=1"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "invalid" ]
+}
+
+@test "_set_website_host: embedded newline becomes invalid" {
+    WEBSITE_URL=$'https://good.example\nfake-line'
+    _set_website_host
+    [ "$WEBSITE_HOST" = "invalid" ]
+}
+
+@test "_set_website_host: empty / default produces invalid (defensive)" {
+    WEBSITE_URL=""
+    _set_website_host
+    [ "$WEBSITE_HOST" = "invalid" ]
 }
