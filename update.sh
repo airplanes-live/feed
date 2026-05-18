@@ -760,10 +760,11 @@ echo "---------------------"
 ENDTEXT="
 Thanks for choosing to share your data with airplanes.live!
 
-Your feed should be active within 5 minutes. To verify, run:
-sudo apl-feed status
+Check your feeder's status:
+  sudo apl-feed status
 
-You can also check on the web at https://airplanes.live/myfeed/
+Claim your feeder for more insights and statistics:
+  ${APL_FEED_WEBSITE_URL:-https://airplanes.live}/feeder/claim/
 
 Question? Issues? Go here:
 https://discord.gg/jfVRF2XRwF
