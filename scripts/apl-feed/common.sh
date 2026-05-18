@@ -117,7 +117,7 @@ Usage:
   apl-feed schema
   apl-feed config sync [--dry-run] [--no-restart]
   apl-feed import legacy-config [--no-restart] <path>
-  apl-feed backup <file>
+  apl-feed backup <file>|-
   apl-feed restore <file>
   apl-feed restore --check <file>
   apl-feed restore --uuid <uuid> [--check]

@@ -46,8 +46,13 @@ config_backup() {
                 ;;
         esac
     done
-    [[ -n "$outfile" ]] || die "backup requires a file"
-    [[ ! -e "$outfile" ]] || die "$outfile already exists"
+    [[ -n "$outfile" ]] || die "backup requires a file (use '-' for stdout)"
+    local stdout_mode=0
+    if [[ "$outfile" == "-" ]]; then
+        stdout_mode=1
+    else
+        [[ ! -e "$outfile" ]] || die "$outfile already exists"
+    fi
     require_jq
 
     local uuid secret version tmp created_at
@@ -57,6 +62,28 @@ config_backup() {
     created_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     if version_read="$(read_version_file 2>/dev/null)"; then
         version="$version_read"
+    fi
+
+    if (( stdout_mode )); then
+        # Pipe-friendly mode for callers that consume the JSON directly
+        # (e.g. the on-device webconfig's export wrapper). No tempfile,
+        # no permissions to manage, no trailing confirmation message —
+        # stdout is reserved for the JSON payload.
+        if [[ "$version" == "null" ]]; then
+            jq -n \
+                --arg created_at "$created_at" \
+                --arg feeder_uuid "$uuid" \
+                --arg secret "$secret" \
+                '{schema_version:1, created_at:$created_at, feeder_uuid:$feeder_uuid, claim:{secret:$secret, version:null}}'
+        else
+            jq -n \
+                --arg created_at "$created_at" \
+                --arg feeder_uuid "$uuid" \
+                --arg secret "$secret" \
+                --argjson version "$version" \
+                '{schema_version:1, created_at:$created_at, feeder_uuid:$feeder_uuid, claim:{secret:$secret, version:$version}}'
+        fi
+        return 0
     fi
 
     tmp="${outfile}.$$"
