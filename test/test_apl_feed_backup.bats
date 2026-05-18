@@ -195,6 +195,40 @@ write_backup() {
     [[ "$created" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
 }
 
+@test "config_backup: '-' writes JSON to stdout, no file created" {
+    run config_backup -
+    [ "$status" -eq 0 ]
+    [ -n "$output" ]
+    [ ! -e "$ROOT_DIR/-" ]
+    [ "$(printf '%s' "$output" | jq -r '.schema_version')" = '1' ]
+    [ "$(printf '%s' "$output" | jq -r '.feeder_uuid')" = "$UUID" ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.secret')" = "$SECRET" ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.version')" = 'null' ]
+}
+
+@test "config_backup: '-' includes integer version when version file present" {
+    printf '7\n' > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
+    run config_backup -
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.version')" = '7' ]
+}
+
+@test "config_backup: '-' emits no confirmation line on stdout" {
+    run config_backup -
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Backed up feeder config"* ]]
+}
+
+@test "config_backup: '-' is not blocked by a pre-existing file literally named '-'" {
+    : > "$ROOT_DIR/-"
+    cd "$ROOT_DIR"
+    run config_backup -
+    [ "$status" -eq 0 ]
+    # The literal '-' file we created earlier stays empty — stdout-mode
+    # never touches the filesystem.
+    [ ! -s "$ROOT_DIR/-" ]
+}
+
 @test "config_backup: missing UUID file dies" {
     rm -f "$ROOT_DIR/etc/airplanes/feeder-id"
     run bash -c "
