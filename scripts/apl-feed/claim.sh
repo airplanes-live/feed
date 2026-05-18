@@ -87,12 +87,21 @@ claim_register() {
         case "$curl_rc" in
             0) ;;
             6|7|28)
+                # Transient network conditions (DNS not yet resolvable, no
+                # route, connect timeout). Exit 75 (EX_TEMPFAIL) so the
+                # caller's systemd unit can map it via SuccessExitStatus=
+                # and the timer's OnUnitActiveSec= re-arms cleanly off a
+                # dead-not-failed unit. Exit 2 stays reserved for argv /
+                # config errors that retry can't fix.
                 echo "ERROR: curl rc=$curl_rc (DNS/connect/timeout) - network unreachable" >&2
-                return 2
+                return 75
                 ;;
             *)
+                # Other curl failures (SSL handshake, recv error, etc.) are
+                # also retry-worthy from the timer's perspective, so use 75
+                # rather than 2.
                 echo "ERROR: curl rc=$curl_rc - $WEBSITE_URL/api/feeders/secret unreachable" >&2
-                return 2
+                return 75
                 ;;
         esac
 
