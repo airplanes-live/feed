@@ -749,3 +749,62 @@ STUB
     [ "$status" -eq 0 ]
     [ "$output" = "https://airplanes.live" ]
 }
+
+# --- _set_website_host ---
+#
+# WEBSITE_HOST is the bare host[:port] tag used by structured journal lines
+# in airplanes-diagnostics and apl-feed-config-sync. The parser must strip
+# scheme, userinfo, path, query, and fragment, while keeping any explicit
+# port — non-default ports are operationally useful in the journal.
+
+@test "_set_website_host: strips scheme only on plain host" {
+    WEBSITE_URL="https://airplanes.live"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: preserves host:port" {
+    WEBSITE_URL="http://localhost:8080"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "localhost:8080" ]
+}
+
+@test "_set_website_host: strips path" {
+    WEBSITE_URL="https://airplanes.live/api/foo"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: strips query string" {
+    WEBSITE_URL="https://airplanes.live?x=1"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: strips fragment" {
+    WEBSITE_URL="https://airplanes.live#section"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: strips userinfo (credential leak prevention)" {
+    WEBSITE_URL="https://user:pass@airplanes.live"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+}
+
+@test "_set_website_host: userinfo + port + path + query combined" {
+    WEBSITE_URL="https://u:p@host.example:9000/path?q=1"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "host.example:9000" ]
+}
+
+@test "_set_website_host: re-derives after --website-url reassignment" {
+    WEBSITE_URL="https://airplanes.live"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "airplanes.live" ]
+    # Simulate parse_common_option's --website-url branch.
+    WEBSITE_URL="http://staging.example:8443/v2"
+    _set_website_host
+    [ "$WEBSITE_HOST" = "staging.example:8443" ]
+}

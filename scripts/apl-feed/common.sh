@@ -33,8 +33,26 @@ _resolve_website_url() {
     printf 'https://airplanes.live'
 }
 
-# shellcheck disable=SC2034  # WEBSITE_URL/MAX_RETRY_TIME/DRY_RUN/FORCE are read by sibling modules sourced from apl-feed.sh
+# Derive WEBSITE_HOST (host[:port], no scheme/userinfo/path/query/fragment)
+# from WEBSITE_URL. Used as a `host=` tag in structured journal lines emitted
+# by airplanes-diagnostics.sh and apl-feed/config.sh so operators can tell at
+# a glance which backend a request hit (production vs FEED_HOST-overridden
+# staging). Re-derived from parse_common_option's --website-url branch so CLI
+# overrides propagate before any log call.
+_set_website_host() {
+    local s="${WEBSITE_URL#*://}"
+    s="${s#*@}"          # strip optional userinfo
+    s="${s%%/*}"         # strip path
+    s="${s%%\?*}"        # strip query
+    s="${s%%#*}"         # strip fragment
+    WEBSITE_HOST="$s"
+}
+
+# shellcheck disable=SC2034  # WEBSITE_URL/WEBSITE_HOST/MAX_RETRY_TIME/DRY_RUN/FORCE are read by sibling modules sourced from apl-feed.sh
 WEBSITE_URL="$(_resolve_website_url)"
+# shellcheck disable=SC2034
+WEBSITE_HOST=""
+_set_website_host
 # shellcheck disable=SC2034
 MAX_RETRY_TIME="${APL_FEED_MAX_RETRY_TIME:-60}"
 # shellcheck disable=SC2034
@@ -489,6 +507,7 @@ parse_common_option() {
             [[ $# -ge 2 ]] || die "--website-url requires URL"
             # shellcheck disable=SC2034  # consumed by http.sh/claim.sh after parse
             WEBSITE_URL="$2"
+            _set_website_host
             return 2
             ;;
         --max-retry-time)
