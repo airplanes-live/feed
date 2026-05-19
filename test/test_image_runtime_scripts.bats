@@ -115,14 +115,16 @@ SH
     grep -q -- '--max-range 450' "$arg_log"
     grep -q -- '--modeac' "$arg_log"
     grep -q -- "--uuid-file=$root/etc/airplanes/feeder-id" "$arg_log"
-    # MLAT-feedback listener — mlat-client routes --results beast,connect,
-    # 127.0.0.1:30187 here so this feeder forwards MLAT to the aggregator.
-    # Bound to loopback only. --forward-mlat is required because readsb
-    # gates Beast output on (!is_mlat || forward_mlat) — without it, MLAT
-    # frames received on 30187 would be dropped instead of forwarded.
-    grep -q -- '--net-bi-port 30187' "$arg_log"
-    grep -q -- '--net-bind-address 127.0.0.1' "$arg_log"
-    grep -q -- '--forward-mlat' "$arg_log"
+    # Image-mode feeder is a pure outbound forwarder — no Beast input
+    # listener, no MLAT handling on this binary. MLAT contribution flows
+    # via mlat-client's --server connection to MLATSERVER, not through any
+    # Beast feedback into this process.
+    if grep -q -- '--net-bi-port' "$arg_log"; then
+        return 1
+    fi
+    if grep -q -- '--forward-mlat' "$arg_log"; then
+        return 1
+    fi
     # --write-json was the output sink for the bundled tar1090 installer; nothing
     # consumes /run/airplanes-feed anymore. Match the bare flag only — guard
     # against accidental reintroduction without flagging --write-json-every or
@@ -1173,12 +1175,13 @@ SH
     grep -q -- "feed_bin=$root/usr/bin/airplanes-feeder" "$root/run/airplanes-feed/state"
 }
 
-@test "airplanes-mlat.sh: RESULTS bundle default routes to 30104 + 31015 + 30157 + 30187" {
-    # When feed.env carries no RESULTS* keys at all, the wrapper's four-
-    # destination default must fire: MLAT planes go to the local decoder
-    # (30104), basestation/beast listen ports for downstream consumers
-    # (31015, 30157), and the outbound feeder for aggregator forwarding
-    # (30187). Pins the design intent of airplanes-mlat.sh:141-146.
+@test "airplanes-mlat.sh: RESULTS bundle default routes to 30104 + 31015 + 30157" {
+    # When feed.env carries no RESULTS* keys at all, the wrapper's three-
+    # destination default fires: MLAT planes go to the local decoder
+    # (30104, for tar1090/graphs1090) and to basestation/beast listen
+    # ports for downstream consumers (31015, 30157). MLAT upstream
+    # contribution flows via mlat-client's --server connection, NOT
+    # through any RESULTS endpoint.
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
@@ -1215,15 +1218,19 @@ SH
     grep -q -- '--results beast,connect,127.0.0.1:30104' "$arg_log"
     grep -q -- '--results basestation,listen,31015' "$arg_log"
     grep -q -- '--results beast,listen,30157' "$arg_log"
-    grep -q -- '--results beast,connect,127.0.0.1:30187' "$arg_log"
+    # 30187 used to be in the default bundle but never had a deployed
+    # listener and never reached the aggregator's globe (aether ingest
+    # has no --forward-mlat). MLAT upstream contribution is mlat-client's
+    # own --server connection, not Beast feedback into airplanes-feed.
+    if grep -q -- '127.0.0.1:30187' "$arg_log"; then
+        return 1
+    fi
 }
 
-@test "airplanes-mlat.sh: operator RESULTS= override suppresses the default bundle (no silent 30187 injection)" {
+@test "airplanes-mlat.sh: operator RESULTS= override suppresses the default bundle" {
     # If feed.env sets ANY of RESULTS / RESULTS1..4, the wrapper treats the
     # operator as the authority and uses ONLY their RESULTS* keys — no
-    # silent injection of the 30187 default. Pins the explicit-override
-    # contract for advanced operators and migrated legacy installs whose
-    # RESULTS= predates the dual-delivery design.
+    # silent stacking of the default endpoints on top.
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
@@ -1259,12 +1266,8 @@ SH
 
     [ "$status" -eq 0 ]
     grep -q -- '--results beast,connect,127.0.0.1:30104' "$arg_log"
-    # No silent injection of 30187, 31015, or 30157 — the operator override
-    # is the whole story. An operator who wants the dual-delivery design
-    # must opt in by setting RESULTS4 explicitly.
-    if grep -q -- '127.0.0.1:30187' "$arg_log"; then
-        return 1
-    fi
+    # No silent injection of the default endpoints — the operator override
+    # is the whole story.
     if grep -q -- 'basestation,listen,31015' "$arg_log"; then
         return 1
     fi
