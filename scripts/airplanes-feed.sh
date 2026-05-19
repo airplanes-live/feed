@@ -72,13 +72,22 @@ FEED_BIN="${AIRPLANES_FEED_BIN:-$DEFAULT_FEED_BIN}"
 # in feed.env after configure.sh slimming) still produce a working
 # daemon. The image branch keeps its leaner FEED_NET_OPTIONS override
 # and adds FEED_IMAGE_OPTIONS for the baked-decoder case.
+#
+# --net-bind-address 127.0.0.1 binds --net-bi-port 30187 (the mlat-client
+# feedback listener) to loopback. Co-located airplanes-mlat reaches it via
+# 127.0.0.1, so the standard one-Pi topology is unaffected. To accept
+# Beast/MLAT injection from another host (rare cross-host topology),
+# override NET_OPTIONS in /etc/airplanes/feed.env to swap the bind to
+# 0.0.0.0 — the override replaces the default whole, same convention as
+# TARGET / JSON_OPTIONS / INPUT.
+#
+# --forward-mlat is required for MLAT frames received on --net-bi-port
+# 30187 to actually leave via the upstream beast_reduce_plus_out
+# connector. readsb gates Beast output on (!is_mlat || forward_mlat); the
+# flag defaults off. Without it, mlat-client delivers Beast results that
+# the feeder silently drops on the floor instead of forwarding upstream.
 TARGET="${TARGET:-"--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"}"
-# --forward-mlat is required for MLAT frames received on --net-bi-port 30187
-# to actually leave via the upstream beast_reduce_plus_out connector. readsb
-# gates Beast output on (!is_mlat || forward_mlat); the flag defaults off.
-# Without it, mlat-client delivers Beast results that the feeder silently
-# drops on the floor instead of forwarding to the aggregator.
-NET_OPTIONS="${NET_OPTIONS:-"--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --forward-mlat"}"
+NET_OPTIONS="${NET_OPTIONS:-"--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bind-address 127.0.0.1 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --forward-mlat"}"
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
     # --net-bi-port 30187 is the listener mlat-client (airplanes-mlat.sh)

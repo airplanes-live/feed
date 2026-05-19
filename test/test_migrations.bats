@@ -850,3 +850,169 @@ EOF
     [ "$(jq -r '.fields.MLAT_USER.edited_by' "$META")" = "legacy" ]
 }
 
+# ---------------------------------------------------------------------------
+# migrate_net_options_mlat_forwarding
+# ---------------------------------------------------------------------------
+
+@test "migrate_net_options_mlat_forwarding: no feed.env → no-op" {
+    rm -f "$FEED_ENV"
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    [ ! -f "$FEED_ENV" ]
+}
+
+@test "migrate_net_options_mlat_forwarding: feed.env without NET_OPTIONS → no-op" {
+    # Fresh manual install relies on the wrapper default (which already
+    # includes both knobs + loopback bind). Nothing to migrate.
+    cat > "$FEED_ENV" <<'EOF'
+INPUT="127.0.0.1:30005"
+LATITUDE="52.5"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    ! grep -q -- '--forward-mlat' "$FEED_ENV"
+    ! grep -q -- '--net-bi-port' "$FEED_ENV"
+    [ ! -f "${FEED_ENV}.pre-mlat-forwarding" ]
+}
+
+@test "migrate_net_options_mlat_forwarding: legacy single-line NET_OPTIONS gets both knobs appended" {
+    # Canonical legacy /etc/default/airplanes shape after migration via cp.
+    # 30004,30104 was the legacy bi-port pair; 30187 is the new MLAT-feedback
+    # listener. --forward-mlat was never set in legacy NET_OPTIONS.
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-heartbeat 60 --net-ri-port 30001 --net-ro-port 30002 --net-sbs-port 30003 --net-bi-port 30004,30104 --net-bo-port 30005"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    grep -q -- '--net-bi-port 30004,30104,30187' "$FEED_ENV"
+    grep -q -- '--forward-mlat' "$FEED_ENV"
+    # Existing port list members preserved.
+    grep -q -- '--net-bo-port 30005' "$FEED_ENV"
+    grep -q -- '--net-ri-port 30001' "$FEED_ENV"
+    # Backup written.
+    [ -f "${FEED_ENV}.pre-mlat-forwarding" ]
+}
+
+@test "migrate_net_options_mlat_forwarding: legacy multi-line NET_OPTIONS gets normalized + both knobs appended" {
+    # The verbatim shape from airplanes-update/boot-configs/airplanes-env.
+    # cp -fp preserves multi-line; the migration normalizes to single-line
+    # as a side effect of the rewrite.
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-heartbeat 60 --net-ro-size 1200 --net-ro-interval 0.1 \
+        --net-ri-port 30001 --net-ro-port 30002 --net-sbs-port 30003 \
+        --net-bi-port 30004,30104 --net-bo-port 30005"
+INPUT="127.0.0.1:30005"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    # After migration, NET_OPTIONS is single-line.
+    [ "$(grep -c '^NET_OPTIONS=' "$FEED_ENV")" = "1" ]
+    # No backslash-continuation remains in the file (would be a sign the
+    # join didn't happen).
+    if grep -qE '\\$' "$FEED_ENV"; then
+        return 1
+    fi
+    # Knobs appended.
+    grep -q -- '--net-bi-port 30004,30104,30187' "$FEED_ENV"
+    grep -q -- '--forward-mlat' "$FEED_ENV"
+    # Other keys (INPUT) unaffected.
+    grep -q '^INPUT="127.0.0.1:30005"$' "$FEED_ENV"
+}
+
+@test "migrate_net_options_mlat_forwarding: NET_OPTIONS already has --forward-mlat + 30187 → no-op" {
+    # Operator already hand-edited (or migration already applied). Must
+    # not duplicate the appends.
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-bi-port 30004,30104,30187 --forward-mlat"
+EOF
+    local before
+    before="$(cat "$FEED_ENV")"
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    [ "$(cat "$FEED_ENV")" = "$before" ]
+    [ ! -f "${FEED_ENV}.pre-mlat-forwarding" ]
+}
+
+@test "migrate_net_options_mlat_forwarding: idempotent — running twice is identical to running once" {
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-bi-port 30004,30104 --net-bo-port 30005"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    local after_once
+    after_once="$(cat "$FEED_ENV")"
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    [ "$(cat "$FEED_ENV")" = "$after_once" ]
+}
+
+@test "migrate_net_options_mlat_forwarding: NET_OPTIONS without --net-bi-port at all → flag appended" {
+    # Operator may have hand-stripped --net-bi-port. Migration adds it
+    # rather than trying to be clever about preserving operator intent.
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-heartbeat 60 --net-ro-port 0"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    grep -q -- '--net-bi-port 30187' "$FEED_ENV"
+    grep -q -- '--forward-mlat' "$FEED_ENV"
+}
+
+@test "migrate_net_options_mlat_forwarding: NET_OPTIONS has 30187 but lacks --forward-mlat → only --forward-mlat appended" {
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-bi-port 30187 --net-bo-port 30005"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    grep -q -- '--forward-mlat' "$FEED_ENV"
+    # 30187 not duplicated.
+    [ "$(grep -o -- '30187' "$FEED_ENV" | wc -l)" = "1" ]
+}
+
+@test "migrate_net_options_mlat_forwarding: NET_OPTIONS has --forward-mlat but lacks 30187 → only 30187 added to bi-port list" {
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-bi-port 30004,30104 --forward-mlat"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    grep -q -- '--net-bi-port 30004,30104,30187' "$FEED_ENV"
+    # --forward-mlat not duplicated.
+    [ "$(grep -o -- '--forward-mlat' "$FEED_ENV" | wc -l)" = "1" ]
+}
+
+@test "migrate_net_options_mlat_forwarding: 30187 boundary match — port list with 130187 does not skip the migration" {
+    # Pathological port-list with 130187 must not match \b30187\b. The
+    # migration should still recognize 30187 as absent and extend.
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-bi-port 130187,30104"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    grep -q -- '--net-bi-port 130187,30104,30187' "$FEED_ENV"
+}
+
+@test "migrate_net_options_mlat_forwarding: does NOT touch --net-bind-address (preserves legacy 0.0.0.0 posture)" {
+    # Migrated installs keep their pre-existing bind posture. A legacy
+    # NET_OPTIONS without --net-bind-address stays without it after
+    # migration — only the MLAT knobs are appended.
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-bi-port 30004,30104"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    ! grep -q -- '--net-bind-address' "$FEED_ENV"
+}
+
+@test "migrate_net_options_mlat_forwarding: preserves an existing operator-set --net-bind-address" {
+    # If the operator set their own bind-address (loopback or other), the
+    # migration leaves it alone.
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-bind-address 10.0.0.5 --net-bi-port 30004,30104"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    grep -q -- '--net-bind-address 10.0.0.5' "$FEED_ENV"
+    grep -q -- '--net-bi-port 30004,30104,30187' "$FEED_ENV"
+}
+
+@test "migrate_net_options_mlat_forwarding: backup written once and never overwritten" {
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS="--net --net-bi-port 30004,30104"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    local first_backup_mtime
+    first_backup_mtime="$(stat -c '%Y' "${FEED_ENV}.pre-mlat-forwarding")"
+    # Mutate feed.env, run again, confirm backup unchanged.
+    sleep 1
+    printf 'NET_OPTIONS="--changed"\n' > "$FEED_ENV"
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    [ "$(stat -c '%Y' "${FEED_ENV}.pre-mlat-forwarding")" = "$first_backup_mtime" ]
+}
+

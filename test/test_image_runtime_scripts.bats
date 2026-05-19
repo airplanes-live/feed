@@ -1303,3 +1303,91 @@ SH
         return 1
     fi
 }
+
+# ---------------------------------------------------------------------------
+# airplanes-feed.sh — non-image branch (manual install + legacy bridge)
+# ---------------------------------------------------------------------------
+# The image-mode tests above pin the IMAGE_INSTALL=1 path (where the image
+# baked-in airplanes-feeder binary exists). These tests cover the else
+# branch (IMAGE_INSTALL=0): manual installs via curl install.sh on bare
+# Debian/Ubuntu/Pi OS, and legacy-image installs migrated to feed/dev via
+# the airplanes-update bridge. Both share the combined feed-airplanes
+# binary and read NET_OPTIONS from feed.env (or fall back to the wrapper
+# default).
+
+# Fixture helper: set up a non-image rootfs with the operator-data keys
+# airplanes-feed.sh needs. Does NOT create /usr/bin/airplanes-feeder so
+# IMAGE_INSTALL stays 0. Caller installs a stub binary at AIRPLANES_FEED_BIN.
+write_non_image_config() {
+    local root="$1"
+    mkdir -p "$root/etc/airplanes"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35"
+MLAT_USER="non-image-feeder"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+EOF
+}
+
+@test "airplanes-feed.sh non-image: wrapper default opens loopback-bound 30187 with --forward-mlat" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/non-image-args.log"
+    local stub_bin="$ROOT_DIR/feed-airplanes-stub"
+    write_non_image_config "$root"
+    cat > "$stub_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" \
+        AIRPLANES_FEED_BIN="$stub_bin" \
+        bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    # MLAT-feedback listener bound to loopback. Reason this PR exists:
+    # prior to the bind-tightening, 30187 listened on 0.0.0.0 in the
+    # non-image default and any LAN host could inject MLAT-tagged Beast
+    # frames attributed to this feeder upstream (now that --forward-mlat
+    # is on).
+    grep -q -- '--net-bi-port 30187' "$arg_log"
+    grep -q -- '--net-bind-address 127.0.0.1' "$arg_log"
+    grep -q -- '--forward-mlat' "$arg_log"
+}
+
+@test "airplanes-feed.sh non-image: operator-set NET_OPTIONS passes through verbatim (no bind-address injection)" {
+    # Escape-hatch contract: an operator override of NET_OPTIONS in
+    # feed.env replaces the wrapper's default whole. The wrapper MUST NOT
+    # silently inject --net-bind-address 127.0.0.1 into operator-supplied
+    # values. This preserves multi-host topologies — an operator pushing
+    # Beast/MLAT from another host on the LAN to this feeder's 30187 can
+    # opt back into 0.0.0.0 binding by overriding NET_OPTIONS.
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/non-image-override-args.log"
+    local stub_bin="$ROOT_DIR/feed-airplanes-override-stub"
+    write_non_image_config "$root"
+    cat >> "$root/etc/airplanes/feed.env" <<'EOF'
+NET_OPTIONS="--net --net-bi-port 30187 --forward-mlat --net-bind-address 0.0.0.0"
+EOF
+    cat > "$stub_bin" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" \
+        AIRPLANES_FEED_BIN="$stub_bin" \
+        bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    # Operator's explicit bind survives.
+    grep -q -- '--net-bind-address 0.0.0.0' "$arg_log"
+    # The loopback default does NOT appear — wrapper used the override whole.
+    if grep -q -- '--net-bind-address 127.0.0.1' "$arg_log"; then
+        return 1
+    fi
+}

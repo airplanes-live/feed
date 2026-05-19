@@ -107,6 +107,89 @@ migrate_net_options_beast_reduce_plus() {
     sed -i -e 's/beast_reduce_out,/beast_reduce_plus_out,/g' "$feed_env" || true
 }
 
+# Append --forward-mlat and ensure --net-bi-port includes 30187 in any
+# persisted legacy NET_OPTIONS in feed.env. The new airplanes-feed/mlat
+# wrappers route mlat-client RESULTS to 127.0.0.1:30187 and expect
+# --forward-mlat so readsb propagates MLAT frames through the upstream
+# beast_reduce_plus_out connector (readsb gates Beast output on
+# (!is_mlat || forward_mlat); default off). Legacy NET_OPTIONS predates
+# both knobs — the combined binary used to forward MLAT received on
+# 30104 inline — so an unmigrated legacy install silently stops
+# contributing MLAT after the wrapper update.
+#
+# Idempotent: no-op when both knobs are already present. Multi-line
+# backslash-continued NET_OPTIONS values (the legacy /etc/default/
+# airplanes shape) are normalized to single-line as a side effect of the
+# rewrite; that's necessary because the substring edits target a single
+# logical NET_OPTIONS= line.
+#
+# --net-bind-address is intentionally NOT touched. Legacy posture binds
+# all NET_OPTIONS listeners to 0.0.0.0 and operators may rely on that
+# for multi-host topologies (a separate decoder host pushing Beast in,
+# downstream consumers pulling Beast out). Tightening here would be a
+# silent breaking change. Fresh manual installs get loopback via the
+# wrapper default; migrated installs keep their pre-existing posture,
+# with 30187 inheriting the same unbound state as 30004/30104.
+#
+# Backup at $feed_env.pre-mlat-forwarding is written exactly once and
+# never overwritten so subsequent runs can't corrupt the original.
+migrate_net_options_mlat_forwarding() {
+    local feed_env="$1"
+    [[ -f "$feed_env" ]] || return 0
+    # No persisted NET_OPTIONS → wrapper default fires, which already
+    # includes both knobs (and loopback bind for fresh installs). Skip.
+    if ! grep -qE '^NET_OPTIONS=' "$feed_env"; then
+        return 0
+    fi
+
+    local has_forward_mlat=0 has_30187=0 has_bi_port=0
+    grep -q -- '--forward-mlat' "$feed_env" && has_forward_mlat=1
+    # \b30187\b is a whole-number match so 30187 isn't found inside
+    # 301870, 130187, etc. — defensive against pathological port lists.
+    if grep -qE -- '--net-bi-port[[:space:]]+[0-9,]*\b30187\b' "$feed_env"; then
+        has_30187=1
+        has_bi_port=1
+    elif grep -qE -- '--net-bi-port[[:space:]]+[0-9,]+' "$feed_env"; then
+        has_bi_port=1
+    fi
+
+    if [[ "$has_forward_mlat" == "1" && "$has_30187" == "1" ]]; then
+        return 0
+    fi
+
+    local backup="${feed_env}.pre-mlat-forwarding"
+    if [[ ! -f "$backup" ]]; then
+        cp -fp "$feed_env" "$backup"
+    fi
+
+    # Normalize multi-line backslash-continued NET_OPTIONS to single-line
+    # so the substring edits below work uniformly. The leading ^NET_OPTIONS=
+    # anchor scopes this to NET_OPTIONS only, leaving other backslash-
+    # continued values (if any) untouched. Loop via :a / ba until the
+    # collected line no longer ends with a continuation.
+    sed -i -e ':a' \
+        -e '/^NET_OPTIONS=/ { /\\[[:space:]]*$/ { N; s/\\[[:space:]]*\n[[:space:]]*/ /; ba } }' \
+        "$feed_env" || true
+
+    # Apply substring edits to the (now single-line) NET_OPTIONS value.
+    if [[ "$has_30187" == "0" ]]; then
+        if [[ "$has_bi_port" == "1" ]]; then
+            # Extend the existing comma-separated port list.
+            sed -i -E '/^NET_OPTIONS=/ s/(--net-bi-port[[:space:]]+[0-9,]+)/\1,30187/' "$feed_env" || true
+        else
+            # No --net-bi-port flag at all — append it inside the quoted
+            # NET_OPTIONS value. Matches NET_OPTIONS="...". Single-quoted
+            # or unquoted exotic forms are skipped (operator hand-edits
+            # beyond the legacy double-quoted convention apply manually).
+            sed -i -E '/^NET_OPTIONS=/ s/"([^"]*)"/"\1 --net-bi-port 30187"/' "$feed_env" || true
+        fi
+    fi
+
+    if [[ "$has_forward_mlat" == "0" ]]; then
+        sed -i -E '/^NET_OPTIONS=/ s/"([^"]*)"/"\1 --forward-mlat"/' "$feed_env" || true
+    fi
+}
+
 # Rewrite the legacy TARGET fallback host
 # feed.airplanes.live,64004 → feed2.airplanes.live,64004.
 migrate_target_fallback_host() {
@@ -453,6 +536,7 @@ run_config_file_migrations() {
         fi
     fi
     migrate_net_options_beast_reduce_plus "$feed_env"
+    migrate_net_options_mlat_forwarding "$feed_env"
     migrate_target_fallback_host "$feed_env"
     migrate_strip_uuid_file_arg "$feed_env"
     migrate_user_to_mlat_split "$feed_env"
