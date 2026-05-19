@@ -4,7 +4,7 @@
 # Public entry point: apl_feed_apply
 #
 # Helper deps the caller must source first:
-#   - configure-validators.sh (valid_*, sanitize_mlat_user, normalize_altitude)
+#   - configure-validators.sh (valid_*, sanitize_mlat_user, altitude_to_bare_metres)
 #   - feed-env-keys.sh        (APL_FEED_WRITABLE_KEYS, APL_FEED_KEY_TYPE, etc.)
 #
 # Optional helper deps (consulted defensively):
@@ -158,7 +158,7 @@ _apl_feed_apply_validate_one() {
             ;;
         altitude)
             if ! valid_altitude "$value"; then
-                APL_APPLY_ERRORS[$key]='must match -?\d+(\.\d+)?(m|ft)? in [-1000, 10000]'
+                APL_APPLY_ERRORS[$key]='must parse as a metric or imperial altitude in [-1000, 10000] metres (e.g. 120m, 400ft, 0)'
                 return 1
             fi
             ;;
@@ -441,15 +441,14 @@ _apl_feed_apply_restart_services() {
     (( ${#APL_APPLY_PENDING_RESTART[@]} == 0 ))
 }
 
-# ALTITUDE canonicalization: ensure an explicit `m`/`ft` suffix on disk.
-# Mirrors Go configspec.Canonicalize. Validate must succeed first.
+# ALTITUDE canonicalization: store as bare metres (no `m`/`ft` suffix).
+# Thin wrapper through altitude_to_bare_metres; valid_altitude must have
+# succeeded first so any non-empty input that reaches this function
+# already passes regex + post-conversion range. Empty values
+# pass through unchanged (tombstone semantics; `alt.value: null` round-trip
+# from the server lands as ALTITUDE="" on disk).
 _apl_feed_apply_canonicalize_altitude() {
-    local v="$1"
-    case "$v" in
-        *m) printf '%s' "$v" ;;
-        *ft) printf '%s' "$v" ;;
-        *) printf '%sm' "$v" ;;
-    esac
+    altitude_to_bare_metres "$1"
 }
 
 # Predicate: returns 0 if the given key is one of the sidecar-tracked keys.
