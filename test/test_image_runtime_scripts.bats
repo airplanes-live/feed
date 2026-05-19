@@ -1222,7 +1222,7 @@ SH
     # listener and never reached the aggregator's globe (aether ingest
     # has no --forward-mlat). MLAT upstream contribution is mlat-client's
     # own --server connection, not Beast feedback into airplanes-feed.
-    if grep -q -- '127.0.0.1:30187' "$arg_log"; then
+    if grep -q -- '30187' "$arg_log"; then
         return 1
     fi
 }
@@ -1268,6 +1268,61 @@ SH
     grep -q -- '--results beast,connect,127.0.0.1:30104' "$arg_log"
     # No silent injection of the default endpoints — the operator override
     # is the whole story.
+    if grep -q -- 'basestation,listen,31015' "$arg_log"; then
+        return 1
+    fi
+    if grep -q -- 'beast,listen,30157' "$arg_log"; then
+        return 1
+    fi
+}
+
+@test "airplanes-mlat.sh: operator-set RESULTS4=...30187 survives the default-bundle guard" {
+    # Drop-30187 retention: an advanced operator who explicitly carries
+    # RESULTS4=...30187 in feed.env (e.g. piping MLAT into a non-airplanes.live
+    # downstream beast consumer) must keep it. The default block is gated
+    # on ALL of RESULTS / RESULTS1..4 being unset, so an explicit RESULTS4
+    # alone suppresses the default block — and the operator's argv survives.
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35"
+MLAT_USER="custom-30187"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+MLATSERVER="feed.airplanes.live:31090"
+RESULTS4="--results beast,connect,127.0.0.1:30187"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    # Operator's explicit RESULTS4 survives.
+    grep -q -- '--results beast,connect,127.0.0.1:30187' "$arg_log"
+    # Default-bundle guard: nothing from RESULTS / RESULTS2 / RESULTS3 is
+    # silently stacked on top.
+    if grep -q -- '127.0.0.1:30104' "$arg_log"; then
+        return 1
+    fi
     if grep -q -- 'basestation,listen,31015' "$arg_log"; then
         return 1
     fi
