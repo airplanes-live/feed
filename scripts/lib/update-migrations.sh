@@ -371,85 +371,6 @@ migrate_geo_to_configured_flag() {
     mv -f "$tmp" "$feed_env"
 }
 
-# Rewrite the ALTITUDE value to bare metres. Idempotent — bare values
-# round-trip unchanged. The website's config-sync wire format expects
-# `alt.value` as a JSON number in metres; the pre-migration disk format
-# carried a unit-suffixed string (`120m`, `400ft`). Writing back the
-# already-validated suffix-stripped value lets every outbound payload
-# emit a clean number and means a server-side echo (`alt.value: 120` →
-# disk `ALTITUDE=120`) is a no-op-equality round-trip.
-#
-# Sidecar metadata (feed.meta.json) is intentionally NOT bumped. The
-# representation flips; the operator's last-edit semantics do not. A
-# website edit that arrives shortly after this migration runs must still
-# win over the pre-migration feeder stamp, which means edited_at must
-# stay where it was. Asymmetric with migrate_user_to_mlat_split, which
-# represents a real schema change.
-#
-# Unparseable values (regex shape fails OR post-conversion range gate
-# fails) are left untouched on disk and surface as a stderr warning.
-# The next operator-triggered apply will surface them via the validator
-# — the migrator's job is to flip canonical-but-suffixed values, not to
-# repair broken ones.
-migrate_altitude_to_bare_metres() {
-    local feed_env="$1"
-    [[ -f "$feed_env" ]] || return 0
-
-    # No ALTITUDE key on disk — nothing to migrate.
-    if ! grep -qE '^[[:space:]]*ALTITUDE=' "$feed_env"; then
-        return 0
-    fi
-
-    local current converted rc=0
-    current="$(_extract_env_value "$feed_env" ALTITUDE)"
-
-    # Empty value (present-but-empty tombstone, e.g. a recent
-    # alt.value:null round-trip) — leave untouched.
-    if [[ -z "$current" ]]; then
-        return 0
-    fi
-
-    converted="$(altitude_to_bare_metres "$current")" || rc=$?
-    if (( rc != 0 )); then
-        echo "migrate_altitude_to_bare_metres: leaving ALTITUDE=\"$current\" untouched (does not parse as a metric/imperial altitude in [-1000, 10000] metres)" >&2
-        return 0
-    fi
-
-    # Already bare — strict no-op (no write, no log spam). Without this
-    # short-circuit, the second-and-later migration runs would still
-    # rewrite the file (with identical contents) and bump mtime.
-    if [[ "$converted" == "$current" ]]; then
-        return 0
-    fi
-
-    local tmp escaped
-    tmp="$(mktemp "${feed_env}.XXXXXX")" || return 0
-    # Escape exactly the way _apl_feed_apply_write does so a value the
-    # apply layer would re-emit verbatim survives this rewrite identically.
-    escaped="${converted//\\/\\\\}"
-    escaped="${escaped//\$/\\\$}"
-    escaped="${escaped//\`/\\\`}"
-    escaped="${escaped//\"/\\\"}"
-    # Replace the existing ALTITUDE line. `awk` so the replacement is
-    # exact-key-prefix (not a partial match like `ALTITUDE_FOO`) and
-    # respects per-line shape. First match wins (canonical case); later
-    # duplicate ALTITUDE lines (operator hand-edit oddity) are passed
-    # through so subsequent _apl_feed_apply_read can dedup them on its
-    # next write cycle.
-    awk -v new_line="ALTITUDE=\"$escaped\"" '
-        BEGIN { replaced = 0 }
-        /^[[:space:]]*ALTITUDE=/ && !replaced {
-            print new_line
-            replaced = 1
-            next
-        }
-        { print }
-    ' "$feed_env" > "$tmp" || { rm -f "$tmp"; return 0; }
-    chmod --reference="$feed_env" "$tmp" 2>/dev/null || true
-    chown --reference="$feed_env" "$tmp" 2>/dev/null || true
-    mv -f "$tmp" "$feed_env"
-}
-
 # Seed /etc/airplanes/feed.meta.json from the current feed.env on installs
 # that don't have it yet. The sidecar tracks per-write (edited_at, edited_by)
 # tuples for the LWW remote-config sync; without this seed, existing
@@ -537,10 +458,6 @@ run_config_file_migrations() {
     migrate_user_to_mlat_split "$feed_env"
     migrate_privacy_to_mlat_private "$feed_env"
     migrate_geo_to_configured_flag "$feed_env"
-    # Runs BEFORE migrate_seed_feed_meta_json so the seeded sidecar can
-    # reflect bare-metres state if it's being created in this same update
-    # cycle.
-    migrate_altitude_to_bare_metres "$feed_env"
     migrate_seed_feed_meta_json "$feed_env" "$(dirname "$feed_env")/feed.meta.json"
     if [[ -n "$_feed_lock_fd" ]]; then
         eval "exec ${_feed_lock_fd}>&-"

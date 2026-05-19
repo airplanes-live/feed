@@ -15,8 +15,6 @@ setup() {
     # shellcheck source=/dev/null
     source "$COMMON_LIB"
     # shellcheck source=/dev/null
-    source "$REPO_ROOT/scripts/lib/configure-validators.sh"
-    # shellcheck source=/dev/null
     source "$LIB"
     # shellcheck source=/dev/null
     source "$REPO_ROOT/scripts/lib/legacy-mlat-translation.sh"
@@ -724,165 +722,6 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# migrate_altitude_to_bare_metres
-# ---------------------------------------------------------------------------
-
-@test "migrate_altitude_to_bare_metres: ALTITUDE=120m → ALTITUDE=120 (strip suffix)" {
-    cat > "$FEED_ENV" <<'EOF'
-LATITUDE="52.5"
-LONGITUDE="13.4"
-ALTITUDE="120m"
-GEO_CONFIGURED=true
-EOF
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-
-    grep -qx 'ALTITUDE="120"' "$FEED_ENV"
-    grep -qx 'LATITUDE="52.5"' "$FEED_ENV"
-    grep -qx 'LONGITUDE="13.4"' "$FEED_ENV"
-    grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
-}
-
-@test "migrate_altitude_to_bare_metres: ALTITUDE=400ft → ALTITUDE=121.92" {
-    cat > "$FEED_ENV" <<'EOF'
-ALTITUDE="400ft"
-EOF
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-
-    grep -qx 'ALTITUDE="121.92"' "$FEED_ENV"
-}
-
-@test "migrate_altitude_to_bare_metres: bare ALTITUDE=42.5 is unchanged (idempotent)" {
-    cat > "$FEED_ENV" <<'EOF'
-ALTITUDE="42.5"
-EOF
-    local before
-    before="$(cat "$FEED_ENV")"
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-    [ "$(cat "$FEED_ENV")" = "$before" ]
-}
-
-@test "migrate_altitude_to_bare_metres: empty ALTITUDE is unchanged" {
-    cat > "$FEED_ENV" <<'EOF'
-ALTITUDE=""
-EOF
-    local before
-    before="$(cat "$FEED_ENV")"
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-    [ "$(cat "$FEED_ENV")" = "$before" ]
-}
-
-@test "migrate_altitude_to_bare_metres: missing ALTITUDE key is a no-op" {
-    cat > "$FEED_ENV" <<'EOF'
-LATITUDE="52.5"
-LONGITUDE="13.4"
-EOF
-    local before
-    before="$(cat "$FEED_ENV")"
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-    [ "$(cat "$FEED_ENV")" = "$before" ]
-}
-
-@test "migrate_altitude_to_bare_metres: garbage value is preserved with a warning" {
-    cat > "$FEED_ENV" <<'EOF'
-ALTITUDE="not-a-number"
-LATITUDE="52.5"
-EOF
-    local before
-    before="$(cat "$FEED_ENV")"
-    run migrate_altitude_to_bare_metres "$FEED_ENV"
-    [ "$status" -eq 0 ]
-    [ "$(cat "$FEED_ENV")" = "$before" ]
-    [[ "$output" == *"leaving ALTITUDE=\"not-a-number\" untouched"* ]]
-}
-
-@test "migrate_altitude_to_bare_metres: out-of-range value is preserved with a warning" {
-    # 33000ft is ~10058m, just above the 10000m upper bound.
-    cat > "$FEED_ENV" <<'EOF'
-ALTITUDE="33000ft"
-EOF
-    local before
-    before="$(cat "$FEED_ENV")"
-    run migrate_altitude_to_bare_metres "$FEED_ENV"
-    [ "$status" -eq 0 ]
-    [ "$(cat "$FEED_ENV")" = "$before" ]
-    [[ "$output" == *"33000ft"* ]]
-}
-
-@test "migrate_altitude_to_bare_metres: second run on bare-metres state is a strict no-op" {
-    cat > "$FEED_ENV" <<'EOF'
-ALTITUDE="400ft"
-EOF
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-    grep -qx 'ALTITUDE="121.92"' "$FEED_ENV"
-    local after_first
-    after_first="$(cat "$FEED_ENV")"
-
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-    [ "$(cat "$FEED_ENV")" = "$after_first" ]
-}
-
-@test "migrate_altitude_to_bare_metres: does NOT bump feed.meta.json metadata" {
-    # The migration is a representation flip, not a semantic edit. The
-    # sidecar's edited_at must stay where it was so a freshly-stamped
-    # website edit still wins over the pre-migration feeder tuple.
-    cat > "$FEED_ENV" <<'EOF'
-ALTITUDE="120m"
-EOF
-    META="$TMP/feed.meta.json"
-    cat > "$META" <<'EOF'
-{"schema_version":1,"fields":{"ALTITUDE":{"edited_at":"2024-06-01T00:00:00Z","edited_by":"legacy"}}}
-EOF
-    local meta_before
-    meta_before="$(cat "$META")"
-
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-
-    grep -qx 'ALTITUDE="120"' "$FEED_ENV"
-    [ "$(cat "$META")" = "$meta_before" ]
-}
-
-@test "migrate_altitude_to_bare_metres: preserves all non-altitude keys verbatim" {
-    cat > "$FEED_ENV" <<'EOF'
-INPUT="127.0.0.1:30005"
-MLAT_USER="alice"
-MLAT_ENABLED=true
-MLAT_PRIVATE=false
-LATITUDE="52.5"
-LONGITUDE="13.4"
-ALTITUDE="400ft"
-GEO_CONFIGURED=true
-NET_OPTIONS="--net-heartbeat 60"
-GAIN=auto
-EOF
-    migrate_altitude_to_bare_metres "$FEED_ENV"
-
-    grep -qx 'INPUT="127.0.0.1:30005"' "$FEED_ENV"
-    grep -qx 'MLAT_USER="alice"' "$FEED_ENV"
-    grep -qx 'MLAT_ENABLED=true' "$FEED_ENV"
-    grep -qx 'MLAT_PRIVATE=false' "$FEED_ENV"
-    grep -qx 'LATITUDE="52.5"' "$FEED_ENV"
-    grep -qx 'LONGITUDE="13.4"' "$FEED_ENV"
-    grep -qx 'ALTITUDE="121.92"' "$FEED_ENV"
-    grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
-    grep -qx 'NET_OPTIONS="--net-heartbeat 60"' "$FEED_ENV"
-    grep -qx 'GAIN=auto' "$FEED_ENV"
-}
-
-@test "run_config_file_migrations: altitude bare-metres flip runs in the chain" {
-    cat > "$FEED_ENV" <<'EOF'
-USER="alice"
-LATITUDE="52.5"
-LONGITUDE="13.4"
-ALTITUDE="400ft"
-EOF
-    run_config_file_migrations "$FEED_ENV"
-
-    grep -qx 'MLAT_USER="alice"' "$FEED_ENV"
-    grep -qx 'GEO_CONFIGURED=true' "$FEED_ENV"
-    grep -qx 'ALTITUDE="121.92"' "$FEED_ENV"
-}
-
-# ---------------------------------------------------------------------------
 # migrate_seed_feed_meta_json (DEV-380)
 # ---------------------------------------------------------------------------
 
@@ -989,7 +828,6 @@ EOF
     run bash -c "
         set -e
         source '$COMMON_LIB'
-        source '$REPO_ROOT/scripts/lib/configure-validators.sh'
         source '$LIB'
         migrate_seed_feed_meta_json '$FEED_ENV' '$META'
     "
