@@ -117,9 +117,12 @@ SH
     grep -q -- "--uuid-file=$root/etc/airplanes/feeder-id" "$arg_log"
     # MLAT-feedback listener — mlat-client routes --results beast,connect,
     # 127.0.0.1:30187 here so this feeder forwards MLAT to the aggregator.
-    # Bound to loopback only.
+    # Bound to loopback only. --forward-mlat is required because readsb
+    # gates Beast output on (!is_mlat || forward_mlat) — without it, MLAT
+    # frames received on 30187 would be dropped instead of forwarded.
     grep -q -- '--net-bi-port 30187' "$arg_log"
     grep -q -- '--net-bind-address 127.0.0.1' "$arg_log"
+    grep -q -- '--forward-mlat' "$arg_log"
     # --write-json was the output sink for the bundled tar1090 installer; nothing
     # consumes /run/airplanes-feed anymore. Match the bare flag only — guard
     # against accidental reintroduction without flagging --write-json-every or
