@@ -81,7 +81,7 @@ seed_feed_env() {
     cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
 LATITUDE="47.0"
 LONGITUDE="8.0"
-ALTITUDE="120m"
+ALTITUDE="120"
 GEO_CONFIGURED=true
 MLAT_USER="alice"
 MLAT_ENABLED=true
@@ -139,7 +139,9 @@ run_sync() {
     jq -e '.fields.position.value.lat == 47' <<<"$payload" >/dev/null
     jq -e '.fields.position.value.lon == 8' <<<"$payload" >/dev/null
     [ "$(jq -r '.fields.position.edited_by' <<<"$payload")" = "feeder" ]
-    [ "$(jq -r '.fields.alt.value' <<<"$payload")" = "120m" ]
+    # alt.value is a JSON number (bare metres) end-to-end.
+    [ "$(jq -r '.fields.alt.value' <<<"$payload")" = "120" ]
+    [ "$(jq -r '.fields.alt.value | type' <<<"$payload")" = "number" ]
     [ "$(jq -r '.fields.mlat_user.value' <<<"$payload")" = "alice" ]
     [ "$(jq -r '.fields.mlat_enabled.value' <<<"$payload")" = "true" ]
     [ "$(jq -r '.fields.mlat_enabled.value | type' <<<"$payload")" = "boolean" ]
@@ -164,7 +166,7 @@ run_sync() {
     cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
 LATITUDE="47.0"
 LONGITUDE="8.0"
-ALTITUDE="120m"
+ALTITUDE="120"
 GEO_CONFIGURED=false
 MLAT_USER="alice"
 MLAT_ENABLED=false
@@ -181,7 +183,7 @@ EOF
     cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
 LATITUDE=""
 LONGITUDE="8.0"
-ALTITUDE="120m"
+ALTITUDE="120"
 GEO_CONFIGURED=true
 MLAT_USER="alice"
 MLAT_ENABLED=true
@@ -212,7 +214,7 @@ EOF
 LATITUDE="47.0"
 LONGITUDE="8.0"
 GEO_CONFIGURED=true
-ALTITUDE="120m"
+ALTITUDE="120"
 MLAT_USER=""
 MLAT_ENABLED=false
 MLAT_PRIVATE=false
@@ -228,7 +230,7 @@ EOF
 LATITUDE="47.0"
 LONGITUDE="8.0"
 GEO_CONFIGURED=true
-ALTITUDE="120m"
+ALTITUDE="120"
 MLAT_USER="alice"
 MLAT_PRIVATE=false
 REMOTE_CONFIG_ENABLED=true
@@ -236,6 +238,161 @@ EOF
     run_sync --dry-run
     [ "$SYNC_RC" -eq 0 ]
     [ "$(jq -r '.fields | has("mlat_enabled")' <<<"$SYNC_OUT")" = "false" ]
+}
+
+@test "outbound: ALTITUDE=120 emits alt.value as JSON number 120" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+LATITUDE="47.0"
+LONGITUDE="8.0"
+ALTITUDE="120"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
+EOF
+    run_sync --dry-run
+    [ "$SYNC_RC" -eq 0 ]
+    [ "$(jq -r '.fields.alt.value' <<<"$SYNC_OUT")" = "120" ]
+    [ "$(jq -r '.fields.alt.value | type' <<<"$SYNC_OUT")" = "number" ]
+}
+
+@test "outbound: legacy on-disk ALTITUDE=120m is canonicalized on the wire (defensive)" {
+    # Migration-window safety net: a feeder whose airplanes-config-sync.timer
+    # fires after picking up the new scripts but before update-migrations.sh
+    # has run still emits a clean JSON number on the wire.
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+LATITUDE="47.0"
+LONGITUDE="8.0"
+ALTITUDE="120m"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
+EOF
+    run_sync --dry-run
+    [ "$SYNC_RC" -eq 0 ]
+    [ "$(jq -r '.fields.alt.value' <<<"$SYNC_OUT")" = "120" ]
+    [ "$(jq -r '.fields.alt.value | type' <<<"$SYNC_OUT")" = "number" ]
+}
+
+@test "outbound: legacy on-disk ALTITUDE=400ft is converted to 121.92 on the wire" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+LATITUDE="47.0"
+LONGITUDE="8.0"
+ALTITUDE="400ft"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
+EOF
+    run_sync --dry-run
+    [ "$SYNC_RC" -eq 0 ]
+    [ "$(jq -r '.fields.alt.value' <<<"$SYNC_OUT")" = "121.92" ]
+    [ "$(jq -r '.fields.alt.value | type' <<<"$SYNC_OUT")" = "number" ]
+}
+
+@test "outbound: empty ALTITUDE emits alt.value=null tombstone" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+LATITUDE="47.0"
+LONGITUDE="8.0"
+ALTITUDE=""
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
+EOF
+    run_sync --dry-run
+    [ "$SYNC_RC" -eq 0 ]
+    [ "$(jq -r '.fields.alt.value' <<<"$SYNC_OUT")" = "null" ]
+}
+
+@test "outbound: unparseable ALTITUDE omits .fields.alt entirely (NOT null)" {
+    # Critical footgun guard: emitting alt.value=null with a fresh
+    # feeder-side edited_at would let LWW wipe a valid website value
+    # when the disk state is corrupt. Omit-on-garbage instead so the
+    # server's last-known-good stays put; the operator's next edit
+    # recovers.
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+LATITUDE="47.0"
+LONGITUDE="8.0"
+ALTITUDE="not-a-number"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
+EOF
+    run_sync --dry-run
+    [ "$SYNC_RC" -eq 0 ]
+    [ "$(jq -r '.fields | has("alt")' <<<"$SYNC_OUT")" = "false" ]
+    echo "$SYNC_ERR" | grep -F 'reason=alt_unparseable'
+}
+
+@test "outbound: out-of-range ALTITUDE omits .fields.alt entirely" {
+    # 33000ft -> ~10058m -> out of range. Same omit-on-corruption policy.
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+LATITUDE="47.0"
+LONGITUDE="8.0"
+ALTITUDE="33000ft"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
+EOF
+    run_sync --dry-run
+    [ "$SYNC_RC" -eq 0 ]
+    [ "$(jq -r '.fields | has("alt")' <<<"$SYNC_OUT")" = "false" ]
+    echo "$SYNC_ERR" | grep -F 'reason=alt_unparseable'
+}
+
+@test "inbound: server alt.value=42.5 lands on disk as ALTITUDE=\"42.5\" (bare metres, no suffix)" {
+    seed_feed_env
+    seed_feed_meta ALTITUDE "2026-05-10T00:00:00Z"
+    set_canned 200 '{
+        "schema_version": 1,
+        "server_time": "2026-05-14T12:00:00Z",
+        "owned": true,
+        "fields": {
+            "alt": {"value": 42.5, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "website"}
+        }
+    }'
+
+    run_sync --no-restart
+
+    [ "$SYNC_RC" -eq 0 ]
+    grep -F 'ALTITUDE="42.5"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "inbound: server alt.value=null lands on disk as ALTITUDE=\"\" when MLAT disabled" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
+LATITUDE="47.0"
+LONGITUDE="8.0"
+ALTITUDE="120"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+REMOTE_CONFIG_ENABLED=true
+EOF
+    seed_feed_meta ALTITUDE "2026-05-10T00:00:00Z"
+    set_canned 200 '{
+        "schema_version": 1,
+        "server_time": "2026-05-14T12:00:00Z",
+        "owned": true,
+        "fields": {
+            "alt": {"value": null, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "website"}
+        }
+    }'
+
+    run_sync --no-restart
+
+    [ "$SYNC_RC" -eq 0 ]
+    grep -F 'ALTITUDE=""' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "200 unowned heartbeat touches sentinel and skips apply" {
@@ -275,7 +432,7 @@ EOF
         "owned": true,
         "fields": {
             "position": {"value": {"lat": 47.0, "lon": 8.0}, "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"},
-            "alt": {"value": "120m", "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"},
+            "alt": {"value": 120, "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"},
             "mlat_user": {"value": "bob", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "website"},
             "mlat_enabled": {"value": true, "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"},
             "mlat_private": {"value": false, "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"}
@@ -304,7 +461,7 @@ EOF
         "rejected_fields": ["mlat_user"],
         "fields": {
             "position": {"value": {"lat": 47.0, "lon": 8.0}, "edited_at": "2020-01-01T00:00:00Z", "edited_by": "legacy"},
-            "alt": {"value": "120m", "edited_at": "2020-01-01T00:00:00Z", "edited_by": "legacy"},
+            "alt": {"value": 120, "edited_at": "2020-01-01T00:00:00Z", "edited_by": "legacy"},
             "mlat_user": {"value": "alice", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
             "mlat_enabled": {"value": true, "edited_at": "2020-01-01T00:00:00Z", "edited_by": "legacy"},
             "mlat_private": {"value": false, "edited_at": "2020-01-01T00:00:00Z", "edited_by": "legacy"}
@@ -429,7 +586,7 @@ EOF
         "owned": true,
         "fields": {
             "position": {"value": {"lat": 47.0, "lon": 8.0}, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "legacy"},
-            "alt": {"value": "200m", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
+            "alt": {"value": 200, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
             "mlat_user": {"value": "bob", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "website"},
             "mlat_enabled": {"value": true, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
             "mlat_private": {"value": false, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"}
@@ -440,7 +597,7 @@ EOF
 
     [ "$SYNC_RC" -eq 0 ]
     grep -F 'MLAT_USER="bob"' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -F 'ALTITUDE="200m"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -F 'ALTITUDE="200"' "$ROOT_DIR/etc/airplanes/feed.env"
     [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "website" ]
     [ "$(jq -r '.fields.ALTITUDE.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "feeder" ]
     [ "$(jq -r '.fields.LATITUDE.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "legacy" ]
@@ -458,7 +615,7 @@ EOF
         "server_time": "2026-05-14T12:00:00Z",
         "owned": true,
         "fields": {
-            "alt": {"value": "200m", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
+            "alt": {"value": 200, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "feeder"},
             "mlat_user": {"value": "mallory", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "attacker"}
         }
     }'
@@ -474,7 +631,7 @@ EOF
     [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "feeder" ]
     [ "$(jq -r '.fields.MLAT_USER.edited_at' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "2026-05-10T00:00:00Z" ]
     # The well-formed field still applied.
-    grep -F 'ALTITUDE="200m"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -F 'ALTITUDE="200"' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
 @test "response edited_by with embedded space/equals is logged as a quoted token" {
@@ -486,7 +643,7 @@ EOF
         "server_time": "2026-05-14T12:00:00Z",
         "owned": true,
         "fields": {
-            "alt": {"value": "200m", "edited_at": "2026-05-14T11:00:00Z", "edited_by": "evil reason=spoofed"}
+            "alt": {"value": 200, "edited_at": "2026-05-14T11:00:00Z", "edited_by": "evil reason=spoofed"}
         }
     }'
 

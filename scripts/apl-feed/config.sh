@@ -223,18 +223,32 @@ _config_sync_build_payload() {
     )
     filter+=' | .fields.position = {value: $pos_value, edited_at: $pos_at, edited_by: $pos_by}'
 
-    # alt — nullable string.
+    # alt — nullable number (float metres). Operator/legacy disks may
+    # carry either bare metres (post-migration) or a suffixed string
+    # (pre-migration, or a hand-edit); altitude_to_bare_metres
+    # canonicalizes both shapes to a clean numeric on the wire. An
+    # unparseable on-disk value omits .fields.alt entirely and emits a
+    # journal warning — emitting `null` would be a tombstone, and combined
+    # with a fresh feeder-side edited_at could wipe a valid website value.
     if _config_sync_has_key "$feed_env" ALTITUDE; then
         local alt_at alt_by alt_meta
         alt_meta="$(_config_sync_resolve_field_meta ALTITUDE meta_at meta_by)"
         alt_at="${alt_meta%%$'\t'*}"
         alt_by="${alt_meta##*$'\t'}"
-        jq_args+=(--arg alt_at "$alt_at" --arg alt_by "$alt_by")
         if [[ -z "$alt" ]]; then
+            jq_args+=(--arg alt_at "$alt_at" --arg alt_by "$alt_by")
             filter+=' | .fields.alt = {value: null, edited_at: $alt_at, edited_by: $alt_by}'
         else
-            jq_args+=(--arg alt_v "$alt")
-            filter+=' | .fields.alt = {value: $alt_v, edited_at: $alt_at, edited_by: $alt_by}'
+            local alt_metres alt_rc=0
+            alt_metres="$(altitude_to_bare_metres "$alt")" || alt_rc=$?
+            if (( alt_rc != 0 )); then
+                local _alt_truncated="${alt:0:32}"
+                _alt_truncated="${_alt_truncated//\"/\\\"}"
+                _config_sync_log warn "reason=alt_unparseable value=\"$_alt_truncated\""
+            else
+                jq_args+=(--arg alt_at "$alt_at" --arg alt_by "$alt_by" --arg alt_v "$alt_metres")
+                filter+=' | .fields.alt = {value: ($alt_v | tonumber), edited_at: $alt_at, edited_by: $alt_by}'
+            fi
         fi
     fi
 
@@ -324,29 +338,34 @@ _config_sync_translate_response() {
     APL_APPLY_INCOMING_META_EDITED_AT=()
     APL_APPLY_INCOMING_META_EDITED_BY=()
 
-    # jq extracts one TAB-separated line per API field with: name,
+    # jq extracts one US-separated line per API field with: name,
     # is_tombstone, value, edited_at, edited_by. Position's value is
     # rendered as `lat|lon` so a single line carries both axes; bool
     # values come out as `true`/`false`; null values render as empty
     # string in the `value` column with `is_tombstone=1`.
+    #
+    # The separator is ASCII US (\x1F), not TAB, because bash `read`
+    # treats TAB as whitespace and collapses adjacent tabs (so a null
+    # value column would silently merge with the next field). US is a
+    # non-whitespace control character that never appears in valid feed
+    # data and that `read -r` treats as a single field boundary.
     local entries
-    if ! entries="$(jq -r '
+    if ! entries="$(jq -j --arg sep $'\x1f' '
         .fields | to_entries[] |
-        [.key,
-         (if .value.value == null then "1" else "0" end),
-         (if .value.value == null then ""
-          elif .key == "position" then "\(.value.value.lat)|\(.value.value.lon)"
-          elif (.value.value | type) == "boolean" then (.value.value | tostring)
-          else (.value.value | tostring) end),
-         .value.edited_at,
-         .value.edited_by] |
-        @tsv
+        ([.key,
+          (if .value.value == null then "1" else "0" end),
+          (if .value.value == null then ""
+           elif .key == "position" then "\(.value.value.lat)|\(.value.value.lon)"
+           elif (.value.value | type) == "boolean" then (.value.value | tostring)
+           else (.value.value | tostring) end),
+          .value.edited_at,
+          .value.edited_by] | join($sep)) + "\n"
     ' "$response_file" 2>/dev/null)"; then
         return 1
     fi
 
     local api_field is_null value edited_at edited_by
-    while IFS=$'\t' read -r api_field is_null value edited_at edited_by; do
+    while IFS=$'\x1f' read -r api_field is_null value edited_at edited_by; do
         [[ -z "$api_field" ]] && continue
         # The server-side serializer enforces this allowlist on inbound
         # writes; mirror it on the response so a misbehaving server cannot
