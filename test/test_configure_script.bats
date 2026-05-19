@@ -165,7 +165,9 @@ run_configure_env() {
     ! grep -q '^USER=' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q 'LATITUDE="52.52000"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q 'LONGITUDE="13.40500"' "$ROOT_DIR/etc/airplanes/feed.env"
-    grep -q 'ALTITUDE="35m"' "$ROOT_DIR/etc/airplanes/feed.env"
+    # configure.sh now routes operator input through altitude_to_bare_metres,
+    # so a `35m` env var lands on disk as bare `35`.
+    grep -q 'ALTITUDE="35"' "$ROOT_DIR/etc/airplanes/feed.env"
     [ ! -e "$WHIPTAIL_LOG" ]
 }
 

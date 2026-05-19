@@ -236,17 +236,17 @@ apl_feed_mlat_geo() {
 
     valid_latitude  "$lat"  || die "LATITUDE must be a decimal number in [-90, 90]"
     valid_longitude "$lon"  || die "LONGITUDE must be a decimal number in [-180, 180]"
-    valid_altitude  "$alt"  || die "ALTITUDE must match -?\\d+(\\.\\d+)?(m|ft)? in [-1000, 10000]"
-
-    local norm_alt
-    norm_alt="$(normalize_altitude "$alt")"
+    valid_altitude  "$alt"  || die "ALTITUDE must parse as a metric or imperial altitude in [-1000, 10000] metres (e.g. 120m, 400ft, 0)"
 
     # The library auto-derives GEO_CONFIGURED from (lat, lon) when neither
     # is explicitly set by the payload. Identical to configure.sh /
     # webconfig semantics: both axes numerically zero → false, anything
-    # else → true.
-    _mlat_apply LATITUDE="$lat" LONGITUDE="$lon" ALTITUDE="$norm_alt"
-    _mlat_emit_result "LATITUDE=\"$lat\" LONGITUDE=\"$lon\" ALTITUDE=\"$norm_alt\""
+    # else → true. apl_feed_apply's canonicalizer flips suffixed input to
+    # bare metres on disk; no pre-conversion needed here.
+    _mlat_apply LATITUDE="$lat" LONGITUDE="$lon" ALTITUDE="$alt"
+    local on_disk_alt
+    on_disk_alt="$(altitude_to_bare_metres "$alt")"
+    _mlat_emit_result "LATITUDE=\"$lat\" LONGITUDE=\"$lon\" ALTITUDE=\"$on_disk_alt\""
 }
 
 # Interactive setup. Collects every input first (no partial writes if the
@@ -379,14 +379,16 @@ apl_feed_mlat_setup() {
             ;;
     esac
 
-    local norm_alt
-    norm_alt="$(normalize_altitude "$alt")"
+    # Preview reflects what apl_feed_apply's canonicalizer will write to
+    # disk (bare metres). Operator typed `400ft`; on-disk lands as `121.92`.
+    local preview_alt
+    preview_alt="$(altitude_to_bare_metres "$alt")"
 
     echo
     echo "About to write:"
     echo "  LATITUDE=$lat"
     echo "  LONGITUDE=$lon"
-    echo "  ALTITUDE=$norm_alt"
+    echo "  ALTITUDE=$preview_alt"
     echo "  GEO_CONFIGURED=true"
     echo "  MLAT_USER=\"$name\""
     echo "  MLAT_PRIVATE=$private"
@@ -400,7 +402,7 @@ apl_feed_mlat_setup() {
     _mlat_apply \
         LATITUDE="$lat" \
         LONGITUDE="$lon" \
-        ALTITUDE="$norm_alt" \
+        ALTITUDE="$alt" \
         GEO_CONFIGURED=true \
         MLAT_USER="$name" \
         MLAT_PRIVATE="$private" \

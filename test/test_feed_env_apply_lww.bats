@@ -61,7 +61,7 @@ seed_feed_env() {
     cat > "$FEED_ENV" <<EOF
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="120m"
+ALTITUDE="120"
 GEO_CONFIGURED=true
 MLAT_USER="alice"
 MLAT_ENABLED=true
@@ -280,7 +280,7 @@ read_meta_edited_at() {
     # Only ALTITUDE should be in CHANGED.
     [ " ${APL_APPLY_CHANGED[*]} " = " ALTITUDE " ]
     [ "$(read_disk_value MLAT_USER)" = "alice" ]
-    [ "$(read_disk_value ALTITUDE)" = "200m" ]
+    [ "$(read_disk_value ALTITUDE)" = "200" ]
 }
 
 @test "all-skip batch resolves to no_change" {
@@ -299,7 +299,7 @@ read_meta_edited_at() {
     [ " ${APL_APPLY_SKIPPED_BY_LWW[*]} " = " ALTITUDE MLAT_USER " ] \
         || [ " ${APL_APPLY_SKIPPED_BY_LWW[*]} " = " MLAT_USER ALTITUDE " ]
     [ "$(read_disk_value MLAT_USER)" = "alice" ]
-    [ "$(read_disk_value ALTITUDE)" = "120m" ]
+    [ "$(read_disk_value ALTITUDE)" = "120" ]
 }
 
 @test "bogus-future heal uses APL_APPLY_INCOMING_SERVER_TIME when set" {

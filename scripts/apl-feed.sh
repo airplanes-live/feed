@@ -37,17 +37,17 @@ if [[ -r "$APL_FEED_DAEMON_LIB_DIR/configure-validators.sh" ]]; then
     # shellcheck source=scripts/lib/configure-validators.sh
     source "$APL_FEED_DAEMON_LIB_DIR/configure-validators.sh"
 else
-    valid_latitude()         { echo "configure-validators.sh missing at $APL_FEED_DAEMON_LIB_DIR; reinstall feed" >&2; return 2; }
-    valid_longitude()        { valid_latitude "$@"; }
-    valid_altitude()         { valid_latitude "$@"; }
-    normalize_altitude()     { valid_latitude "$@"; }
-    sanitize_mlat_user()     { valid_latitude "$@"; }
-    valid_mlat_user_strict() { valid_latitude "$@"; }
-    valid_bool()             { valid_latitude "$@"; }
-    valid_gain()             { valid_latitude "$@"; }
-    valid_uat_input()        { valid_latitude "$@"; }
-    valid_dump978_serial()   { valid_latitude "$@"; }
-    valid_dump978_gain()     { valid_latitude "$@"; }
+    valid_latitude()           { echo "configure-validators.sh missing at $APL_FEED_DAEMON_LIB_DIR; reinstall feed" >&2; return 2; }
+    valid_longitude()          { valid_latitude "$@"; }
+    valid_altitude()           { valid_latitude "$@"; }
+    altitude_to_bare_metres()  { valid_latitude "$@"; }
+    sanitize_mlat_user()       { valid_latitude "$@"; }
+    valid_mlat_user_strict()   { valid_latitude "$@"; }
+    valid_bool()               { valid_latitude "$@"; }
+    valid_gain()               { valid_latitude "$@"; }
+    valid_uat_input()          { valid_latitude "$@"; }
+    valid_dump978_serial()     { valid_latitude "$@"; }
+    valid_dump978_gain()       { valid_latitude "$@"; }
 fi
 
 # Feed-env key registry + apply library. Pure data + pure functions, no

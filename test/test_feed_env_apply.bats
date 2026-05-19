@@ -51,7 +51,7 @@ seed_feed_env() {
     cat > "$FEED_ENV" <<EOF
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="120m"
+ALTITUDE="120"
 GEO_CONFIGURED=true
 MLAT_USER="alice"
 MLAT_ENABLED=true
@@ -162,32 +162,104 @@ EOF
     grep -q '^LONGITUDE="180"$' "$FEED_ENV"
 }
 
-@test "boundary: ALTITUDE=10000 accepted (closed range)" {
+@test "boundary: ALTITUDE=10000m accepted (closed range, canonicalized to bare metres)" {
     seed_feed_env
     do_apply --no-restart ALTITUDE=10000m
     [ "$APL_APPLY_RC" -eq 0 ]
-    grep -q '^ALTITUDE="10000m"$' "$FEED_ENV"
+    grep -q '^ALTITUDE="10000"$' "$FEED_ENV"
 }
 
-@test "ALTITUDE accepts decimals (120.5m)" {
+@test "ALTITUDE accepts decimals (120.5m, canonicalized to bare metres)" {
     seed_feed_env
     do_apply --no-restart ALTITUDE=120.5m
     [ "$APL_APPLY_RC" -eq 0 ]
-    grep -q '^ALTITUDE="120.5m"$' "$FEED_ENV"
+    grep -q '^ALTITUDE="120.5"$' "$FEED_ENV"
 }
 
-@test "ALTITUDE canonicalizes 120 (no suffix) to 120m on disk" {
+@test "ALTITUDE canonicalizes 120m (m-suffixed) to bare 120 on disk" {
+    seed_feed_env
+    do_apply --no-restart ALTITUDE=120m
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q '^ALTITUDE="120"$' "$FEED_ENV"
+}
+
+@test "ALTITUDE bare 120 round-trips unchanged" {
     seed_feed_env
     do_apply --no-restart ALTITUDE=120
     [ "$APL_APPLY_RC" -eq 0 ]
-    grep -q '^ALTITUDE="120m"$' "$FEED_ENV"
+    grep -q '^ALTITUDE="120"$' "$FEED_ENV"
 }
 
-@test "ALTITUDE rejects 10001 (out of range)" {
+@test "ALTITUDE converts 400ft to 121.92 (bare metres)" {
+    seed_feed_env
+    do_apply --no-restart ALTITUDE=400ft
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q '^ALTITUDE="121.92"$' "$FEED_ENV"
+}
+
+@test "ALTITUDE rejects 10001m (out of range, metres)" {
     seed_feed_env
     do_apply --no-restart ALTITUDE=10001m
     [ "$APL_APPLY_RC" -eq 2 ]
     [ "$APL_APPLY_STATUS" = "rejected" ]
+}
+
+@test "ALTITUDE rejects 33000ft (out of range; post-conversion ~10058m)" {
+    # Pre-existing valid_altitude range-gated raw 33000 > 10000 by sheer
+    # coincidence. Post-conversion range-gating catches this case the way
+    # the website's serializer does.
+    seed_feed_env
+    do_apply --no-restart ALTITUDE=33000ft
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+}
+
+@test "ALTITUDE accepts 20000ft (in range; post-conversion ~6096m)" {
+    # The old raw-range rule rejected 20000ft as out-of-range integer-bound.
+    # The new post-conversion rule accepts it because the result lives
+    # well inside [-1000, 10000] metres.
+    seed_feed_env
+    do_apply --no-restart ALTITUDE=20000ft
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q '^ALTITUDE="6096"$' "$FEED_ENV"
+}
+
+@test "ALTITUDE empty (tombstone) lands on disk as empty string" {
+    # Inbound `alt.value: null` -> _config_sync_translate_response emits
+    # `ALTITUDE=` (empty value). The apply layer must accept it and write
+    # ALTITUDE="" on disk. Without this path, the next sync cycle wedges
+    # with validation_failed.
+    cat > "$FEED_ENV" <<EOF
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="120"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+EOF
+    do_apply --no-restart ALTITUDE=
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    grep -q '^ALTITUDE=""$' "$FEED_ENV"
+}
+
+@test "ALTITUDE empty rejected when MLAT_ENABLED=true (consistency check unchanged)" {
+    # Tombstone-passthrough on the validator does NOT relax the cross-key
+    # consistency rule: MLAT_ENABLED=true requires ALTITUDE non-empty.
+    cat > "$FEED_ENV" <<EOF
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="120"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+EOF
+    do_apply --no-restart ALTITUDE=
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    [ -n "${APL_APPLY_ERRORS[ALTITUDE]}" ]
 }
 
 @test "MLAT_USER empty is accepted (daemon Anonymous-fallback)" {
@@ -340,7 +412,7 @@ EOF
     cat > "$FEED_ENV" <<EOF
 LATITUDE="52.5"
 LONGITUDE="13.4"
-ALTITUDE="120m"
+ALTITUDE="120"
 GEO_CONFIGURED=true
 MLAT_USER="alice"
 MLAT_ENABLED=false
@@ -356,12 +428,13 @@ EOF
     cat > "$FEED_ENV" <<EOF
 LATITUDE="0"
 LONGITUDE="0"
-ALTITUDE="100m"
+ALTITUDE="100"
 GEO_CONFIGURED=true
 EOF
     do_apply --no-restart ALTITUDE=150m
     [ "$APL_APPLY_RC" -eq 0 ]
     grep -q '^GEO_CONFIGURED="true"$' "$FEED_ENV"
+    grep -q '^ALTITUDE="150"$' "$FEED_ENV"
 }
 
 @test "missing feed.env is rejected (no silent bootstrap)" {
@@ -399,7 +472,7 @@ LATITUDE="52.5"
 GARBAGE_LINE_WITHOUT_EQUALS
 LONGITUDE="13.4"
 GEO_CONFIGURED=true
-ALTITUDE="100m"
+ALTITUDE="100"
 MLAT_USER="alice"
 MLAT_ENABLED=false
 MLAT_PRIVATE=false
@@ -419,7 +492,7 @@ EOF
 LATITUDE="52.5"
 LONGITUDE="13.4"
 GEO_CONFIGURED=true
-ALTITUDE="100m"
+ALTITUDE="100"
 MLAT_USER="alice"
 MLAT_ENABLED=false
 MLAT_PRIVATE=false

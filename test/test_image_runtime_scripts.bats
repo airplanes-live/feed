@@ -21,7 +21,7 @@ write_image_config() {
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="52.52000"
 LONGITUDE="13.40500"
-ALTITUDE="35m"
+ALTITUDE="35"
 USER="image-feeder"
 MLAT_USER="image-feeder"
 MLAT_ENABLED=true
@@ -49,7 +49,7 @@ EOF
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="image-feeder"
 MLAT_ENABLED=true
 MLAT_PRIVATE=false
@@ -77,7 +77,7 @@ SH
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="image-feeder"
 MLAT_ENABLED=true
 MLAT_PRIVATE=false
@@ -208,7 +208,7 @@ INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 LATITUDE="52"
 LONGITUDE="13"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="legacy-feeder"
 MLAT_ENABLED=true
 PRIVACY="--privacy"
@@ -245,7 +245,7 @@ INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 LATITUDE="52"
 LONGITUDE="13"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="legacy-feeder"
 MLAT_ENABLED=true
 PRIVACY=""
@@ -287,7 +287,7 @@ INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 LATITUDE="52"
 LONGITUDE="13"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="alice"
 MLAT_ENABLED=true
 PRIVACY="--privacy"
@@ -333,7 +333,7 @@ INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 LATITUDE="52"
 LONGITUDE="13"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="legacy-feeder"
 MLAT_ENABLED=true
 MLAT_MARKER="no"
@@ -370,7 +370,7 @@ INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 LATITUDE="52"
 LONGITUDE="13"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="legacy-feeder"
 MLAT_ENABLED=true
 MLAT_MARKER="yes"
@@ -414,7 +414,7 @@ SH
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="52"
 LONGITUDE="13"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="legacy-feeder"
 MLAT_ENABLED=true
 MLAT_MARKER="no"
@@ -456,7 +456,7 @@ INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 LATITUDE="52"
 LONGITUDE="13"
-ALTITUDE="35m"
+ALTITUDE="35"
 MLAT_USER="alice"
 MLAT_ENABLED=true
 MLAT_MARKER="no"
@@ -497,7 +497,7 @@ INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 LATITUDE="1"
 LONGITUDE="2"
-ALTITUDE="3m"
+ALTITUDE="3"
 USER="image-marker"
 MLATSERVER="feed.airplanes.live:31090"
 NET_OPTIONS="--decoder-option-that-must-not-feed --net-bi-port 30004,30104"
@@ -534,7 +534,7 @@ INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
 LATITUDE="1"
 LONGITUDE="2"
-ALTITUDE="3m"
+ALTITUDE="3"
 USER="manual-install"
 MLATSERVER="feed.airplanes.live:31090"
 TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"
@@ -622,7 +622,7 @@ write_feed_env() {
         'MLAT_ENABLED=true' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -640,7 +640,7 @@ write_feed_env() {
     grep -qx 'mlat_user=alice' "$root/run/airplanes-mlat/state"
     grep -qx 'latitude=52' "$root/run/airplanes-mlat/state"
     grep -qx 'longitude=13' "$root/run/airplanes-mlat/state"
-    grep -qx 'altitude=35m' "$root/run/airplanes-mlat/state"
+    grep -qx 'altitude=35' "$root/run/airplanes-mlat/state"
     grep -qE '^decided_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$root/run/airplanes-mlat/state"
     # mlat-client was invoked.
     [ -f "$arg_log" ]
@@ -656,7 +656,7 @@ write_feed_env() {
         'MLAT_ENABLED=false' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -681,7 +681,7 @@ write_feed_env() {
         'MLAT_ENABLED=false' \
         'LATITUDE=0' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -702,7 +702,7 @@ write_feed_env() {
         'GEO_CONFIGURED=false' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -727,7 +727,7 @@ write_feed_env() {
         'MLAT_ENABLED=true' \
         'LATITUDE=0' \
         'LONGITUDE=0' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -751,7 +751,7 @@ write_feed_env() {
         'MLAT_ENABLED=true' \
         'LATITUDE=0' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -771,7 +771,7 @@ write_feed_env() {
         'MLAT_ENABLED=true' \
         'LATITUDE=52' \
         'LONGITUDE=0' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -791,7 +791,7 @@ write_feed_env() {
         'MLAT_ENABLED=true' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -813,7 +813,7 @@ write_feed_env() {
         'MLAT_ENABLED=true' \
         'LATITUDE="0.00000"' \
         'LONGITUDE="0.00000"' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -836,7 +836,7 @@ write_feed_env() {
         'GEO_CONFIGURED=true' \
         'LATITUDE=0' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -857,7 +857,7 @@ write_feed_env() {
         'MLAT_ENABLED=true' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -884,7 +884,7 @@ write_feed_env() {
         'MLAT_ENABLED=true' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -905,7 +905,7 @@ write_feed_env() {
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
     write_feed_env "$root" \
-        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35m' \
+        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' 'INPUT_TYPE="dump1090"' 'MLATSERVER="feed.airplanes.live:31090"'
     : > "$root/etc/airplanes/feeder-id"
 
@@ -921,7 +921,7 @@ write_feed_env() {
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
     write_feed_env "$root" \
-        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35m' \
+        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' 'INPUT_TYPE="dump1090"' 'MLATSERVER="feed.airplanes.live:31090"'
     # Three printable bytes — would have made a "Anonymous-abc" identity if
     # we used raw head -c 8 without UUID validation.
@@ -939,7 +939,7 @@ write_feed_env() {
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
     write_feed_env "$root" \
-        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35m' \
+        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' 'INPUT_TYPE="dump1090"' 'MLATSERVER="feed.airplanes.live:31090"'
     # Target file with a canonical-looking UUID; the daemon must still refuse
     # to follow the symlink and fall back to plain Anonymous.
@@ -958,7 +958,7 @@ write_feed_env() {
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
     write_feed_env "$root" \
-        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35m' \
+        'MLAT_USER=""' 'MLAT_ENABLED=true' 'LATITUDE=52' 'LONGITUDE=13' 'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' 'INPUT_TYPE="dump1090"' 'MLATSERVER="feed.airplanes.live:31090"'
     # CRLF line ending (Windows-edited feeder-id file) — must be stripped
     # before the UUID regex check so the validation succeeds.
@@ -984,7 +984,7 @@ write_feed_env() {
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="52.52000"
 LONGITUDE="13.40500"
-ALTITUDE="35m"
+ALTITUDE="35"
 USER="legacy-only"
 EOF
 
@@ -1060,7 +1060,7 @@ EOF
         'MLAT_PRIVATE=yes' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -1084,7 +1084,7 @@ EOF
         'MLAT_PRIVATE=true' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -1104,7 +1104,7 @@ EOF
         'MLAT_ENABLED=true' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -1125,7 +1125,7 @@ EOF
         'MLAT_ENABLED=true' \
         'LATITUDE=52' \
         'LONGITUDE=13' \
-        'ALTITUDE=35m' \
+        'ALTITUDE=35' \
         'INPUT="127.0.0.1:30005"' \
         'INPUT_TYPE="dump1090"' \
         'MLATSERVER="feed.airplanes.live:31090"'
@@ -1175,7 +1175,7 @@ INPUT="127.0.0.1:30007"
 INPUT_TYPE="dump1090"
 LATITUDE="1"
 LONGITUDE="2"
-ALTITUDE="3m"
+ALTITUDE="3"
 USER="canonical-feed-env"
 MLATSERVER="feed.airplanes.live:31090"
 TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"

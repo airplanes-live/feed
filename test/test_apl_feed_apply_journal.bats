@@ -52,7 +52,7 @@ seed_feed_env() {
     cat > "$FEED_ENV" <<EOF
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="120m"
+ALTITUDE="120"
 GEO_CONFIGURED=true
 MLAT_USER="alice"
 MLAT_ENABLED=true
@@ -93,8 +93,8 @@ do_apply() {
     [ "$(wc -l < "$LOGGER_LOG")" -eq 1 ]
     grep -F 'MLAT_USER="carol"' "$LOGGER_LOG"
     grep -F 'MLAT_PRIVATE="true"' "$LOGGER_LOG"
-    # ALTITUDE canonicalises to suffixed form (200 -> 200m).
-    grep -F 'ALTITUDE="200m"' "$LOGGER_LOG"
+    # ALTITUDE canonicalises to bare metres on disk (200 -> 200).
+    grep -F 'ALTITUDE="200"' "$LOGGER_LOG"
 }
 
 @test "no_change outcome emits no audit line" {

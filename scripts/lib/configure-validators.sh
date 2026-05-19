@@ -8,13 +8,15 @@
 # exit status (validators) or stdout (normalizer). No global-state reads
 # or writes — safe to source anywhere.
 #
-# Altitude unit policy (intentional split):
-#   `valid_altitude` accepts unitless integers (e.g. `0`, `123`) so build-mode
-#   feeders configured non-interactively with AIRPLANES_ALTITUDE=0 don't get
-#   rejected. The interactive whiptail loop in configure.sh enforces a
-#   stricter `^-?[0-9]+(ft|m)$` shape because the operator is being asked
-#   for an antenna altitude and units must be explicit. Both rules coexist
-#   on purpose.
+# Altitude unit policy:
+#   `valid_altitude` accepts the union of operator-input shapes (`120`,
+#   `120m`, `400ft`, `42.5`, `42.5m`) plus the empty string (tombstone
+#   passthrough for the inbound `alt.value: null` round-trip). Conversion
+#   to canonical bare metres happens through `altitude_to_bare_metres`,
+#   which owns the regex AND the post-conversion `[-1000, 10000]` metres
+#   range gate. The interactive whiptail loop in configure.sh still
+#   enforces a stricter `^-?[0-9]+(ft|m)$` shape for explicit-units UX,
+#   but the validator and canonicalizer are unit-tolerant.
 #
 # `sanitize_mlat_user` character set:
 #   The `tr -c '[a-zA-Z0-9]_\- ' '_'` filter replaces every character NOT
@@ -43,16 +45,56 @@ valid_longitude() {
         && awk -v LON="$1" 'BEGIN { exit !(LON <= 180 && LON >= -180) }'
 }
 
-# Altitude accepts integers and decimals, optional `m`/`ft` suffix, and is
-# numerically range-checked against [-1000, 10000] to match Go configspec.
-# The previous integer-only rule rejected legitimate decimal antenna
-# heights (e.g. `120.5m`) and skipped the range check entirely.
+# Convert an altitude input to bare metres on stdout. Single source of
+# truth across configure.sh, apl-feed apply, apl-feed config sync (outbound),
+# and the on-disk migrator. The Go and JS mirrors in image-webconfig consume
+# the same fixture file (test/fixtures/altitude-canonicalization.json) so
+# byte-exact equality holds across every writer.
+#
+# Inputs (regex shape):
+#   ""           — empty stdout, rc 0 (tombstone passthrough)
+#   <n>          — bare metres, stdout <n> (already bare)
+#   <n>m         — strip m, stdout <n>
+#   <n>ft        — multiply by 0.3048, stdout <result>
+# Range gate (POST-CONVERSION metres): [-1000, 10000] closed; out-of-range
+# returns rc 1 with empty stdout. Regex-shape failures also return rc 1.
+#
+# Output format: fixed-point (%.10f) with trailing-zero-after-decimal trim
+# and bare-trailing-dot trim. Never exponential. Examples:
+#   "120m"     -> "120"
+#   "400ft"    -> "121.92"
+#   "32808ft"  -> "9999.8784"
+#   "-50ft"    -> "-15.24"
+#   "33000ft"  -> "" + rc 1 (out of range; ~10058m)
+altitude_to_bare_metres() {
+    local raw="$1"
+    if [[ -z "$raw" ]]; then
+        return 0
+    fi
+    [[ "$raw" =~ ^(-?[0-9]+([.][0-9]+)?)(ft|m)?$ ]] || return 1
+    local num="${BASH_REMATCH[1]}"
+    local suffix="${BASH_REMATCH[3]}"
+    local mult=1
+    if [[ "$suffix" == "ft" ]]; then
+        mult="0.3048"
+    fi
+    local metres
+    metres="$(awk -v V="$num" -v MULT="$mult" 'BEGIN { printf "%.10f\n", V * MULT }')"
+    awk -v ALT="$metres" 'BEGIN { exit !(ALT >= -1000 && ALT <= 10000) }' || return 1
+    # Trim trailing zeros after the decimal point, and a bare trailing dot.
+    metres="$(printf '%s' "$metres" | sed -E 's/\.?0+$//')"
+    printf '%s' "$metres"
+}
+
+# Altitude validator: empty is accepted (tombstone passthrough from a server
+# `alt.value: null` round-trip), non-empty delegates to altitude_to_bare_metres
+# which owns both the regex shape and the post-conversion metres range gate.
+# Range matches airplanes-live/website's accounts/serializers/feeder.py alt
+# validator (`[-1000, 10000]` metres) — so `20000ft` (~6096m) is now accepted
+# and `33000ft` (~10058m) is now rejected.
 valid_altitude() {
-    [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?(ft|m)?$ ]] || return 1
-    local num="${BASH_REMATCH[0]}"
-    num="${num%ft}"
-    num="${num%m}"
-    awk -v ALT="$num" 'BEGIN { exit !(ALT >= -1000 && ALT <= 10000) }'
+    [[ -z "$1" ]] && return 0
+    altitude_to_bare_metres "$1" >/dev/null
 }
 
 # Strict shape match for canonical MLAT_USER input. Mirrors Go
@@ -105,13 +147,3 @@ valid_dump978_gain() {
     awk -v G="$1" 'BEGIN { exit !(G >= 0 && G <= 60) }'
 }
 
-normalize_altitude() {
-    local alt="$1"
-    if [[ $alt =~ ^-([0-9]+)ft$ ]]; then
-        awk -v NUM="${BASH_REMATCH[1]}" 'BEGIN { printf "-%0.2f", NUM / 3.28 }'
-    elif [[ $alt =~ ^-([0-9]+)m$ ]]; then
-        printf -- '-%s' "${BASH_REMATCH[1]}"
-    else
-        printf '%s' "$alt"
-    fi
-}

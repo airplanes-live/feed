@@ -1,0 +1,30 @@
+{
+  "_comment": "Shared canonical fixture for altitude_to_bare_metres across bash (feed), Go (image-webconfig), and JS (image-webconfig SPA). Output strings are byte-exact; consumers MUST produce these literal strings for dirty-state comparisons to converge. Range bounds: [-1000, 10000] post-conversion metres, matching airplanes-live/website's accounts/serializers/feeder.py alt validator. Trim trailing-zero-after-decimal-point and bare trailing dot; never emit scientific notation.",
+  "cases": [
+    { "input": "",                "expected_output": "",            "expected_ok": true,  "note": "tombstone passthrough" },
+    { "input": "0",               "expected_output": "0",           "expected_ok": true },
+    { "input": "0m",              "expected_output": "0",           "expected_ok": true },
+    { "input": "120",             "expected_output": "120",         "expected_ok": true },
+    { "input": "120m",            "expected_output": "120",         "expected_ok": true },
+    { "input": "400ft",           "expected_output": "121.92",      "expected_ok": true },
+    { "input": "400.5ft",         "expected_output": "122.0724",    "expected_ok": true },
+    { "input": "42.5",            "expected_output": "42.5",        "expected_ok": true },
+    { "input": "42.5m",           "expected_output": "42.5",        "expected_ok": true },
+    { "input": "-50m",            "expected_output": "-50",         "expected_ok": true },
+    { "input": "-50ft",           "expected_output": "-15.24",      "expected_ok": true },
+    { "input": "20000ft",         "expected_output": "6096",        "expected_ok": true,  "note": "previously rejected by raw-range check; now accepted (~6096m < 10000m)" },
+    { "input": "32808ft",         "expected_output": "9999.8784",   "expected_ok": true,  "note": "canonical ft boundary; byte-exact across all four callers" },
+    { "input": "33000ft",         "expected_output": "",            "expected_ok": false, "note": "out of range (~10058m > 10000m)" },
+    { "input": "10000",           "expected_output": "10000",       "expected_ok": true,  "note": "upper inclusive bound" },
+    { "input": "10000m",          "expected_output": "10000",       "expected_ok": true,  "note": "upper inclusive bound, m-suffixed" },
+    { "input": "10000.0001",      "expected_output": "",            "expected_ok": false, "note": "just over upper bound" },
+    { "input": "10001m",          "expected_output": "",            "expected_ok": false, "note": "above upper bound" },
+    { "input": "-1000",           "expected_output": "-1000",       "expected_ok": true,  "note": "lower inclusive bound" },
+    { "input": "-1000m",          "expected_output": "-1000",       "expected_ok": true,  "note": "lower inclusive bound, m-suffixed" },
+    { "input": "-1001m",          "expected_output": "",            "expected_ok": false, "note": "below lower bound" },
+    { "input": "-3280.8399ft",    "expected_output": "",            "expected_ok": false, "note": "ft input arithmetically just below -1000m (~-1000.00000152m) — range strictly rejects (consistent with strict 10000.0001 reject); exercise -1000m directly for the clean boundary case" },
+    { "input": "garbage",         "expected_output": "",            "expected_ok": false, "note": "regex shape fails" },
+    { "input": "12m3",            "expected_output": "",            "expected_ok": false, "note": "regex shape fails (suffix not at end)" },
+    { "input": "12.3.4",          "expected_output": "",            "expected_ok": false, "note": "regex shape fails (two decimal points)" }
+  ]
+}
