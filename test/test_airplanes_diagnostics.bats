@@ -645,11 +645,16 @@ SH
     [ "$output" = '-58' ]
 }
 
-@test "POST body omits pi_health when both vcgencmd and timedatectl are absent" {
-    # Block both probes by stubbing them to fail. The default setup
-    # doesn't ship vcgencmd or timedatectl stubs, but the dev host
-    # likely has timedatectl on PATH (it's installed by systemd) which
-    # would otherwise produce a pi_health.ntp_synchronized field.
+@test "POST body omits pi_throttle and system.ntp_synchronized when both vcgencmd and timedatectl are absent" {
+    # Stub BOTH probes to fail. The dev / CI host usually ships
+    # `timedatectl` (installed by systemd) and a Pi-based dev box would
+    # also have `vcgencmd`; either of those leaking into this test would
+    # produce a payload that contradicts the test's title.
+    cat > "$STUB_DIR/vcgencmd" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+    chmod +x "$STUB_DIR/vcgencmd"
     cat > "$STUB_DIR/timedatectl" <<'SH'
 #!/usr/bin/env bash
 exit 1
@@ -657,11 +662,18 @@ SH
     chmod +x "$STUB_DIR/timedatectl"
     run_script
     [ "$status" -eq 0 ]
-    run jq '.pi_health // empty' "$BODY_LOG"
-    [ -z "$output" ]
+    # pi_throttle is absent on non-Pi (no vcgencmd).
+    run jq -e 'has("pi_throttle") | not' "$BODY_LOG"
+    [ "$status" -eq 0 ]
+    # NTP-sync absent in system block (broken timedatectl).
+    run jq -e '.system | has("ntp_synchronized") | not' "$BODY_LOG"
+    [ "$status" -eq 0 ]
+    # Old container is gone — sentinel against accidental regressions.
+    run jq -e 'has("pi_health") | not' "$BODY_LOG"
+    [ "$status" -eq 0 ]
 }
 
-@test "pi_health throttle survives a broken timedatectl (sub-probes independent)" {
+@test "pi_throttle survives a broken timedatectl (probes are independent)" {
     cat > "$STUB_DIR/vcgencmd" <<'SH'
 #!/usr/bin/env bash
 [[ "$1" == "get_throttled" ]] && printf 'throttled=0x0\n'
@@ -674,15 +686,16 @@ SH
     chmod +x "$STUB_DIR/timedatectl"
     run_script
     [ "$status" -eq 0 ]
-    # throttle block is present, all bits false
-    run jq -er '.pi_health.throttle.throttled_now' "$BODY_LOG"
+    # pi_throttle bits present, all false
+    run jq -er '.pi_throttle.throttled_now' "$BODY_LOG"
     [ "$output" = 'false' ]
-    # ntp_synchronized is dropped (broken probe)
-    run jq '.pi_health.ntp_synchronized // empty' "$BODY_LOG"
-    [ -z "$output" ]
+    # NTP-sync is absent (broken probe). With separate top-level fields
+    # the independence is now structural, but the sentinel stays.
+    run jq -e '.system | has("ntp_synchronized") | not' "$BODY_LOG"
+    [ "$status" -eq 0 ]
 }
 
-@test "POST body pi_health bit decode for vcgencmd=0x50005" {
+@test "POST body pi_throttle bit decode for vcgencmd=0x50005" {
     cat > "$STUB_DIR/vcgencmd" <<'SH'
 #!/usr/bin/env bash
 [[ "$1" == "get_throttled" ]] && printf 'throttled=0x50005\n'
@@ -697,20 +710,39 @@ SH
     [ "$status" -eq 0 ]
     # bits 0, 2, 16, 18 set: undervoltage_now, throttled_now,
     # undervoltage_ever, throttled_ever — all true.
-    run jq -er '.pi_health.throttle.undervoltage_now' "$BODY_LOG"
+    run jq -er '.pi_throttle.undervoltage_now' "$BODY_LOG"
     [ "$output" = 'true' ]
-    run jq -er '.pi_health.throttle.throttled_now' "$BODY_LOG"
+    run jq -er '.pi_throttle.throttled_now' "$BODY_LOG"
     [ "$output" = 'true' ]
-    run jq -er '.pi_health.throttle.undervoltage_ever' "$BODY_LOG"
+    run jq -er '.pi_throttle.undervoltage_ever' "$BODY_LOG"
     [ "$output" = 'true' ]
-    run jq -er '.pi_health.throttle.throttled_ever' "$BODY_LOG"
+    run jq -er '.pi_throttle.throttled_ever' "$BODY_LOG"
     [ "$output" = 'true' ]
-    run jq -er '.pi_health.throttle.freq_capped_now' "$BODY_LOG"
+    run jq -er '.pi_throttle.freq_capped_now' "$BODY_LOG"
     [ "$output" = 'false' ]
-    run jq -er '.pi_health.throttle.soft_temp_limit_ever' "$BODY_LOG"
+    run jq -er '.pi_throttle.soft_temp_limit_ever' "$BODY_LOG"
     [ "$output" = 'false' ]
-    run jq -er '.pi_health.ntp_synchronized' "$BODY_LOG"
+    run jq -er '.system.ntp_synchronized' "$BODY_LOG"
     [ "$output" = 'true' ]
+    # Exact key-set: the server sanitizer drops the whole pi_throttle
+    # block unless all 8 known keys are present. Pinning the wire shape
+    # here catches an accidental drop of any one bit.
+    run jq -er '.pi_throttle | keys | sort | join(",")' "$BODY_LOG"
+    [ "$output" = 'freq_capped_ever,freq_capped_now,soft_temp_limit_ever,soft_temp_limit_now,throttled_ever,throttled_now,undervoltage_ever,undervoltage_now' ]
+}
+
+@test "system.ntp_synchronized is false when timedatectl reports no" {
+    # Pin that `false` survives the prune pass — `_prune` strips empty
+    # strings and nulls but must keep boolean false.
+    cat > "$STUB_DIR/timedatectl" <<'SH'
+#!/usr/bin/env bash
+[[ "$1" == "show" ]] && printf 'no\n'
+SH
+    chmod +x "$STUB_DIR/timedatectl"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.system.ntp_synchronized' "$BODY_LOG"
+    [ "$output" = 'false' ]
 }
 
 # ---- response handling ----
