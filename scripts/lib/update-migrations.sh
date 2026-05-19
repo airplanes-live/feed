@@ -136,25 +136,69 @@ migrate_net_options_beast_reduce_plus() {
 migrate_net_options_mlat_forwarding() {
     local feed_env="$1"
     [[ -f "$feed_env" ]] || return 0
+
+    # Normalize multi-line backslash-continued NET_OPTIONS to single-line
+    # FIRST so subsequent extraction sees the whole value. Anchor on
+    # ^NET_OPTIONS= so other backslash-continued values elsewhere in
+    # feed.env stay untouched. Loop via :a / ba until the collected line
+    # no longer ends with a continuation. Done unconditionally before the
+    # extract step below — an unnormalized multi-line value would be
+    # parsed as a truncated string and silently mishandled.
+    sed -i -e ':a' \
+        -e '/^NET_OPTIONS=/ { /\\[[:space:]]*$/ { N; s/\\[[:space:]]*\n[[:space:]]*/ /; ba } }' \
+        "$feed_env" || true
+
     # No persisted NET_OPTIONS → wrapper default fires, which already
     # includes both knobs (and loopback bind for fresh installs). Skip.
     if ! grep -qE '^NET_OPTIONS=' "$feed_env"; then
         return 0
     fi
 
-    local has_forward_mlat=0 has_30187=0 has_bi_port=0
-    grep -q -- '--forward-mlat' "$feed_env" && has_forward_mlat=1
-    # \b30187\b is a whole-number match so 30187 isn't found inside
-    # 301870, 130187, etc. — defensive against pathological port lists.
-    if grep -qE -- '--net-bi-port[[:space:]]+[0-9,]*\b30187\b' "$feed_env"; then
-        has_30187=1
-        has_bi_port=1
-    elif grep -qE -- '--net-bi-port[[:space:]]+[0-9,]+' "$feed_env"; then
-        has_bi_port=1
+    # Extract the ACTIVE NET_OPTIONS value (last occurrence wins, mirroring
+    # bash's source-order semantics). Checking the extracted value — not
+    # the whole file — keeps commented examples, stale lines, or other
+    # variables containing --forward-mlat / --net-bi-port 30187 from
+    # tricking the idempotency check into a silent no-op.
+    local current_value
+    current_value="$(_extract_env_value "$feed_env" NET_OPTIONS)"
+
+    local need_forward_mlat=0 need_30187_action="" existing_list=""
+    if [[ "$current_value" != *--forward-mlat* ]]; then
+        need_forward_mlat=1
+    fi
+    # Match --net-bi-port followed by a comma-separated port list. The
+    # ,30187, sentinel boundary check ensures 30187 inside 130187 or
+    # 301870 is not mistaken for our port — by padding the list with
+    # leading and trailing commas before comparing.
+    local port_list_re='--net-bi-port[[:space:]]+([0-9,]+)'
+    if [[ "$current_value" =~ $port_list_re ]]; then
+        existing_list="${BASH_REMATCH[1]}"
+        if [[ ",${existing_list}," == *,30187,* ]]; then
+            : # 30187 already present in the active value
+        else
+            need_30187_action="extend"
+        fi
+    else
+        need_30187_action="add"
     fi
 
-    if [[ "$has_forward_mlat" == "1" && "$has_30187" == "1" ]]; then
+    if [[ "$need_forward_mlat" == "0" && -z "$need_30187_action" ]]; then
         return 0
+    fi
+
+    # Build the new value in-memory so we don't rely on sed silently
+    # no-op'ing when the active line's quoting doesn't match a regex.
+    local new_value="$current_value"
+    case "$need_30187_action" in
+        extend)
+            new_value="${new_value/--net-bi-port ${existing_list}/--net-bi-port ${existing_list},30187}"
+            ;;
+        add)
+            new_value="$new_value --net-bi-port 30187"
+            ;;
+    esac
+    if [[ "$need_forward_mlat" == "1" ]]; then
+        new_value="$new_value --forward-mlat"
     fi
 
     local backup="${feed_env}.pre-mlat-forwarding"
@@ -162,32 +206,21 @@ migrate_net_options_mlat_forwarding() {
         cp -fp "$feed_env" "$backup"
     fi
 
-    # Normalize multi-line backslash-continued NET_OPTIONS to single-line
-    # so the substring edits below work uniformly. The leading ^NET_OPTIONS=
-    # anchor scopes this to NET_OPTIONS only, leaving other backslash-
-    # continued values (if any) untouched. Loop via :a / ba until the
-    # collected line no longer ends with a continuation.
-    sed -i -e ':a' \
-        -e '/^NET_OPTIONS=/ { /\\[[:space:]]*$/ { N; s/\\[[:space:]]*\n[[:space:]]*/ /; ba } }' \
-        "$feed_env" || true
-
-    # Apply substring edits to the (now single-line) NET_OPTIONS value.
-    if [[ "$has_30187" == "0" ]]; then
-        if [[ "$has_bi_port" == "1" ]]; then
-            # Extend the existing comma-separated port list.
-            sed -i -E '/^NET_OPTIONS=/ s/(--net-bi-port[[:space:]]+[0-9,]+)/\1,30187/' "$feed_env" || true
-        else
-            # No --net-bi-port flag at all — append it inside the quoted
-            # NET_OPTIONS value. Matches NET_OPTIONS="...". Single-quoted
-            # or unquoted exotic forms are skipped (operator hand-edits
-            # beyond the legacy double-quoted convention apply manually).
-            sed -i -E '/^NET_OPTIONS=/ s/"([^"]*)"/"\1 --net-bi-port 30187"/' "$feed_env" || true
-        fi
-    fi
-
-    if [[ "$has_forward_mlat" == "0" ]]; then
-        sed -i -E '/^NET_OPTIONS=/ s/"([^"]*)"/"\1 --forward-mlat"/' "$feed_env" || true
-    fi
+    # Atomic rewrite: strip all NET_OPTIONS= lines and append the new
+    # value as a double-quoted KEY=VALUE pair. Metachar-escape pattern
+    # mirrors migrate_user_to_mlat_split so unusual operator-supplied
+    # content survives sourcing without command/parameter expansion.
+    local tmp escaped
+    tmp="$(mktemp "${feed_env}.XXXXXX")"
+    grep -vE '^NET_OPTIONS=' "$feed_env" > "$tmp" || true
+    escaped="${new_value//\\/\\\\}"
+    escaped="${escaped//\$/\\\$}"
+    escaped="${escaped//\`/\\\`}"
+    escaped="${escaped//\"/\\\"}"
+    printf 'NET_OPTIONS="%s"\n' "$escaped" >> "$tmp"
+    chmod --reference="$feed_env" "$tmp" 2>/dev/null || true
+    chown --reference="$feed_env" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$feed_env"
 }
 
 # Rewrite the legacy TARGET fallback host

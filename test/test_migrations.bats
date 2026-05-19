@@ -1002,6 +1002,41 @@ EOF
     grep -q -- '--net-bi-port 30004,30104,30187' "$FEED_ENV"
 }
 
+@test "migrate_net_options_mlat_forwarding: commented --forward-mlat does NOT trick idempotency into skipping" {
+    # Detection must look at the ACTIVE NET_OPTIONS value, not the whole
+    # file. A pre-migration feed.env with a comment line that happens to
+    # mention --forward-mlat must still trigger the migration on the
+    # actual NET_OPTIONS line below.
+    cat > "$FEED_ENV" <<'EOF'
+# Note: --forward-mlat was historically off; we now enable it.
+NET_OPTIONS="--net --net-bi-port 30004,30104"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    # Active NET_OPTIONS now has the appends.
+    grep -qE '^NET_OPTIONS=.*--forward-mlat' "$FEED_ENV"
+    grep -qE '^NET_OPTIONS=.*30187' "$FEED_ENV"
+}
+
+@test "migrate_net_options_mlat_forwarding: commented --net-bi-port 30187 does NOT trick idempotency into skipping" {
+    cat > "$FEED_ENV" <<'EOF'
+# Old shape: NET_OPTIONS="--net-bi-port 30187,30004,30104"
+NET_OPTIONS="--net --net-bi-port 30004,30104 --forward-mlat"
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    grep -qE '^NET_OPTIONS=.*--net-bi-port 30004,30104,30187' "$FEED_ENV"
+}
+
+@test "migrate_net_options_mlat_forwarding: single-quoted NET_OPTIONS still gets the appends (extract-modify-rewrite)" {
+    # The extract-modify-rewrite refactor handles single-quoted shapes
+    # that the original sed-substring pass would have silently skipped.
+    # Re-emitted as double-quoted, matching the canonical schema.
+    cat > "$FEED_ENV" <<'EOF'
+NET_OPTIONS='--net --net-bi-port 30004,30104'
+EOF
+    migrate_net_options_mlat_forwarding "$FEED_ENV"
+    grep -qE '^NET_OPTIONS="--net --net-bi-port 30004,30104,30187 --forward-mlat"$' "$FEED_ENV"
+}
+
 @test "migrate_net_options_mlat_forwarding: backup written once and never overwritten" {
     cat > "$FEED_ENV" <<'EOF'
 NET_OPTIONS="--net --net-bi-port 30004,30104"
