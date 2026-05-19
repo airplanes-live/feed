@@ -309,8 +309,11 @@ collect_pi_throttle() {
 }
 
 # timedatectl show -p NTPSynchronized --value -> "yes" / "no" / "".
-# Universal host signal — every systemd Linux has this, not just Pis. Sits
-# at `system.ntp_synchronized` on the wire, alongside uptime and CPU.
+# Universal host signal — any systemd host with a running timedated can
+# answer, not just Pis. Sits at `system.ntp_synchronized` on the wire,
+# alongside uptime and CPU. Containers, chroots, and stripped images may
+# ship `timedatectl` but fail at runtime; the helper returns 1 and the
+# field is omitted from the payload by the prune pass.
 collect_ntp_sync() {
     command -v timedatectl >/dev/null 2>&1 || return 1
     local raw

@@ -646,10 +646,15 @@ SH
 }
 
 @test "POST body omits pi_throttle and system.ntp_synchronized when both vcgencmd and timedatectl are absent" {
-    # Block both probes by stubbing them to fail. The default setup
-    # doesn't ship vcgencmd or timedatectl stubs, but the dev host
-    # likely has timedatectl on PATH (it's installed by systemd) which
-    # would otherwise produce a system.ntp_synchronized field.
+    # Stub BOTH probes to fail. The dev / CI host usually ships
+    # `timedatectl` (installed by systemd) and a Pi-based dev box would
+    # also have `vcgencmd`; either of those leaking into this test would
+    # produce a payload that contradicts the test's title.
+    cat > "$STUB_DIR/vcgencmd" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+    chmod +x "$STUB_DIR/vcgencmd"
     cat > "$STUB_DIR/timedatectl" <<'SH'
 #!/usr/bin/env bash
 exit 1
@@ -719,6 +724,25 @@ SH
     [ "$output" = 'false' ]
     run jq -er '.system.ntp_synchronized' "$BODY_LOG"
     [ "$output" = 'true' ]
+    # Exact key-set: the server sanitizer drops the whole pi_throttle
+    # block unless all 8 known keys are present. Pinning the wire shape
+    # here catches an accidental drop of any one bit.
+    run jq -er '.pi_throttle | keys | sort | join(",")' "$BODY_LOG"
+    [ "$output" = 'freq_capped_ever,freq_capped_now,soft_temp_limit_ever,soft_temp_limit_now,throttled_ever,throttled_now,undervoltage_ever,undervoltage_now' ]
+}
+
+@test "system.ntp_synchronized is false when timedatectl reports no" {
+    # Pin that `false` survives the prune pass — `_prune` strips empty
+    # strings and nulls but must keep boolean false.
+    cat > "$STUB_DIR/timedatectl" <<'SH'
+#!/usr/bin/env bash
+[[ "$1" == "show" ]] && printf 'no\n'
+SH
+    chmod +x "$STUB_DIR/timedatectl"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.system.ntp_synchronized' "$BODY_LOG"
+    [ "$output" = 'false' ]
 }
 
 # ---- response handling ----
