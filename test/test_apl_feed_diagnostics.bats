@@ -56,7 +56,7 @@ write_feed_env_default() {
     cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="35m"
+ALTITUDE="35"
 GEO_CONFIGURED=true
 MLAT_USER="bats-tester"
 MLAT_ENABLED=true
@@ -68,7 +68,7 @@ write_feed_env_with_report_status() {
     cat > "$ROOT_DIR/etc/airplanes/feed.env" <<EOF
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="35m"
+ALTITUDE="35"
 GEO_CONFIGURED=true
 MLAT_USER="bats-tester"
 MLAT_ENABLED=true
