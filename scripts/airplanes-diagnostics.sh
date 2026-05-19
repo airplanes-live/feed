@@ -288,8 +288,8 @@ collect_network() {
 #   bit 1  freq_capped_now         bit 17 freq_capped_ever
 #   bit 2  throttled_now           bit 18 throttled_ever
 #   bit 3  soft_temp_limit_now     bit 19 soft_temp_limit_ever
-# Sets pi_health_* globals. Returns 0 on success, 1 if vcgencmd absent or
-# its output unparseable.
+# Sets the eight pi_*_now / pi_*_ever globals. Returns 0 on success, 1
+# if vcgencmd is absent or its output is unparseable.
 collect_pi_throttle() {
     command -v vcgencmd >/dev/null 2>&1 || return 1
     local raw value
@@ -308,8 +308,10 @@ collect_pi_throttle() {
     pi_soft_temp_limit_ever=$(( (n >> 19) & 1 ))
 }
 
-# timedatectl show -p NTPSynchronized --value -> "yes" / "no" / ""
-collect_pi_ntp_sync() {
+# timedatectl show -p NTPSynchronized --value -> "yes" / "no" / "".
+# Universal host signal — every systemd Linux has this, not just Pis. Sits
+# at `system.ntp_synchronized` on the wire, alongside uptime and CPU.
+collect_ntp_sync() {
     command -v timedatectl >/dev/null 2>&1 || return 1
     local raw
     raw="$(timeout 3s timedatectl show -p NTPSynchronized --value 2>/dev/null)" || return 1
@@ -460,15 +462,15 @@ build_service_json() {
          | with_entries(select(.value != null and .value != ""))'
 }
 
-# Build the pi_health block as JSON, or print "null" if neither sub-probe
-# produced data. Sub-probes are independent — a missing/broken
-# `timedatectl` doesn't suppress vcgencmd throttle data and vice versa.
-build_pi_health_json() {
-    local throttle_json='null' ntp_json='null'
+# Build the flat pi_throttle block as JSON, or print "null" if vcgencmd
+# is absent or its output failed to parse. Pi-only — absent on every
+# non-Pi feeder. NTP-sync lives in `system.ntp_synchronized` now (it is
+# universal-host, not Pi-specific) and is plumbed separately.
+build_pi_throttle_json() {
     local pi_undervoltage_now=0 pi_freq_capped_now=0 pi_throttled_now=0 pi_soft_temp_limit_now=0
     local pi_undervoltage_ever=0 pi_freq_capped_ever=0 pi_throttled_ever=0 pi_soft_temp_limit_ever=0
     if command -v vcgencmd >/dev/null 2>&1 && collect_pi_throttle; then
-        throttle_json="$(jq -nc \
+        jq -nc \
             --argjson uv_now "$pi_undervoltage_now" \
             --argjson fc_now "$pi_freq_capped_now" \
             --argjson th_now "$pi_throttled_now" \
@@ -484,22 +486,10 @@ build_pi_health_json() {
               undervoltage_ever: ($uv_ever == 1),
               freq_capped_ever: ($fc_ever == 1),
               throttled_ever: ($th_ever == 1),
-              soft_temp_limit_ever: ($st_ever == 1)}')"
-    fi
-    if command -v timedatectl >/dev/null 2>&1; then
-        local ntp
-        if ntp="$(collect_pi_ntp_sync)"; then
-            ntp_json="$ntp"
-        fi
-    fi
-    if [[ "$throttle_json" == 'null' && "$ntp_json" == 'null' ]]; then
-        printf 'null'
+              soft_temp_limit_ever: ($st_ever == 1)}'
         return
     fi
-    jq -nc \
-        --argjson throttle "$throttle_json" \
-        --argjson ntp "$ntp_json" \
-        '{throttle: $throttle, ntp_synchronized: $ntp}'
+    printf 'null'
 }
 
 # nullable_num VALUE — echoes the value if non-empty, otherwise "null".
@@ -689,8 +679,13 @@ main() {
             svc_978="$(build_service_json airplanes-978 "$(root_path /run/airplanes-978/state)")"
         fi
 
-        local pi_health_json
-        pi_health_json="$(build_pi_health_json)"
+        local pi_throttle_json ntp_sync_json
+        pi_throttle_json="$(build_pi_throttle_json)"
+        # Universal host-clock signal — emits "true"/"false" or null on
+        # any non-systemd host (no `timedatectl`). Wire path:
+        # `system.ntp_synchronized`. Server stamps `system.clock_skew_seconds`
+        # separately at ingest.
+        ntp_sync_json="$(collect_ntp_sync 2>/dev/null || printf 'null')"
 
         local feed_scripts_version os_pretty_name os_id os_version_id kernel architecture image_release
         feed_scripts_version="$(get_feed_scripts_version || true)"
@@ -730,7 +725,8 @@ main() {
             --argjson svc_readsb "$svc_readsb" \
             --argjson svc_dump978 "$svc_dump978" \
             --argjson svc_978 "$svc_978" \
-            --argjson pi_health "$pi_health_json" \
+            --argjson pi_throttle "$pi_throttle_json" \
+            --argjson ntp_synchronized "$ntp_sync_json" \
             --arg feed_scripts "${feed_scripts_version:-}" \
             --arg os_pretty_name "${os_pretty_name:-}" \
             --arg os_id "${os_id:-}" \
@@ -758,7 +754,8 @@ main() {
                     disk: {
                         used_percent: $disk_used_pct,
                         total_bytes: $disk_total_bytes
-                    }
+                    },
+                    ntp_synchronized: $ntp_synchronized
                 },
                 network: {
                     connection_type: $net_connection_type,
@@ -774,7 +771,7 @@ main() {
                     architecture: $architecture,
                     image_release: $image_release
                 },
-                pi_health: $pi_health
+                pi_throttle: $pi_throttle
             }
             | def _prune:
                 if type == "object" then
