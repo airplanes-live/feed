@@ -336,6 +336,13 @@ if [[ "$IMAGE_SERVICE_LAYOUT" == "1" ]]; then
     SYSTEMD_DIR="$(airplanes_path /etc/systemd/system)"
 fi
 
+# Validator + canonicalizer helpers — needed by migrate_altitude_to_bare_metres
+# (calls altitude_to_bare_metres) and reused by any future config-rewriting
+# migrator. Sourced before update-migrations.sh so the migrator's function
+# definitions can rely on the helpers at chain-execution time.
+# shellcheck source=scripts/lib/configure-validators.sh
+source "$GIT/scripts/lib/configure-validators.sh"
+
 # Migration helpers: legacy retirements, env-file rewrites, manifest-based
 # pruning, finalize symlinks. See scripts/lib/update-migrations.sh for the
 # function definitions and the migration ordering contract.
