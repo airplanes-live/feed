@@ -233,7 +233,7 @@ configure_noninteractive() {
     valid_longitude "$RECEIVERLONGITUDE" || { echo "Longitude must be a decimal number between -180 and 180." >&2; exit 1; }
     valid_altitude "$ALT" || { echo "Altitude must be an integer with optional ft or m suffix." >&2; exit 1; }
 
-    RECEIVERALTITUDE="$(normalize_altitude "$ALT")"
+    RECEIVERALTITUDE="$(altitude_to_bare_metres "$ALT")"
     detect_receiver_input
     write_feed_env
 }
@@ -293,7 +293,7 @@ or in meters like this:               78m\n" \
         12 78 3>&1 1>&2 2>&3) || abort
 done
 
-ALT="$(normalize_altitude "$ALT")"
+ALT="$(altitude_to_bare_metres "$ALT")"
 
 RECEIVERALTITUDE="$ALT"
 

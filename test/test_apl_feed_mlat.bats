@@ -66,7 +66,7 @@ MLAT_ENABLED=$2
 MLAT_PRIVATE=false
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="35m"
+ALTITUDE="35"
 GEO_CONFIGURED=true
 EOF
 }
@@ -79,7 +79,7 @@ MLAT_ENABLED=$2
 MLAT_PRIVATE=$3
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="35m"
+ALTITUDE="35"
 GEO_CONFIGURED=true
 EOF
 }
@@ -93,7 +93,7 @@ MLAT_ENABLED=$2
 MLAT_PRIVATE=false
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="35m"
+ALTITUDE="35"
 GEO_CONFIGURED=false
 EOF
 }
@@ -101,7 +101,7 @@ EOF
 write_feed_env_no_axis() {
     # $1 user, $2 enabled, $3 axis-to-blank (LATITUDE|LONGITUDE|ALTITUDE)
     local user="$1" enabled="$2" blank="$3"
-    local lat='"52.52"' lon='"13.40"' alt='"35m"'
+    local lat='"52.52"' lon='"13.40"' alt='"35"'
     case "$blank" in
         LATITUDE)  lat='""' ;;
         LONGITUDE) lon='""' ;;
@@ -413,7 +413,7 @@ MLAT_ENABLED=false
 MLAT_PRIVATE=false
 LATITUDE="52.52"
 LONGITUDE="13.40"
-ALTITUDE="35m"
+ALTITUDE="35"
 EOF
     ROOT="/"
     feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
@@ -564,8 +564,8 @@ EOF
 
     grep -qx 'LATITUDE="48.137"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -qx 'LONGITUDE="11.575"' "$ROOT_DIR/etc/airplanes/feed.env"
-    # normalize_altitude is a no-op for the `m` suffix; only `ft` gets converted.
-    grep -qx 'ALTITUDE="520m"' "$ROOT_DIR/etc/airplanes/feed.env"
+    # apl_feed_apply's canonicalizer strips the `m` suffix on write.
+    grep -qx 'ALTITUDE="520"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -qE '^GEO_CONFIGURED=(true|"true")$' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
 }
