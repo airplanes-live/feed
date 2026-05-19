@@ -93,11 +93,32 @@ setup() {
     valid_altitude 35.5ft
 }
 
-@test "valid_altitude enforces [-1000, 10000] range" {
+@test "valid_altitude enforces [-1000, 10000] post-conversion metres range" {
+    # Range is now gated against POST-CONVERSION metres, matching the
+    # airplanes-live/website `accounts/serializers/feeder.py` alt
+    # validator. Net effect: `20000ft` (~6096m) is newly accepted;
+    # `33000ft` (~10058m) is newly rejected; `10000m`/`-1000m` boundaries
+    # still hold; suffix-tolerant within the metres window. See
+    # test/fixtures/altitude-canonicalization.json + plan #101.
     valid_altitude 10000
+    valid_altitude 10000m
     valid_altitude -1000
+    valid_altitude -1000m
+    valid_altitude 20000ft
     ! valid_altitude 10001
+    ! valid_altitude 10001m
     ! valid_altitude -1001
+    ! valid_altitude -1001m
+    ! valid_altitude 10000.5m
+    ! valid_altitude 33000ft
+}
+
+@test "valid_altitude accepts empty as tombstone passthrough" {
+    # Inbound `alt.value: null` from the server -> apply layer receives
+    # `ALTITUDE=` -> validator must accept empty so the tombstone reaches
+    # the canonicalizer and lands as `ALTITUDE=""` on disk. Without this
+    # path, the sync round-trip wedges at validation_failed.
+    valid_altitude ''
 }
 
 @test "valid_latitude accepts the closed-range boundary" {
@@ -178,32 +199,18 @@ setup() {
 }
 
 @test "valid_altitude rejects non-numeric" {
+    # Empty is intentionally NOT in this list — see the tombstone-passthrough
+    # test above. The validator accepts "" as the inbound `alt.value: null`
+    # signal.
     ! valid_altitude high
-    ! valid_altitude ''
     ! valid_altitude m
     ! valid_altitude ft
 }
 
-# --- normalize_altitude ---
-
-@test "normalize_altitude passes positive values through unchanged" {
-    [ "$(normalize_altitude 35m)" = "35m" ]
-    [ "$(normalize_altitude 100ft)" = "100ft" ]
-    [ "$(normalize_altitude 0)" = "0" ]
-    [ "$(normalize_altitude 200)" = "200" ]
-}
-
-@test "normalize_altitude converts negative feet to negative meters" {
-    # Existing rule: -<n>ft -> awk "%.2f" of n/3.28
-    local out
-    out="$(normalize_altitude -100ft)"
-    [[ "$out" =~ ^-30\.[0-9]+$ ]]
-}
-
-@test "normalize_altitude strips m suffix from negative meters" {
-    [ "$(normalize_altitude -50m)" = "-50" ]
-    [ "$(normalize_altitude -1m)" = "-1" ]
-}
+# normalize_altitude was retired — superseded by altitude_to_bare_metres.
+# Per-function coverage of the new helper lives in
+# test_altitude_to_bare_metres.bats (fixture-driven, byte-exact across
+# all callers).
 
 # --- sanitize_mlat_user ---
 #
