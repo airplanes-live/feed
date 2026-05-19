@@ -115,6 +115,11 @@ SH
     grep -q -- '--max-range 450' "$arg_log"
     grep -q -- '--modeac' "$arg_log"
     grep -q -- "--uuid-file=$root/etc/airplanes/feeder-id" "$arg_log"
+    # MLAT-feedback listener — mlat-client routes --results beast,connect,
+    # 127.0.0.1:30187 here so this feeder forwards MLAT to the aggregator.
+    # Bound to loopback only.
+    grep -q -- '--net-bi-port 30187' "$arg_log"
+    grep -q -- '--net-bind-address 127.0.0.1' "$arg_log"
     # --write-json was the output sink for the bundled tar1090 installer; nothing
     # consumes /run/airplanes-feed anymore. Match the bare flag only — guard
     # against accidental reintroduction without flagging --write-json-every or
@@ -1163,6 +1168,106 @@ SH
     grep -qx 'longitude=13.40500' "$root/run/airplanes-feed/state"
     grep -qx 'input=127.0.0.1:30005' "$root/run/airplanes-feed/state"
     grep -q -- "feed_bin=$root/usr/bin/airplanes-feeder" "$root/run/airplanes-feed/state"
+}
+
+@test "airplanes-mlat.sh: RESULTS bundle default routes to 30104 + 31015 + 30157 + 30187" {
+    # When feed.env carries no RESULTS* keys at all, the wrapper's four-
+    # destination default must fire: MLAT planes go to the local decoder
+    # (30104), basestation/beast listen ports for downstream consumers
+    # (31015, 30157), and the outbound feeder for aggregator forwarding
+    # (30187). Pins the design intent of airplanes-mlat.sh:141-146.
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35"
+MLAT_USER="default-bundle"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+MLATSERVER="feed.airplanes.live:31090"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--results beast,connect,127.0.0.1:30104' "$arg_log"
+    grep -q -- '--results basestation,listen,31015' "$arg_log"
+    grep -q -- '--results beast,listen,30157' "$arg_log"
+    grep -q -- '--results beast,connect,127.0.0.1:30187' "$arg_log"
+}
+
+@test "airplanes-mlat.sh: operator RESULTS= override suppresses the default bundle (no silent 30187 injection)" {
+    # If feed.env sets ANY of RESULTS / RESULTS1..4, the wrapper treats the
+    # operator as the authority and uses ONLY their RESULTS* keys — no
+    # silent injection of the 30187 default. Pins the explicit-override
+    # contract for advanced operators and migrated legacy installs whose
+    # RESULTS= predates the dual-delivery design.
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    local stub_bin="$ROOT_DIR/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+INPUT="127.0.0.1:30005"
+INPUT_TYPE="dump1090"
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35"
+MLAT_USER="legacy-results"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+MLATSERVER="feed.airplanes.live:31090"
+RESULTS="--results beast,connect,127.0.0.1:30104"
+EOF
+    cat > "$stub_bin/nc" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$stub_bin/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--results beast,connect,127.0.0.1:30104' "$arg_log"
+    # No silent injection of 30187, 31015, or 30157 — the operator override
+    # is the whole story. An operator who wants the dual-delivery design
+    # must opt in by setting RESULTS4 explicitly.
+    if grep -q -- '127.0.0.1:30187' "$arg_log"; then
+        return 1
+    fi
+    if grep -q -- 'basestation,listen,31015' "$arg_log"; then
+        return 1
+    fi
+    if grep -q -- 'beast,listen,30157' "$arg_log"; then
+        return 1
+    fi
 }
 
 @test "runtime scripts prefer canonical feed.env over boot config when both exist" {

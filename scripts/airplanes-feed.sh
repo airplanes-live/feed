@@ -76,7 +76,12 @@ TARGET="${TARGET:-"--net-connector feed.airplanes.live,30004,beast_reduce_plus_o
 NET_OPTIONS="${NET_OPTIONS:-"--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0"}"
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
-    FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-"--net-ro-interval 0.2"}"
+    # --net-bi-port 30187 is the listener mlat-client (airplanes-mlat.sh)
+    # connects to with --results beast,connect,127.0.0.1:30187 so MLAT planes
+    # reach the aggregator via this feeder. Loopback-bound to match the
+    # decoder side. An operator-set FEED_NET_OPTIONS replaces this default
+    # whole (same convention as NET_OPTIONS / TARGET / JSON_OPTIONS).
+    FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-"--net-ro-interval 0.2 --net-bind-address 127.0.0.1 --net-bi-port 30187"}"
     FEED_IMAGE_OPTIONS="${FEED_IMAGE_OPTIONS:-"--db-file=none --max-range 450"}"
 else
     FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-$NET_OPTIONS}"
