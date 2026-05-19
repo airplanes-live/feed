@@ -138,11 +138,16 @@ INPUT_TYPE="${INPUT_TYPE:-dump1090}"
 # RESULTS* slots are set on disk. Legacy single-line feed.env may carry
 # a combined `RESULTS="--results ... --results ..."` and we must not
 # duplicate outputs by stacking individual defaults on top.
+#
+# These are receive-side endpoints — mlat-client delivers computed MLAT
+# positions here for local display only (tar1090/graphs1090 read from
+# 30104; the listen ports are for downstream consumers that poll
+# mlat-client directly). Upstream contribution flows via mlat-client's
+# own --server connection to MLATSERVER, not through any of these.
 if [[ ! -v RESULTS && ! -v RESULTS1 && ! -v RESULTS2 && ! -v RESULTS3 && ! -v RESULTS4 ]]; then
     RESULTS="--results beast,connect,127.0.0.1:30104"
     RESULTS2="--results basestation,listen,31015"
     RESULTS3="--results beast,listen,30157"
-    RESULTS4="--results beast,connect,127.0.0.1:30187"
 fi
 
 UUID_FILE="--uuid-file $FEEDER_ID_FILE"
