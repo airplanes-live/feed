@@ -73,10 +73,23 @@ FEED_BIN="${AIRPLANES_FEED_BIN:-$DEFAULT_FEED_BIN}"
 # daemon. The image branch keeps its leaner FEED_NET_OPTIONS override
 # and adds FEED_IMAGE_OPTIONS for the baked-decoder case.
 TARGET="${TARGET:-"--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"}"
-NET_OPTIONS="${NET_OPTIONS:-"--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0"}"
+# --forward-mlat is required for MLAT frames received on --net-bi-port 30187
+# to actually leave via the upstream beast_reduce_plus_out connector. readsb
+# gates Beast output on (!is_mlat || forward_mlat); the flag defaults off.
+# Without it, mlat-client delivers Beast results that the feeder silently
+# drops on the floor instead of forwarding to the aggregator.
+NET_OPTIONS="${NET_OPTIONS:-"--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --forward-mlat"}"
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
-    FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-"--net-ro-interval 0.2"}"
+    # --net-bi-port 30187 is the listener mlat-client (airplanes-mlat.sh)
+    # connects to with --results beast,connect,127.0.0.1:30187 so MLAT planes
+    # reach the aggregator via this feeder. Loopback-bound to match the
+    # decoder side. --forward-mlat is required so the received MLAT frames
+    # actually leave via the upstream beast_reduce_plus_out connector
+    # (readsb gates Beast output on (!is_mlat || forward_mlat) — default off).
+    # An operator-set FEED_NET_OPTIONS replaces this default whole (same
+    # convention as NET_OPTIONS / TARGET / JSON_OPTIONS).
+    FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-"--net-ro-interval 0.2 --net-bind-address 127.0.0.1 --net-bi-port 30187 --forward-mlat"}"
     FEED_IMAGE_OPTIONS="${FEED_IMAGE_OPTIONS:-"--db-file=none --max-range 450"}"
 else
     FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-$NET_OPTIONS}"
