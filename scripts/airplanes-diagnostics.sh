@@ -669,16 +669,18 @@ main() {
         svc_feed="$(build_service_json airplanes-feed)"
         svc_mlat="$(build_service_json airplanes-mlat "$(root_path /run/airplanes-mlat/state)")"
         svc_readsb="$(build_service_json readsb)"
-        svc_dump978="$(build_service_json dump978-fa "$(root_path /run/dump978-fa/state)")"
-        # airplanes-978 is the readsb UAT instance — only relevant when
-        # the user has actually configured UAT. Without this gate, every
-        # non-UAT feeder would report an idle airplanes-978 unit and add
-        # noise to the dashboard. Globally most users don't have a 978
-        # dongle so the chip stays hidden until they wire one up.
+        # dump978-fa and airplanes-978 are both UAT-only — relevant only
+        # when the user has actually configured UAT. Without this gate,
+        # any feeder with the dump978-fa unit installed would report an
+        # idle service and add a stale warning chip to the dashboard.
+        # Most feeders don't have a 978 dongle, so the chips stay hidden
+        # until the user wires one up.
         local uat_input
         uat_input="$(feed_env_get UAT_INPUT 2>/dev/null || true)"
+        svc_dump978='null'
         svc_978='null'
         if [[ -n "$uat_input" ]]; then
+            svc_dump978="$(build_service_json dump978-fa "$(root_path /run/dump978-fa/state)")"
             svc_978="$(build_service_json airplanes-978 "$(root_path /run/airplanes-978/state)")"
         fi
 

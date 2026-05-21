@@ -858,6 +858,8 @@ _write_state_file() {
 }
 
 @test "POST body service entry carries disabled,no_hardware for dump978-fa" {
+    printf 'REPORT_STATUS=true\nUAT_INPUT=127.0.0.1:30978\n' \
+        > "$ROOT_DIR/etc/airplanes/feed.env"
     cat > "$STUB_DIR/systemctl" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
@@ -876,6 +878,30 @@ SH
     [ "$output" = 'disabled' ]
     run jq -er '.services[] | select(.name=="dump978-fa") | .reason' "$BODY_LOG"
     [ "$output" = 'no_hardware' ]
+}
+
+@test "POST body omits dump978-fa when UAT_INPUT is empty" {
+    # Default feed.env has REPORT_STATUS=true and no UAT_INPUT. The
+    # dump978-fa unit is installed and would otherwise show as
+    # inactive/dead in the payload, surfacing a stale warning chip on
+    # a feeder that never opted in to UAT.
+    cat > "$STUB_DIR/systemctl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+    "show airplanes-feed "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    "show airplanes-mlat "*) printf 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=running\nNRestarts=0\n' ;;
+    # The collector must not even probe dump978-fa when UAT is off —
+    # if it does, this stub would emit it and the assertion below fails.
+    "show dump978-fa "*) printf 'LoadState=loaded\nUnitFileState=disabled\nActiveState=inactive\nSubState=dead\nNRestarts=0\n' ;;
+    *) ;;
+esac
+exit 0
+SH
+    chmod +x "$STUB_DIR/systemctl"
+    run_script
+    [ "$status" -eq 0 ]
+    run jq -er '.services | map(select(.name=="dump978-fa")) | length' "$BODY_LOG"
+    [ "$output" = '0' ]
 }
 
 @test "POST body omits state/reason when state file is missing" {
