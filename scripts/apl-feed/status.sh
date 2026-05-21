@@ -68,11 +68,15 @@ status_line() {
     esac
 
     if [[ -n "$STATUS_CHECKS_FILE" ]]; then
+        # `label` is a jq 1.6 keyword (used for label/break flow), so using
+        # it as a jq variable name fails to compile on Pi OS bullseye and
+        # bookworm. jq 1.7+ accepts it. The output JSON key is still
+        # `label`; only the jq variable is renamed.
         jq -nc \
             --arg state "$state" \
-            --arg label "$label" \
+            --arg label_text "$label" \
             --arg detail "$detail" \
-            '{state:$state,label:$label,detail:$detail}' \
+            '{state:$state,label:$label_text,detail:$detail}' \
             >> "$STATUS_CHECKS_FILE"
     fi
 
