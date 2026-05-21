@@ -52,6 +52,46 @@ jobs:
       - name: Run bats suite
         run: bats test/
 
+  unit-tests-jq16:
+    # Pi OS bullseye/bookworm (the deployed fleet) ships jq 1.6. CI
+    # runners default to jq 1.7+, which is more permissive about reserved
+    # keywords used as `--arg` variable names. Bugs of that shape compile
+    # cleanly under 1.7 but fail at parse time on every deployed feeder.
+    # This job runs the full bats suite against a vendored jq 1.6 so
+    # version-sensitive regressions are caught before they ship.
+    name: unit tests (jq 1.6, fleet-compat)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install bats, curl, python3 (no system jq)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats curl python3
+
+      - name: Install jq 1.6 (Pi OS fleet version)
+        run: |
+          set -euo pipefail
+          # Pinned to the jq 1.6 release asset on jqlang/jq. The SHA-256
+          # check below catches any future asset replacement; a removed
+          # asset surfaces as a curl failure.
+          sudo curl -fsSL \
+            -o /usr/local/bin/jq \
+            https://github.com/jqlang/jq/releases/download/jq-1.6/jq-linux64
+          sudo chmod +x /usr/local/bin/jq
+          echo 'af986793a515d500ab2d35f8d2aecd656e764504b789b66d7e1a0b727a124c44  /usr/local/bin/jq' \
+            | sha256sum -c -
+          hash -r
+          jq --version
+          test "$(jq --version)" = "jq-1.6"
+
+      - name: Run bats suite
+        run: bats test/
+
   script-install:
     name: script install (${{ matrix.image_label }}, ${{ matrix.path }})
     runs-on: ubuntu-24.04
