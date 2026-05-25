@@ -15,7 +15,7 @@ else
     # str.replace count=1), so this assignment is the substitution target.
     # The unrendered sentinel below is split across shell concatenation
     # so the substitution doesn't match it and the post-render comparison
-    # stays meaningful. See docs/RELEASE_CHECKLIST.md.
+    # stays meaningful.
     #
     # An explicit AIRPLANES_FEED_BRANCH env var still wins (image-build use,
     # operator overrides). Source-clone use sources install-update-common.sh,

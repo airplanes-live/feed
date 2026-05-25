@@ -7,7 +7,7 @@
 #
 # Source of truth for the actual install logic is install.sh on feed/dev,
 # rendered into dist/install.sh at release time with __FEED_REF__ substituted
-# for the tag being released. See docs/RELEASE_CHECKLIST.md.
+# for the tag being released.
 
 set -eo pipefail
 
