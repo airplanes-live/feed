@@ -61,6 +61,48 @@ else
         done
     }
 
+    airplanes_is_overlay_managed_root() {
+        local manifest
+        manifest="$(airplanes_path /etc/airplanes/runtime-manifest.json)"
+        [[ -e "$manifest" || -L "$manifest" ]]
+    }
+
+    airplanes_guard_overlay_managed_root() {
+        local script_name="${1:-this feed script}"
+        if airplanes_is_build_mode; then
+            return 0
+        fi
+        if [[ "${AIRPLANES_ALLOW_OVERLAY_BYPASS:-0}" == "1" ]]; then
+            if airplanes_is_overlay_managed_root; then
+                echo "WARNING: AIRPLANES_ALLOW_OVERLAY_BYPASS=1 - proceeding on an overlay-managed root" >&2
+            fi
+            return 0
+        fi
+        if ! airplanes_is_overlay_managed_root; then
+            return 0
+        fi
+        local manifest
+        manifest="$(airplanes_path /etc/airplanes/runtime-manifest.json)"
+        cat >&2 <<MSG
+ERROR: This system is managed by the airplanes-live runtime overlay
+       ($manifest is present). The overlay delivers and updates feed
+       scripts (apl-feed, airplanes-feed, airplanes-mlat, the readsb feed
+       client, and the mlat-client venv) atomically as part of an overlay
+       refresh.
+
+       Running $script_name directly would replace overlay-owned files
+       with stale copies and break the next overlay update.
+
+       To update this feeder, use the web UI's "Update System" button
+       (which invokes airplanes-update-orchestrator), or run that
+       orchestrator manually if you have shell access.
+
+       To override this guard for recovery or development, set
+       AIRPLANES_ALLOW_OVERLAY_BYPASS=1.
+MSG
+        exit 78
+    }
+
     airplanes_require_root() {
         if [[ "${AIRPLANES_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
             return 0
@@ -124,6 +166,15 @@ airplanes_enable_build_mode_from_args "$@"
 
 airplanes_init_paths
 airplanes_require_root
+
+# Refuse to run on an image whose feed stack ships through the runtime
+# overlay (the new airplanes-live/image atomic delivery). The overlay
+# owns the feed binaries and scripts as symlinks; clobbering them with
+# real files via this script would break the next overlay update.
+# Build-mode invocations and AIRPLANES_ALLOW_OVERLAY_BYPASS=1 skip the
+# guard; see scripts/lib/install-update-common.sh for the contract.
+airplanes_guard_overlay_managed_root "feed install.sh"
+
 mkdir -p "$IPATH"
 airplanes_install_bootstrap_deps
 

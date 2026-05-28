@@ -42,7 +42,7 @@ function_body() {
 
     # install.sh's inline fallback intentionally omits airplanes_init_paths
     # (covered separately as a strict subset) and the rpm/legacy helpers.
-    for fn in airplanes_path airplanes_is_build_mode airplanes_enable_build_mode_from_args airplanes_require_root airplanes_install_bootstrap_deps getGIT; do
+    for fn in airplanes_path airplanes_is_build_mode airplanes_enable_build_mode_from_args airplanes_is_overlay_managed_root airplanes_guard_overlay_managed_root airplanes_require_root airplanes_install_bootstrap_deps getGIT; do
         local install_body lib_body
         install_body="$(function_body "$stub" "$fn")"
         lib_body="$(function_body "$lib" "$fn")"
@@ -101,6 +101,8 @@ function_body() {
         airplanes_image_target_default \
         airplanes_is_build_mode \
         airplanes_enable_build_mode_from_args \
+        airplanes_is_overlay_managed_root \
+        airplanes_guard_overlay_managed_root \
         airplanes_require_root \
         airplanes_apt_install \
         airplanes_is_legacy_os \
