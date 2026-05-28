@@ -220,7 +220,7 @@ claim_show() {
     echo "Claim secret: $(display_secret "$secret")"
     echo "Claim page: $(claim_page_url)"
     if version="$(read_version_file 2>/dev/null)"; then
-        echo "Version: $version"
+        echo "Secret version: $version"
     fi
 }
 
