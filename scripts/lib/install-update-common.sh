@@ -167,6 +167,72 @@ airplanes_enable_build_mode_from_args() {
     done
 }
 
+# Returns 0 if the current rootfs is managed by the airplanes-live runtime
+# overlay (atomic delivery of feed scripts, decoders, webconfig, mlat-client
+# venv as a single signed payload), and 1 otherwise.
+#
+# Detection: presence of /etc/airplanes/runtime-manifest.json, which the
+# overlay's install pipeline writes in both build mode (regular file copy of
+# the active release manifest) and runtime mode (symlink to the current
+# release's manifest.json). Both `-e` and `-L` cover the symlink form,
+# including the brief mid-flip window when the link may dangle.
+#
+# Legacy images and manual installs do not carry this marker.
+airplanes_is_overlay_managed_root() {
+    local manifest
+    manifest="$(airplanes_path /etc/airplanes/runtime-manifest.json)"
+    [[ -e "$manifest" || -L "$manifest" ]]
+}
+
+# Aborts with EX_CONFIG (78) if the rootfs is overlay-managed, so feed's
+# install.sh / update.sh cannot replace overlay-owned symlinks (apl-feed,
+# airplanes-feed.sh, airplanes-mlat.sh, the readsb feed client, the mlat-
+# client venv) with stale real files. Stomping those symlinks breaks the
+# next overlay update.
+#
+# Bypasses:
+#   - Build mode (AIRPLANES_BUILD_MODE=1). Image-build pipelines run feed's
+#     install.sh --build-mode against a rootfs they own; the overlay stage
+#     runs later in the same pipeline. Skipping the guard keeps build
+#     orchestration clean.
+#   - AIRPLANES_ALLOW_OVERLAY_BYPASS=1. Explicit recovery / development
+#     override. Emits a stderr warning when it fires.
+airplanes_guard_overlay_managed_root() {
+    local script_name="${1:-this feed script}"
+    if airplanes_is_build_mode; then
+        return 0
+    fi
+    if [[ "${AIRPLANES_ALLOW_OVERLAY_BYPASS:-0}" == "1" ]]; then
+        if airplanes_is_overlay_managed_root; then
+            echo "WARNING: AIRPLANES_ALLOW_OVERLAY_BYPASS=1 - proceeding on an overlay-managed root" >&2
+        fi
+        return 0
+    fi
+    if ! airplanes_is_overlay_managed_root; then
+        return 0
+    fi
+    local manifest
+    manifest="$(airplanes_path /etc/airplanes/runtime-manifest.json)"
+    cat >&2 <<MSG
+ERROR: This system is managed by the airplanes-live runtime overlay
+       ($manifest is present). The overlay delivers and updates feed
+       scripts (apl-feed, airplanes-feed, airplanes-mlat, the readsb feed
+       client, and the mlat-client venv) atomically as part of an overlay
+       refresh.
+
+       Running $script_name directly would replace overlay-owned files
+       with stale copies and break the next overlay update.
+
+       To update this feeder, use the web UI's "Update System" button
+       (which invokes airplanes-update-orchestrator), or run that
+       orchestrator manually if you have shell access.
+
+       To override this guard for recovery or development, set
+       AIRPLANES_ALLOW_OVERLAY_BYPASS=1.
+MSG
+    exit 78
+}
+
 airplanes_require_root() {
     if [[ "${AIRPLANES_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
         return 0

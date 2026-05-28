@@ -311,34 +311,29 @@ require_feed_boot_file() {
 }
 
 prepare_mounted_image() {
+    # Legacy-contract prep only. The new-contract path takes a separate
+    # branch in main() that asserts feed/update.sh's overlay guard refuses
+    # to run against a runtime-overlay-managed image; it does not need
+    # any of the seeding below.
     local ipath mlat_version
     ipath="$ROOT_MNT/usr/local/share/airplanes"
 
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-first-run.service" ]] \
         || fail "release image lacks airplanes-first-run.service"
 
-    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
-        [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "release image lacks /usr/bin/airplanes-feeder"
-        require_feed_boot_file airplanes-config.txt
-        require_feed_boot_file airplanes-env
-        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" USER "image-release-rootfs-smoke"
-        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LATITUDE "52.52000"
-        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LONGITUDE "13.40500"
-        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" ALTITUDE "35m"
-        # Simulate airplanes-update's pre-feed-update migrator step.
-        # Without this the strict guard in feed/update.sh fires on the
-        # legacy USER= schema. The migration itself is unit-tested in
-        # airplanes-webconfig and integration-tested in airplanes-update.
-        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" MLAT_USER "image-release-rootfs-smoke"
-        set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" MLAT_ENABLED "true"
-    else
-        [[ -f "$ROOT_MNT/etc/airplanes/feed.env" ]] || fail "new image lacks /etc/airplanes/feed.env"
-        rm -f "$ROOT_MNT/usr/bin/airplanes-feeder"
-        set_env_value "$ROOT_MNT/etc/airplanes/feed.env" USER "image-release-rootfs-smoke"
-        set_env_value "$ROOT_MNT/etc/airplanes/feed.env" LATITUDE "52.52000"
-        set_env_value "$ROOT_MNT/etc/airplanes/feed.env" LONGITUDE "13.40500"
-        set_env_value "$ROOT_MNT/etc/airplanes/feed.env" ALTITUDE "35m"
-    fi
+    [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "release image lacks /usr/bin/airplanes-feeder"
+    require_feed_boot_file airplanes-config.txt
+    require_feed_boot_file airplanes-env
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" USER "image-release-rootfs-smoke"
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LATITUDE "52.52000"
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" LONGITUDE "13.40500"
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" ALTITUDE "35m"
+    # Simulate airplanes-update's pre-feed-update migrator step.
+    # Without this the strict guard in feed/update.sh fires on the
+    # legacy USER= schema. The migration itself is unit-tested in
+    # airplanes-webconfig and integration-tested in airplanes-update.
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" MLAT_USER "image-release-rootfs-smoke"
+    set_env_value "$FEED_BOOT_DIR/airplanes-config.txt" MLAT_ENABLED "true"
 
     mkdir -p "$ipath/venv/bin"
     cat > "$ipath/venv/bin/mlat-client" <<'SH'
@@ -350,13 +345,55 @@ SH
     printf '%s\n' "$mlat_version" > "$ipath/mlat_version"
 }
 
-run_update_against_image() {
-    local -a build_mode_env
-    build_mode_env=()
-    if [[ "$IMAGE_CONTRACT" == "new" ]]; then
-        build_mode_env=(AIRPLANES_BUILD_MODE=1)
-    fi
+# Confirm the new image ships the runtime-overlay marker that feed's
+# overlay guard keys on. If a future image drops the marker we want this
+# to surface — the guard would silently no-op on overlay-managed feeders
+# without it.
+assert_new_image_has_overlay_marker() {
+    local marker="$ROOT_MNT/etc/airplanes/runtime-manifest.json"
+    [[ -e "$marker" || -L "$marker" ]] \
+        || fail "new image missing /etc/airplanes/runtime-manifest.json (overlay marker)"
+}
 
+# Assert feed/update.sh refuses to run against a real overlay-managed
+# image's rootfs, exiting EX_CONFIG (78) with the marker-aware message.
+# This is the production scenario the guard targets: an operator who
+# SSHs onto an image-managed feeder and runs the upstream installer
+# would replace overlay-owned symlinks with stale real files; the guard
+# refuses up front. The bypass paths (AIRPLANES_BUILD_MODE,
+# AIRPLANES_ALLOW_OVERLAY_BYPASS) are covered by test_overlay_guard.bats.
+assert_new_image_refuses_update() {
+    local guard_log="$WORK_DIR/guard.log"
+    set +e
+    # `env -u` strips the inherited bypass vars so a local dev box that
+    # happens to have AIRPLANES_BUILD_MODE / AIRPLANES_ALLOW_OVERLAY_BYPASS
+    # set cannot mask the guard. AIRPLANES_FEED_REPO / AIRPLANES_FEED_BRANCH
+    # are likewise stripped so the test reproduces a real operator's "no
+    # special env" invocation — release-channel parsing must still abort
+    # cleanly on the overlay-managed root, not be preempted by a synthetic
+    # override.
+    env -u AIRPLANES_BUILD_MODE \
+        -u AIRPLANES_ALLOW_OVERLAY_BYPASS \
+        -u AIRPLANES_FEED_REPO \
+        -u AIRPLANES_FEED_BRANCH \
+        PATH="$STUB_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        AIRPLANES_ROOT="$ROOT_MNT" \
+        AIRPLANES_SKIP_ROOT_CHECK=1 \
+        bash "$FEED_SOURCE/update.sh" > "$guard_log" 2>&1
+    local rc=$?
+    set -e
+    if [[ "$rc" -ne 78 ]]; then
+        echo "--- guard.log ---" >&2
+        cat "$guard_log" >&2
+        fail "expected feed/update.sh to exit 78 (overlay guard), got $rc"
+    fi
+    grep -q "airplanes-live runtime overlay" "$guard_log" \
+        || fail "guard message missing 'airplanes-live runtime overlay' anchor"
+}
+
+run_update_against_image() {
+    # Legacy-contract update flow only. The new-contract path runs
+    # assert_new_image_refuses_update instead of this function.
     env \
         PATH="$STUB_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
         COMMAND_LOG="$COMMAND_LOG" \
@@ -371,7 +408,6 @@ run_update_against_image() {
         AIRPLANES_READSB_REPO="file://$READSB_BARE" \
         AIRPLANES_READSB_BRANCH=dev \
         APL_FEED_BIN="$STUB_DIR/apl-feed-stub" \
-        "${build_mode_env[@]}" \
         bash "$FEED_SOURCE/update.sh"
 }
 
@@ -412,26 +448,19 @@ assert_symlink_target() {
 }
 
 assert_updated_image_contracts() {
+    # Legacy-contract post-update assertions only. New-contract bails on the
+    # overlay guard before any update happens; there is no post-update state
+    # to inspect there.
     local ipath="$ROOT_MNT/usr/local/share/airplanes"
 
-    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
-        [[ -f "$FEED_BOOT_DIR/airplanes-config.txt" ]] || fail "missing boot config"
-        [[ -f "$FEED_BOOT_DIR/airplanes-env" ]] || fail "missing boot env"
-        assert_valid_uuid_file "$ROOT_MNT/etc/airplanes/feeder-id"
-        assert_symlink_target "$ipath/airplanes-uuid" '../../../../etc/airplanes/feeder-id'
-    else
-        [[ -f "$ROOT_MNT/etc/airplanes/feed.env" ]] || fail "missing canonical feed.env"
-        [[ -f "$ROOT_MNT/etc/airplanes/image-install" ]] || fail "missing image-install marker"
-        assert_not_exists "$ROOT_MNT/etc/airplanes/feeder-id"
-        assert_not_exists "$ipath/airplanes-uuid"
-    fi
-    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
-        [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "missing image feed binary"
-        [[ ! -e "$ipath/feed-airplanes" ]] || fail "legacy image should use image feed binary"
-    else
-        [[ ! -e "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "new image should not require /usr/bin/airplanes-feeder"
-        [[ -x "$ipath/feed-airplanes" ]] || fail "missing build-mode feed binary"
-    fi
+    [[ -f "$FEED_BOOT_DIR/airplanes-config.txt" ]] || fail "missing boot config"
+    [[ -f "$FEED_BOOT_DIR/airplanes-env" ]] || fail "missing boot env"
+    assert_valid_uuid_file "$ROOT_MNT/etc/airplanes/feeder-id"
+    assert_symlink_target "$ipath/airplanes-uuid" '../../../../etc/airplanes/feeder-id'
+
+    [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "missing image feed binary"
+    [[ ! -e "$ipath/feed-airplanes" ]] || fail "legacy image should use image feed binary"
+
     [[ -x "$ROOT_MNT/usr/local/bin/apl-feed" ]] || fail "missing apl-feed command"
     [[ -f "$ipath/update.sh" ]] || fail "missing installed update.sh"
     [[ -f "$ipath/airplanes-feed.sh" ]] || fail "missing airplanes-feed.sh"
@@ -440,12 +469,11 @@ assert_updated_image_contracts() {
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" ]] || fail "missing feed service"
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" ]] || fail "missing mlat service"
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-first-run.service" ]] || fail "missing first-run service"
-    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
-        assert_not_exists "$ROOT_MNT/etc/airplanes/feed.env"
-        [[ -L "$ROOT_MNT/etc/default/airplanes" ]] || fail "/etc/default/airplanes is not a symlink"
-        [[ "$(readlink "$ROOT_MNT/etc/default/airplanes")" == "/boot/airplanes-config.txt" ]] \
-            || fail "/etc/default/airplanes does not point at /boot/airplanes-config.txt"
-    fi
+
+    assert_not_exists "$ROOT_MNT/etc/airplanes/feed.env"
+    [[ -L "$ROOT_MNT/etc/default/airplanes" ]] || fail "/etc/default/airplanes is not a symlink"
+    [[ "$(readlink "$ROOT_MNT/etc/default/airplanes")" == "/boot/airplanes-config.txt" ]] \
+        || fail "/etc/default/airplanes does not point at /boot/airplanes-config.txt"
 
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
     grep -qE '^After=.*airplanes-first-run.service' "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" \
@@ -456,20 +484,12 @@ assert_updated_image_contracts() {
         || fail "airplanes-mlat.service missing After=airplanes-first-run.service"
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'User=airplanes-feed'
     assert_contains "$ipath/airplanes-feed.sh" 'feed2.airplanes.live,64004'
-    if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
-        assert_contains "$CLAIM_LOG" 'claim register'
-        assert_contains "$COMMAND_LOG" 'systemctl restart airplanes-feed'
-        assert_contains "$COMMAND_LOG" 'systemctl restart airplanes-mlat'
-        [[ "$(grep -c 'systemctl daemon-reload' "$COMMAND_LOG")" == "1" ]] \
-            || fail "expected one systemctl daemon-reload call"
-    else
-        assert_not_exists "$CLAIM_LOG"
-        assert_contains "$COMMAND_LOG" 'systemctl enable airplanes-feed'
-        assert_contains "$COMMAND_LOG" 'systemctl enable airplanes-mlat'
-        ! grep -q 'systemctl restart' "$COMMAND_LOG" || fail "build mode restarted a service"
-        ! grep -q 'systemctl is-active' "$COMMAND_LOG" || fail "build mode checked live systemd state"
-        ! grep -q 'systemctl daemon-reload' "$COMMAND_LOG" || fail "build mode reloaded live systemd"
-    fi
+
+    assert_contains "$CLAIM_LOG" 'claim register'
+    assert_contains "$COMMAND_LOG" 'systemctl restart airplanes-feed'
+    assert_contains "$COMMAND_LOG" 'systemctl restart airplanes-mlat'
+    [[ "$(grep -c 'systemctl daemon-reload' "$COMMAND_LOG")" == "1" ]] \
+        || fail "expected one systemctl daemon-reload call"
 }
 
 assert_runtime_args() {
@@ -521,6 +541,17 @@ main() {
     write_stubs
 
     mount_partitions
+
+    if [[ "$IMAGE_CONTRACT" == "new" ]]; then
+        # Runtime-overlay images are managed by the overlay orchestrator,
+        # not by feed/update.sh. The only contract we exercise here is
+        # that feed/update.sh recognises the overlay marker and refuses.
+        assert_new_image_has_overlay_marker
+        assert_new_image_refuses_update
+        echo "image release rootfs smoke (new contract: overlay guard refuses) passed"
+        return 0
+    fi
+
     prepare_mounted_image
     run_update_against_image
     assert_updated_image_contracts

@@ -47,6 +47,19 @@ Functions whose contract is "abort the script on failure" — for example `build
 
 This rule applies to **fail-loud build/install helpers**, not to predicate helpers (functions that intentionally return a boolean for use in conditionals — those are designed for tested contexts and work fine there).
 
+## Runtime-overlay-managed root guard
+
+The new `airplanes-live/image` delivers feed scripts, the readsb feed client, the mlat-client venv, and the systemd units as **symlinks owned by the runtime overlay**, not as real files written by `feed/install.sh` / `feed/update.sh`. An operator who SSHs onto such a feeder and runs the upstream installer would replace those symlinks with stale real files, breaking the next overlay update.
+
+`airplanes_guard_overlay_managed_root` in `scripts/lib/install-update-common.sh` aborts with EX_CONFIG (78) when `/etc/airplanes/runtime-manifest.json` is present, with two intentional bypasses:
+
+- `AIRPLANES_BUILD_MODE=1` — image-build orchestration runs `feed/install.sh --build-mode` against a rootfs it owns; the overlay stage runs later in the same pipeline. The marker isn't laid yet at that point, but the bypass keeps build flows clean if ordering ever changes.
+- `AIRPLANES_ALLOW_OVERLAY_BYPASS=1` — explicit recovery / development override. Emits a stderr warning when it fires.
+
+**Call-site contract.** Both `update.sh` and `install.sh` invoke the guard immediately after `airplanes_init_paths` and `airplanes_require_root`, before any destructive work, network I/O, or apt step. Don't move the call later — the point is to fail loudly before anything mutable runs.
+
+**Inline-fallback discipline applies.** Both `airplanes_is_overlay_managed_root` and `airplanes_guard_overlay_managed_root` exist in the lib AND in the inline fallback of both scripts; `test_inline_fallback_drift.bats` pins them via the same `declare -f` body comparison the existing helpers use (so source-text indentation and comments may differ, but the parsed function definitions must match).
+
 ## Image vs non-image install branches
 
 `IMAGE_INSTALL` is set by `airplanes_is_image_install`. The two branches diverge on:
