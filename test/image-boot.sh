@@ -799,11 +799,17 @@ assert_image_contracts() {
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
         assert_symlink_target /usr/local/share/airplanes/airplanes-uuid '../../../../etc/airplanes/feeder-id'
         assert_exec /usr/bin/airplanes-feeder
+        # update.sh installs itself to IPATH on any install path that runs it.
+        # The overlay-managed new image deliberately does NOT ship update.sh:
+        # overlay-managed feeders update via the runtime-overlay orchestrator,
+        # and update.sh refuses to run there anyway (overlay guard, EX_CONFIG).
+        # It is neither staged into the overlay tree nor a managed_paths entry.
+        # Required only on the legacy contract.
+        assert_file /usr/local/share/airplanes/update.sh
     else
         assert_exec /usr/local/share/airplanes/feed-airplanes
     fi
     assert_exec /usr/local/bin/apl-feed
-    assert_file /usr/local/share/airplanes/update.sh
     assert_file /usr/local/share/airplanes/airplanes-feed.sh
     assert_file /usr/local/share/airplanes/airplanes-mlat.sh
     assert_file /usr/local/share/airplanes/apl-feed/common.sh
