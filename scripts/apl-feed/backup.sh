@@ -210,7 +210,7 @@ config_restore() {
             echo "Created: $BACKUP_CREATED_AT"
         fi
         if [[ -n "$BACKUP_VERSION" ]]; then
-            echo "Version: $BACKUP_VERSION"
+            echo "Secret version: $BACKUP_VERSION"
         fi
         echo "Claim secret: present"
         return 0
