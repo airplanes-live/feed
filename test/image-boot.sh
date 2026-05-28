@@ -961,11 +961,35 @@ assert_binaries_unchanged() {
     fi
 }
 
+# Overlay-managed images mark themselves with /etc/airplanes/runtime-manifest.json
+# (laid down by stage 02-install-runtime-overlay during image build). On such
+# images, feed/update.sh now refuses to run (EX_CONFIG / 78); overlay-managed
+# feeders update via the runtime-overlay self-update orchestrator, not via
+# update.sh, so a direct invocation would replace overlay-owned symlinks with
+# stale real files. See feed's architecture.md, "Runtime-overlay-managed root
+# guard" section. The smoke skips both the initial-update and idempotency-
+# rerun phases in that case; everything else (contract asserts, service
+# health, UUID persistence, extra-probe) still runs and remains the load-
+# bearing coverage on the new contract.
+#
+# The predicate mirrors airplanes_is_overlay_managed_root in
+# scripts/lib/install-update-common.sh: `-e || -L` so a dangling marker
+# symlink (e.g. during an overlay flip) still trips the same code path
+# both guards take.
+is_overlay_managed_image() {
+    [[ -e /etc/airplanes/runtime-manifest.json \
+        || -L /etc/airplanes/runtime-manifest.json ]]
+}
+
 phase="$(cat "$STATE_DIR/phase" 2>/dev/null || true)"
 case "$phase" in
     '')
-        echo "airplanes image boot smoke: initial update phase"
-        run_feed_update
+        if is_overlay_managed_image; then
+            echo "airplanes image boot smoke: initial phase (overlay-managed image; skipping update.sh, overlay self-update owns this path)"
+        else
+            echo "airplanes image boot smoke: initial update phase"
+            run_feed_update
+        fi
         assert_image_contracts
         assert_service_healthy airplanes-feed.service
         snapshot_post_update_state
@@ -985,13 +1009,38 @@ case "$phase" in
         assert_state_file_schema_v1 /run/airplanes-mlat/state
         assert_uuid_stable_across_reboot
 
-        echo "airplanes image boot smoke: idempotency rerun phase"
-        # Re-run update.sh against the same fixture repos. The version-match
-        # fast paths in update-builds.sh should leave the binaries alone.
-        run_feed_update
-        assert_binaries_unchanged
-        assert_service_healthy airplanes-feed.service
-        assert_service_healthy airplanes-mlat.service
+        if is_overlay_managed_image; then
+            echo "airplanes image boot smoke: idempotency rerun skipped (overlay-managed image; runtime-overlay self-update owns the idempotency contract)"
+            # We still cross-check that the overlay-owned feed binary mtime
+            # did not drift across the reboot. snapshot_post_update_state
+            # captured it pre-reboot via stat -c '%Y' (which records the
+            # symlink's own mtime, not the target's, so it's stable as long
+            # as the overlay didn't re-lay managed paths). assert_binaries_
+            # unchanged is update.sh-shaped (it stat's into a different
+            # snapshot file); this is a leaner reboot-only invariant.
+            # No `local` — this case branch runs at the script top level,
+            # not inside a function.
+            post_reboot_snap="$STATE_DIR/snapshot-mtimes-post-reboot"
+            stat -c '%Y %n' \
+                "$(feed_binary_path)" \
+                /usr/local/share/airplanes/venv/bin/mlat-client \
+                > "$post_reboot_snap"
+            if ! diff -q "$STATE_DIR/snapshot-mtimes" "$post_reboot_snap" >/dev/null; then
+                echo "pre-reboot snapshot:" >&2
+                cat "$STATE_DIR/snapshot-mtimes" >&2
+                echo "post-reboot snapshot:" >&2
+                cat "$post_reboot_snap" >&2
+                fail "overlay-managed feed binary mtimes drifted across reboot (managed-path symlinks should be stable across reboot when no overlay update has occurred)"
+            fi
+        else
+            echo "airplanes image boot smoke: idempotency rerun phase"
+            # Re-run update.sh against the same fixture repos. The version-match
+            # fast paths in update-builds.sh should leave the binaries alone.
+            run_feed_update
+            assert_binaries_unchanged
+            assert_service_healthy airplanes-feed.service
+            assert_service_healthy airplanes-mlat.service
+        fi
 
         if [[ -f /opt/airplanes-boot-smoke/extra-probe.sh ]]; then
             echo "airplanes image boot smoke: extra-probe phase"
