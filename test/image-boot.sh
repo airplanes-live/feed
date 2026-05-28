@@ -784,8 +784,20 @@ assert_image_contracts() {
         assert_file /etc/airplanes/feed.env
     fi
     assert_valid_uuid_file /etc/airplanes/feeder-id
-    assert_symlink_target /usr/local/share/airplanes/airplanes-uuid '../../../../etc/airplanes/feeder-id'
+    # The /usr/local/share/airplanes/airplanes-uuid -> feeder-id compat symlink
+    # is required only on the legacy contract. create-uuid.sh lays it down on
+    # any install path that runs update.sh; the overlay-managed new image
+    # instead generates the canonical /etc/airplanes/feeder-id inline at first
+    # boot and deliberately does NOT ship the legacy symlink (the image's own
+    # overlay smoke asserts its absence). We assert presence only on legacy
+    # rather than asserting absence on new, because a hypothetical non-overlay
+    # new install would still run update.sh and create the symlink — the
+    # invariant that actually holds is "required on legacy", not "forbidden on
+    # new". apl-feed resolves feeder-id from the canonical path first
+    # (common.sh's resolver), so the symlink is a back-compat shim, not a
+    # functional dependency on the new contract.
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
+        assert_symlink_target /usr/local/share/airplanes/airplanes-uuid '../../../../etc/airplanes/feeder-id'
         assert_exec /usr/bin/airplanes-feeder
     else
         assert_exec /usr/local/share/airplanes/feed-airplanes
