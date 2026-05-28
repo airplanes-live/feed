@@ -1,8 +1,8 @@
 
 [Unit]
 Description=airplanes-mlat
-Wants=network.target
-After=network.target airplanes-first-run.service
+Wants=network-online.target
+After=network-online.target airplanes-first-run.service
 
 [Service]
 User=airplanes-feed
