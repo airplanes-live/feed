@@ -69,7 +69,7 @@ STUB
         > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     chmod 0640 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
-    AIRPLANES_CONFIG_SYNC_LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes/config-sync-last-success"
+    AIRPLANES_CONFIG_SYNC_LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes-config-sync/config-sync-last-success"
     export AIRPLANES_CONFIG_SYNC_LAST_SUCCESS
 }
 
@@ -716,4 +716,18 @@ EOF
     grep -F 'LATITUDE="47.0"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -F 'LONGITUDE="8.0"' "$ROOT_DIR/etc/airplanes/feed.env"
     echo "$SYNC_ERR" | grep -F 'reason=position_group_skipped_by_lww'
+}
+
+@test "airplanes-config-sync.service owns its StateDirectory, not the shared /var/lib/airplanes" {
+    # Regression guard for the first-boot race: the unit must provision its own
+    # StateDirectory (created by systemd before the mount namespace) instead of
+    # depending on airplanes-diagnostics having created /var/lib/airplanes. A
+    # ReadWritePaths= bind to a not-yet-existent /var/lib/airplanes fails
+    # namespace setup (status=226/NAMESPACE) when config-sync.timer fires first.
+    local unit="$REPO_ROOT/scripts/airplanes-config-sync.service"
+    run grep -qE '^StateDirectory=airplanes-config-sync$' "$unit"
+    [ "$status" -eq 0 ]
+    run grep -E '^ReadWritePaths=' "$unit"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"/var/lib/airplanes"* ]]
 }

@@ -54,8 +54,12 @@ _config_sync_parse_opt_in() {
     esac
 }
 
-# Sentinel mtime path. Overridable for tests + chroot smokes.
-CONFIG_SYNC_LAST_SUCCESS_FILE="${AIRPLANES_CONFIG_SYNC_LAST_SUCCESS:-/var/lib/airplanes/config-sync-last-success}"
+# Sentinel mtime path. Overridable for tests + chroot smokes. Defaults to the
+# unit's own StateDirectory (airplanes-config-sync.service:StateDirectory=),
+# which systemd exports as $STATE_DIRECTORY at runtime so the path tracks the
+# unit without drift; the literal fallback covers manual / chroot invocations
+# where the unit env isn't present.
+CONFIG_SYNC_LAST_SUCCESS_FILE="${AIRPLANES_CONFIG_SYNC_LAST_SUCCESS:-${STATE_DIRECTORY:-/var/lib/airplanes-config-sync}/config-sync-last-success}"
 
 # Structured logger. Mirrors airplanes-diagnostics.sh's `log` so the two
 # timers produce a uniform journal stream.
