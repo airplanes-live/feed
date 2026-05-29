@@ -136,6 +136,12 @@ stage_install_footprint() {
     mkdir -p "$ROOT_DIR/var/lib/airplanes"
     : > "$ROOT_DIR/var/lib/airplanes/diagnostics-last-success"
 
+    # Config-sync state directory — its own StateDirectory=airplanes-config-sync
+    # (separate from diagnostics so the two oneshots never re-chown a shared
+    # dir). uninstall.sh wipes it too.
+    mkdir -p "$ROOT_DIR/var/lib/airplanes-config-sync"
+    : > "$ROOT_DIR/var/lib/airplanes-config-sync/config-sync-last-success"
+
     # CLI wrapper at /usr/local/bin — installed by update.sh:545.
     mkdir -p "$ROOT_DIR/usr/local/bin"
     : > "$ROOT_DIR/usr/local/bin/apl-feed"
@@ -174,6 +180,14 @@ run_uninstall() {
 
     [ "$status" -eq 0 ]
     [ ! -e "$ROOT_DIR/var/lib/airplanes" ]
+}
+
+@test "after install footprint, uninstall removes /var/lib/airplanes-config-sync state dir" {
+    stage_install_footprint
+    run_uninstall
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes-config-sync" ]
 }
 
 @test "after install footprint, uninstall wipes IPATH and leaves only the legacy UUID symlink" {

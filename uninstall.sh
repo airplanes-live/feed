@@ -72,10 +72,11 @@ systemctl daemon-reload || true
 # below handles everything inside it.
 rm -f "$LOCAL_BIN_APL_FEED"
 rm -f "$IMAGE_INSTALL_MARKER"
-# State directory for the diagnostics oneshot (last-success timestamp file).
-# Created by systemd's StateDirectory=airplanes on first fire of the unit;
-# nothing in it is user-supplied, so remove wholesale.
+# State directories for the diagnostics and config-sync oneshots (last-success
+# timestamp files). Created by systemd's StateDirectory= on first fire of each
+# unit; nothing in them is user-supplied, so remove wholesale.
 rm -rf "$(airplanes_path /var/lib/airplanes)"
+rm -rf "$(airplanes_path /var/lib/airplanes-config-sync)"
 
 # Preserve the legacy fallback in memory before wiping IPATH so the canonical
 # feeder-id can be materialized from it if no canonical copy exists. The

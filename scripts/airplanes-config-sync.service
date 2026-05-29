@@ -13,4 +13,13 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/var/lib/airplanes /etc/airplanes /run
+# Own state directory for the success-mtime sentinel. systemd creates a
+# StateDirectory= before it sets up the mount namespace and adds it to the
+# writable set automatically, so the unit no longer depends on
+# airplanes-diagnostics' StateDirectory having created /var/lib/airplanes
+# first. The first config-sync.timer tick used to fail namespace setup
+# ("/var/lib/airplanes: No such file or directory") when it fired before
+# diagnostics ever ran.
+StateDirectory=airplanes-config-sync
+StateDirectoryMode=0755
+ReadWritePaths=/etc/airplanes /run
