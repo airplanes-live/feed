@@ -50,15 +50,15 @@ teardown() {
 
 # --- dispatch_id ---
 
-@test "dispatch_id: missing subcommand dies" {
+@test "dispatch_id: missing subcommand shows id help (exit 2)" {
     run bash -c "
         set -euo pipefail
         source '$LIB_DIR/common.sh'
         source '$LIB_DIR/id.sh'
         dispatch_id
     "
-    [ "$status" -ne 0 ]
-    [[ "$output" == *'id requires a subcommand'* ]]
+    [ "$status" -eq 2 ]
+    [[ "$output" == *'apl-feed id <subcommand>'* ]]
 }
 
 @test "dispatch_id: unknown subcommand dies" {

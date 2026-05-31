@@ -75,7 +75,7 @@ apl_feed_import_legacy_config() {
     local no_restart=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help) usage; return 0 ;;
+            -h|--help) usage_import_legacy_config; exit 0 ;;
             --no-restart)
                 no_restart=1
                 shift
@@ -337,13 +337,37 @@ apl_feed_import_legacy_config() {
     esac
 }
 
+usage_import() {
+    cat <<'USAGE'
+Usage: apl-feed import <subcommand> [options]
+
+Subcommands:
+  legacy-config [--no-restart] <path>   Import a legacy airplanes-config.txt
+
+Run 'apl-feed import <subcommand> --help' for details.
+USAGE
+}
+
+usage_import_legacy_config() {
+    cat <<'USAGE'
+Usage: apl-feed import legacy-config [--no-restart] <path>
+
+Translates a legacy /boot/airplanes-config.txt-shaped file into the
+canonical feed.env schema and writes it to /etc/airplanes/feed.env.
+--no-restart suppresses the post-write service restart.
+USAGE
+}
+
 dispatch_import() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "import requires a subcommand (legacy-config)"
+    [[ -n "$sub" ]] || usage_error usage_import
+    if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+        usage_import
+        return 0
+    fi
     shift || true
     case "$sub" in
         legacy-config) apl_feed_import_legacy_config "$@" ;;
-        -h|--help) usage ;;
-        *) die "unknown import subcommand: $sub" ;;
+        *) usage_error usage_import "unknown import subcommand: $sub" ;;
     esac
 }

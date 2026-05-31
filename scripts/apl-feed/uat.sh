@@ -124,6 +124,7 @@ apl_feed_uat_enable() {
     local serial_set=0 gain_set=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help) usage_uat_enable; exit 0 ;;
             --serial)
                 [[ $# -ge 2 ]] || die "--serial requires VALUE"
                 serial="$2"; serial_set=1; shift 2 ;;
@@ -159,6 +160,7 @@ apl_feed_uat_enable() {
 apl_feed_uat_disable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_uat_disable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -174,6 +176,7 @@ apl_feed_uat_disable() {
 apl_feed_uat_setup() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_uat_setup; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -223,6 +226,7 @@ apl_feed_uat_setup() {
 apl_feed_uat_status() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_uat_status; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -260,16 +264,71 @@ apl_feed_uat_status() {
     done
 }
 
+usage_uat() {
+    cat <<'USAGE'
+Usage: apl-feed 978 <subcommand> [options]
+
+Subcommands:
+  enable [--serial S] [--gain G]   Enable 978 MHz UAT reception
+  disable                          Disable 978 UAT
+  setup                            Interactive 978 configuration
+  status                           Show 978 UAT configuration and services
+
+Run 'apl-feed 978 <subcommand> --help' for details.
+USAGE
+}
+
+usage_uat_enable() {
+    cat <<'USAGE'
+Usage: apl-feed 978 enable [--serial SERIAL] [--gain GAIN]
+
+Enables 978 MHz UAT reception (points UAT_INPUT at the local dump978-fa
+endpoint). --serial pins the 978 SDR's EEPROM serial; --gain pins the
+dump978 gain. Omitting either leaves any stored value unchanged; the
+dump978 wrapper applies its built-in defaults when the value is unset.
+USAGE
+}
+
+usage_uat_disable() {
+    cat <<'USAGE'
+Usage: apl-feed 978 disable
+
+Disables 978 UAT reception by clearing UAT_INPUT.
+USAGE
+}
+
+usage_uat_setup() {
+    cat <<'USAGE'
+Usage: apl-feed 978 setup
+
+Interactive prompt for the 978 SDR serial and gain, then enables 978.
+Requires a TTY; for non-interactive use run
+'apl-feed 978 enable [--serial S] [--gain G]'.
+USAGE
+}
+
+usage_uat_status() {
+    cat <<'USAGE'
+Usage: apl-feed 978 status
+
+Shows whether 978 UAT is enabled, the configured SDR serial and gain, and
+the state of the dump978-fa / airplanes-978 services.
+USAGE
+}
+
 dispatch_uat() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "978 requires a subcommand (enable|disable|setup|status)"
+    [[ -n "$sub" ]] || usage_error usage_uat
+    if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+        usage_uat
+        return 0
+    fi
     shift || true
     case "$sub" in
         enable)  apl_feed_uat_enable  "$@" ;;
         disable) apl_feed_uat_disable "$@" ;;
         setup)   apl_feed_uat_setup   "$@" ;;
         status)  apl_feed_uat_status  "$@" ;;
-        -h|--help) usage ;;
-        *) die "unknown 978 subcommand: $sub" ;;
+        *) usage_error usage_uat "unknown 978 subcommand: $sub" ;;
     esac
 }

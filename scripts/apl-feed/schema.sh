@@ -9,7 +9,22 @@
 # update. Stable JSON shape — the version field is for future-incompat
 # evolution.
 
+usage_schema() {
+    cat <<'USAGE'
+Usage: apl-feed schema
+
+Prints the canonical feed.env schema (writable and readable keys) as a
+single line of JSON. Used by webconfig to filter responses and build forms.
+USAGE
+}
+
 apl_feed_schema_cli() {
+    # Help must work without jq installed — handle it before require_jq.
+    local _arg
+    for _arg in "$@"; do
+        case "$_arg" in -h|--help) usage_schema; exit 0 ;; esac
+    done
+
     require_jq
 
     while (( $# > 0 )); do
@@ -21,7 +36,7 @@ apl_feed_schema_cli() {
         esac
         case "$1" in
             --json) shift ;;
-            -h|--help) usage; exit 0 ;;
+            -h|--help) usage_schema; exit 0 ;;
             *) die "unknown flag for schema: $1" ;;
         esac
     done

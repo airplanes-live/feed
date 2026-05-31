@@ -181,10 +181,10 @@ EOF
     grep -Eq "^REPORT_STATUS=\"?false\"?$" "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
-@test "dispatch_diagnostics with no subcommand fails with actionable message" {
+@test "dispatch_diagnostics with no subcommand shows help (exit 2)" {
     run dispatch_diagnostics
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"diagnostics requires a subcommand"* ]]
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"apl-feed diagnostics <subcommand>"* ]]
     [[ "$output" == *"enable"* ]]
     [[ "$output" == *"disable"* ]]
 }

@@ -113,10 +113,10 @@ EOF
 
 # --- dispatch_uat ---
 
-@test "dispatch_uat: missing subcommand dies" {
+@test "dispatch_uat: missing subcommand shows 978 help (exit 2)" {
     run dispatch_uat
-    [ "$status" -ne 0 ]
-    [[ "$output" == *'978 requires a subcommand'* ]]
+    [ "$status" -eq 2 ]
+    [[ "$output" == *'apl-feed 978 <subcommand>'* ]]
 }
 
 @test "dispatch_uat: unknown subcommand dies" {

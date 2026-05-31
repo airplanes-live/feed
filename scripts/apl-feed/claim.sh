@@ -21,6 +21,7 @@ claim_register() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help) usage_claim_register; exit 0 ;;
             --dry-run)
                 DRY_RUN=1
                 shift
@@ -202,6 +203,7 @@ claim_register() {
 claim_show() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_claim_show; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -227,6 +229,7 @@ claim_show() {
 claim_rotate_abort() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_claim_rotate; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -263,6 +266,10 @@ claim_rotate_abort() {
 }
 
 claim_rotate() {
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        usage_claim_rotate
+        exit 0
+    fi
     if [[ "${1:-}" == "--abort" ]]; then
         shift
         claim_rotate_abort "$@"
@@ -271,6 +278,7 @@ claim_rotate() {
 
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_claim_rotate; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -415,6 +423,7 @@ claim_set() {
     local opt_rc force=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help) usage_claim_set; exit 0 ;;
             --force)
                 # shellcheck disable=SC2034  # tracked locally; not exported
                 force=1
@@ -519,16 +528,76 @@ claim_set() {
 }
 
 
+usage_claim() {
+    cat <<'USAGE'
+Usage: apl-feed claim <subcommand> [options]
+
+Subcommands:
+  register    Generate and register the claim secret with airplanes.live
+  show        Print the local claim secret and the claim page URL
+  rotate      Rotate the claim secret (--abort cancels a pending rotation)
+  set         Save a claim secret minted by the website (reads stdin)
+
+Run 'apl-feed claim <subcommand> --help' for details.
+USAGE
+}
+
+usage_claim_register() {
+    cat <<'USAGE'
+Usage: apl-feed claim register
+
+Generates a claim secret (when none exists yet) and registers it with
+airplanes.live, then prints the secret and the claim page URL. Safe to
+re-run: an already-registered feeder re-confirms its existing secret.
+USAGE
+}
+
+usage_claim_show() {
+    cat <<'USAGE'
+Usage: apl-feed claim show
+
+Prints the locally stored claim secret, its version (when known), and the
+claim page URL. Does not contact the website.
+USAGE
+}
+
+usage_claim_rotate() {
+    cat <<'USAGE'
+Usage:
+  apl-feed claim rotate
+  apl-feed claim rotate --abort
+
+Rotates the claim secret with airplanes.live, replacing the local secret
+on success. --abort cancels a pending (interrupted) rotation, keeping the
+current secret as long as the server still accepts it.
+USAGE
+}
+
+usage_claim_set() {
+    cat <<'USAGE'
+Usage: apl-feed claim set [--force]
+
+Reads a claim secret from stdin (or prompts on a TTY) and saves it
+locally. The feeder uses the new secret on its next contact with the
+website — no daemon restart, since neither airplanes-feed nor
+airplanes-mlat consumes the claim secret. --force overwrites a different
+secret already saved on this feeder.
+USAGE
+}
+
 dispatch_claim() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "claim requires a subcommand"
+    [[ -n "$sub" ]] || usage_error usage_claim
+    if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+        usage_claim
+        return 0
+    fi
     shift || true
     case "$sub" in
         register) claim_register "$@" ;;
         show) claim_show "$@" ;;
         rotate) claim_rotate "$@" ;;
         set) claim_set "$@" ;;
-        -h|--help) usage ;;
-        *) die "unknown claim subcommand: $sub" ;;
+        *) usage_error usage_claim "unknown claim subcommand: $sub" ;;
     esac
 }

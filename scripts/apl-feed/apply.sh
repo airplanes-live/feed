@@ -34,7 +34,24 @@
 #   {"status":"parse_error", "message":"..."}
 #   {"status":"usage_error", "message":"..."}
 
+usage_apply() {
+    cat <<'USAGE'
+Usage: apl-feed apply [--no-restart] [--lock-timeout SECS]
+
+Reads a JSON payload of config updates on stdin and applies them to
+feed.env via the canonical writer, emitting a JSON result. --no-restart
+suppresses the post-apply service restart; --lock-timeout caps how long to
+wait for the feed.env lock.
+USAGE
+}
+
 apl_feed_apply_cli() {
+    # Help must work without jq installed — handle it before require_jq.
+    local _arg
+    for _arg in "$@"; do
+        case "$_arg" in -h|--help) usage_apply; exit 0 ;; esac
+    done
+
     require_jq
 
     local feed_env lock_path skip_restart=0 lock_timeout=""
@@ -59,7 +76,7 @@ apl_feed_apply_cli() {
                 shift 2
                 ;;
             --json) shift ;;
-            -h|--help) usage; exit 0 ;;
+            -h|--help) usage_apply; exit 0 ;;
             *)
                 _apl_feed_apply_emit_error usage_error "unknown flag for apply: $1"
                 return 5
