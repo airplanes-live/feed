@@ -20,6 +20,7 @@ id_set() {
     local opt_rc force=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help) usage_id_set; exit 0 ;;
             --force)
                 # shellcheck disable=SC2034  # tracked locally; not exported
                 force=1
@@ -117,13 +118,38 @@ id_set() {
 }
 
 
+usage_id() {
+    cat <<'USAGE'
+Usage: apl-feed id <subcommand> [options]
+
+Subcommands:
+  set    Save a Feeder ID (UUID) supplied by the website (reads stdin)
+
+Run 'apl-feed id <subcommand> --help' for details.
+USAGE
+}
+
+usage_id_set() {
+    cat <<'USAGE'
+Usage: apl-feed id set [--force]
+
+Reads a Feeder ID (UUID) from stdin (or prompts on a TTY) and saves it
+locally. Both airplanes-feed and airplanes-mlat consume the UUID, so this
+command restarts both services after writing. --force overwrites a
+different Feeder ID already saved on this feeder.
+USAGE
+}
+
 dispatch_id() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "id requires a subcommand"
+    [[ -n "$sub" ]] || usage_error usage_id
+    if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+        usage_id
+        return 0
+    fi
     shift || true
     case "$sub" in
         set) id_set "$@" ;;
-        -h|--help) usage ;;
-        *) die "unknown id subcommand: $sub" ;;
+        *) usage_error usage_id "unknown id subcommand: $sub" ;;
     esac
 }

@@ -189,10 +189,10 @@ EOF
     grep -Eq "^REMOTE_CONFIG_ENABLED=\"?false\"?$" "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
-@test "dispatch_config with no subcommand fails with actionable message" {
+@test "dispatch_config with no subcommand shows help (exit 2)" {
     run dispatch_config
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"config requires a subcommand"* ]]
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"apl-feed config <subcommand>"* ]]
     [[ "$output" == *"enable"* ]]
     [[ "$output" == *"disable"* ]]
     [[ "$output" == *"sync"* ]]

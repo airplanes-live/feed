@@ -691,11 +691,22 @@ diagnostics_status_line() {
     fi
 }
 
+usage_status() {
+    cat <<'USAGE'
+Usage: apl-feed status [--json]
+
+Runs the feeder health checks (receiver input, feed/MLAT services, ADS-B
+uplink, website claim/reception, diagnostics) and prints a summary.
+--json emits a machine-readable report instead of the human summary.
+USAGE
+}
+
 feed_status() {
     local opt_rc
     STATUS_OUTPUT_JSON=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help) usage_status; exit 0 ;;
             --json)
                 STATUS_OUTPUT_JSON=1
                 shift

@@ -91,61 +91,55 @@ new_tmp_file() {
 
 usage() {
     cat <<'USAGE'
-Usage:
-  apl-feed status [--json]
-  apl-feed claim register
-  apl-feed claim show
-  apl-feed claim rotate
-  apl-feed claim rotate --abort
-  apl-feed claim set [--force]
-  apl-feed id set [--force]
-  apl-feed mlat enable
-  apl-feed mlat disable
-  apl-feed mlat setup
-  apl-feed mlat user <name>
-  apl-feed mlat user --clear
-  apl-feed mlat geo <lat> <lon> <alt>
-  apl-feed mlat private enable
-  apl-feed mlat private disable
-  apl-feed 978 enable [--serial SERIAL] [--gain GAIN]
-  apl-feed 978 disable
-  apl-feed 978 setup
-  apl-feed 978 status
-  apl-feed diagnostics enable
-  apl-feed diagnostics disable
-  apl-feed apply [--no-restart] [--lock-timeout SECS]
-  apl-feed schema
-  apl-feed config sync [--dry-run] [--no-restart]
-  apl-feed import legacy-config [--no-restart] <path>
-  apl-feed backup <file>|-
-  apl-feed restore <file>
-  apl-feed restore --check <file>
-  apl-feed restore --uuid <uuid> [--check]
+apl-feed — airplanes.live feeder control
+
+Usage: apl-feed <command> [subcommand] [options]
+
+Commands:
+  status        Show feeder status
+  claim         Manage the claim secret (register/show/rotate/set)
+  id            Manage the Feeder ID (set)
+  mlat          Configure MLAT (enable/disable/setup/user/geo/private)
+  978           Configure 978 MHz UAT (enable/disable/setup/status)
+  diagnostics   Enable or disable diagnostics push (enable/disable)
+  config        Remote config sync (sync/enable/disable)
+  import        Import configuration (legacy-config)
+  apply         Apply config keys from a JSON payload on stdin
+  schema        Print the feed.env config schema as JSON
+  backup        Write a config backup (claim secret + Feeder ID)
+  restore       Restore from a backup file or the website
 
 Options:
-  --force             For restore / claim set / id set: overwrite differing
-                      local state.
-  --check             For restore: validate the source without writing.
-  -h, --help          Show this message.
+  -h, --help    Show this message.
 
-`apl-feed claim set` reads a claim secret from stdin (or prompts when run
-on a TTY) and saves it locally. The feeder will use the new secret on its
-next contact with the website. No daemon restart — neither airplanes-feed
-nor airplanes-mlat consumes the claim secret.
-
-`apl-feed id set` reads a Feeder ID (UUID) from stdin and saves it
-locally. Both airplanes-feed and airplanes-mlat consume the UUID, so this
-command restarts both services after writing.
-
-`apl-feed restore --uuid <uuid>` is the website-restore path. It writes
-both the supplied UUID and a fresh secret read from stdin in one atomic
-two-file commit, then restarts both daemons.
+Run 'apl-feed <command> --help' for details on a command.
 USAGE
 }
 
 die() {
     echo "ERROR: $*" >&2
     exit 1
+}
+
+# Usage-error exit path. Prints an optional "ERROR: <message>" line, then
+# the relevant command's help, both to stderr, and exits 2 — the
+# argparse / bash-builtin / coreutils convention for "invoked wrong",
+# kept distinct from die()'s exit 1 for runtime / precondition failures.
+# The usage function is named (not called directly) so callers can refer
+# to a usage_* defined in a later-sourced module; declare -F guards a
+# mistyped or not-yet-sourced name by falling back to the top-level index.
+usage_error() {
+    local usage_fn="$1"
+    shift || true
+    if [[ $# -gt 0 && -n "$1" ]]; then
+        echo "ERROR: $*" >&2
+    fi
+    if declare -F "$usage_fn" >/dev/null 2>&1; then
+        "$usage_fn" >&2
+    else
+        usage >&2
+    fi
+    exit 2
 }
 
 root_path() {

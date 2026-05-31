@@ -121,15 +121,15 @@ EOF
 
 # --- dispatch_mlat ---
 
-@test "dispatch_mlat: missing subcommand dies" {
+@test "dispatch_mlat: missing subcommand shows mlat help (exit 2)" {
     run bash -c "
         set -euo pipefail
         source '$LIB_DIR/common.sh'
         source '$LIB_DIR/mlat.sh'
         dispatch_mlat
     "
-    [ "$status" -ne 0 ]
-    [[ "$output" == *'mlat requires a subcommand'* ]]
+    [ "$status" -eq 2 ]
+    [[ "$output" == *'apl-feed mlat <subcommand>'* ]]
 }
 
 @test "dispatch_mlat: unknown subcommand dies" {
@@ -273,15 +273,15 @@ EOF
 
 # --- mlat private subcommand ---
 
-@test "dispatch_mlat private: missing subcommand dies" {
+@test "dispatch_mlat private: missing subcommand shows help (exit 2)" {
     run bash -c "
         set -euo pipefail
         source '$LIB_DIR/common.sh'
         source '$LIB_DIR/mlat.sh'
         dispatch_mlat private
     "
-    [ "$status" -ne 0 ]
-    [[ "$output" == *'mlat private requires a subcommand'* ]]
+    [ "$status" -eq 2 ]
+    [[ "$output" == *'apl-feed mlat private <subcommand>'* ]]
 }
 
 @test "dispatch_mlat private: unknown subcommand dies" {

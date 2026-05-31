@@ -169,7 +169,7 @@ main() {
             usage
             ;;
         *)
-            die "unknown command: $cmd"
+            usage_error usage "unknown command: $cmd"
             ;;
     esac
 }

@@ -1,5 +1,30 @@
 #!/usr/bin/env bash
 
+usage_backup() {
+    cat <<'USAGE'
+Usage: apl-feed backup <file>|-
+
+Writes a JSON backup of the feeder's claim secret and Feeder ID to <file>
+(mode 0600), or to stdout when the path is '-'. Refuses to overwrite an
+existing file.
+USAGE
+}
+
+usage_restore() {
+    cat <<'USAGE'
+Usage:
+  apl-feed restore <file>
+  apl-feed restore --check <file>
+  apl-feed restore --uuid <uuid> [--check]
+
+Restores the claim secret and Feeder ID from a backup <file>, or with
+--uuid takes the Feeder ID from the flag and reads a fresh secret from
+stdin (the website-restore path) in one atomic two-file commit, then
+restarts both daemons. --check validates the source without writing;
+--force overwrites differing local state.
+USAGE
+}
+
 read_backup_file() {
     local infile="$1"
     BACKUP_SCHEMA="$(jq -r '.schema_version // empty' < "$infile")"
@@ -26,7 +51,9 @@ config_backup() {
             --force)
                 die "unknown flag for backup: --force"
                 ;;
-            --root|--website-url|--max-retry-time|-h|--help)
+            -h|--help)
+                usage_backup; exit 0 ;;
+            --root|--website-url|--max-retry-time)
                 if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
                 case "$opt_rc" in
                     1) shift ;;
@@ -46,7 +73,7 @@ config_backup() {
                 ;;
         esac
     done
-    [[ -n "$outfile" ]] || die "backup requires a file (use '-' for stdout)"
+    [[ -n "$outfile" ]] || usage_error usage_backup "backup requires a file (use '-' for stdout)"
     local stdout_mode=0
     if [[ "$outfile" == "-" ]]; then
         stdout_mode=1
@@ -147,7 +174,9 @@ config_restore() {
                 uuid_arg="$2"
                 shift 2
                 ;;
-            --root|--website-url|--max-retry-time|-h|--help)
+            -h|--help)
+                usage_restore; exit 0 ;;
+            --root|--website-url|--max-retry-time)
                 if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
                 case "$opt_rc" in
                     1) shift ;;
@@ -172,7 +201,7 @@ config_restore() {
         die "restore: --uuid and a backup file are mutually exclusive"
     fi
     if [[ -z "$uuid_arg" && -z "$infile" ]]; then
-        die "restore requires --uuid <UUID> or a backup file"
+        usage_error usage_restore "restore requires --uuid <UUID> or a backup file"
     fi
 
     if [[ -n "$infile" ]]; then

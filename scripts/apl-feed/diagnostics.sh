@@ -70,6 +70,7 @@ _diagnostics_apply() {
 apl_feed_diagnostics_enable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_diagnostics_enable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -85,6 +86,7 @@ apl_feed_diagnostics_enable() {
 apl_feed_diagnostics_disable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_diagnostics_disable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -97,14 +99,47 @@ apl_feed_diagnostics_disable() {
     _diagnostics_emit_result "REPORT_STATUS set to false (diagnostics push disabled; the next tick within ~10 min sends one final muted signal to airplanes.live, then the collector exits silently)"
 }
 
+usage_diagnostics() {
+    cat <<'USAGE'
+Usage: apl-feed diagnostics <subcommand>
+
+Subcommands:
+  enable     Enable diagnostics push to airplanes.live
+  disable    Disable diagnostics push
+
+Run 'apl-feed diagnostics <subcommand> --help' for details.
+USAGE
+}
+
+usage_diagnostics_enable() {
+    cat <<'USAGE'
+Usage: apl-feed diagnostics enable
+
+Enables the diagnostics push (sets REPORT_STATUS=true). The next timer
+tick within ~10 min sends the first report.
+USAGE
+}
+
+usage_diagnostics_disable() {
+    cat <<'USAGE'
+Usage: apl-feed diagnostics disable
+
+Disables the diagnostics push (sets REPORT_STATUS=false). One final muted
+signal is sent on the next tick, then the collector exits silently.
+USAGE
+}
+
 dispatch_diagnostics() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "diagnostics requires a subcommand (enable|disable)"
+    [[ -n "$sub" ]] || usage_error usage_diagnostics
+    if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+        usage_diagnostics
+        return 0
+    fi
     shift || true
     case "$sub" in
         enable)  apl_feed_diagnostics_enable  "$@" ;;
         disable) apl_feed_diagnostics_disable "$@" ;;
-        -h|--help) usage ;;
-        *) die "unknown diagnostics subcommand: $sub" ;;
+        *) usage_error usage_diagnostics "unknown diagnostics subcommand: $sub" ;;
     esac
 }

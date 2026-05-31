@@ -100,6 +100,7 @@ _mlat_require_geo() {
 apl_feed_mlat_disable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_mlat_disable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -115,6 +116,7 @@ apl_feed_mlat_disable() {
 apl_feed_mlat_enable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_mlat_enable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -141,6 +143,7 @@ apl_feed_mlat_enable() {
 apl_feed_mlat_private_enable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_mlat_private_enable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -156,6 +159,7 @@ apl_feed_mlat_private_enable() {
 apl_feed_mlat_private_disable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_mlat_private_disable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -172,6 +176,7 @@ apl_feed_mlat_user() {
     local clear=0 name="" name_set=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help) usage_mlat_user; exit 0 ;;
             --clear)
                 clear=1
                 shift ;;
@@ -214,7 +219,9 @@ apl_feed_mlat_geo() {
         case "$1" in
             -[0-9]*|-.[0-9]*)
                 positional+=("$1"); shift ;;
-            --|-h|--help|--root|--website-url|--max-retry-time)
+            -h|--help)
+                usage_mlat_geo; exit 0 ;;
+            --|--root|--website-url|--max-retry-time)
                 local opt_rc
                 if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
                 case "$opt_rc" in
@@ -257,6 +264,7 @@ apl_feed_mlat_geo() {
 apl_feed_mlat_setup() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_mlat_setup; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -410,21 +418,123 @@ apl_feed_mlat_setup() {
     _mlat_emit_result "feed.env updated; MLAT enabled."
 }
 
+usage_mlat() {
+    cat <<'USAGE'
+Usage: apl-feed mlat <subcommand> [options]
+
+Subcommands:
+  enable                    Enable MLAT (requires a configured location)
+  disable                   Disable MLAT
+  setup                     Interactive MLAT configuration
+  user <name>               Set the MLAT feeder name (--clear to remove)
+  geo <lat> <lon> <alt>     Set the antenna location
+  private <enable|disable>  Hide or show the feed name on the public map
+
+Run 'apl-feed mlat <subcommand> --help' for details.
+USAGE
+}
+
+usage_mlat_private() {
+    cat <<'USAGE'
+Usage: apl-feed mlat private <subcommand>
+
+Subcommands:
+  enable     Hide the feed name on the public MLAT map
+  disable    Show the feed name on the public MLAT map
+
+Run 'apl-feed mlat private <subcommand> --help' for details.
+USAGE
+}
+
+usage_mlat_enable() {
+    cat <<'USAGE'
+Usage: apl-feed mlat enable
+
+Enables MLAT (multilateration). Requires a configured antenna location
+(set it with 'apl-feed mlat geo' or 'apl-feed mlat setup' first) and
+restarts the MLAT service.
+USAGE
+}
+
+usage_mlat_disable() {
+    cat <<'USAGE'
+Usage: apl-feed mlat disable
+
+Disables MLAT. The daemon stays enabled at the systemd level but sleeps
+while disabled.
+USAGE
+}
+
+usage_mlat_setup() {
+    cat <<'USAGE'
+Usage: apl-feed mlat setup
+
+Interactive prompt for the antenna location, MLAT name, and privacy, then
+enables MLAT. Requires a TTY; for non-interactive use run
+'apl-feed mlat geo', then optionally 'apl-feed mlat user', then
+'apl-feed mlat enable'.
+USAGE
+}
+
+usage_mlat_user() {
+    cat <<'USAGE'
+Usage:
+  apl-feed mlat user <name>
+  apl-feed mlat user --clear
+
+Sets the MLAT feeder name (1-64 chars from [A-Za-z0-9_-]). --clear removes
+it so the daemon falls back to Anonymous-<short-feeder-id>.
+USAGE
+}
+
+usage_mlat_geo() {
+    cat <<'USAGE'
+Usage: apl-feed mlat geo <lat> <lon> <alt>
+
+Sets the antenna location. <lat>/<lon> are decimal degrees; <alt> accepts
+a metric or imperial suffix (e.g. 120m, 400ft) or bare metres. The (0,0)
+placeholder is treated as "location not configured".
+USAGE
+}
+
+usage_mlat_private_enable() {
+    cat <<'USAGE'
+Usage: apl-feed mlat private enable
+
+Hides the feed name on the public MLAT map (sets MLAT_PRIVATE=true).
+USAGE
+}
+
+usage_mlat_private_disable() {
+    cat <<'USAGE'
+Usage: apl-feed mlat private disable
+
+Shows the feed name on the public MLAT map (sets MLAT_PRIVATE=false).
+USAGE
+}
+
 dispatch_mlat_private() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "mlat private requires a subcommand (enable|disable)"
+    [[ -n "$sub" ]] || usage_error usage_mlat_private
+    if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+        usage_mlat_private
+        return 0
+    fi
     shift || true
     case "$sub" in
         enable)  apl_feed_mlat_private_enable  "$@" ;;
         disable) apl_feed_mlat_private_disable "$@" ;;
-        -h|--help) usage ;;
-        *) die "unknown mlat private subcommand: $sub" ;;
+        *) usage_error usage_mlat_private "unknown mlat private subcommand: $sub" ;;
     esac
 }
 
 dispatch_mlat() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "mlat requires a subcommand (enable|disable|setup|user|geo|private)"
+    [[ -n "$sub" ]] || usage_error usage_mlat
+    if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+        usage_mlat
+        return 0
+    fi
     shift || true
     case "$sub" in
         enable)  apl_feed_mlat_enable  "$@" ;;
@@ -433,8 +543,7 @@ dispatch_mlat() {
         user)    apl_feed_mlat_user    "$@" ;;
         geo)     apl_feed_mlat_geo     "$@" ;;
         private) dispatch_mlat_private "$@" ;;
-        -h|--help) usage ;;
-        *) die "unknown mlat subcommand: $sub" ;;
+        *) usage_error usage_mlat "unknown mlat subcommand: $sub" ;;
     esac
 }
 

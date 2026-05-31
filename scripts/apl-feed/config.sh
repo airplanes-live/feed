@@ -633,7 +633,7 @@ apl_feed_config_sync() {
                 shift
                 ;;
             -h|--help)
-                usage
+                usage_config_sync
                 exit 0
                 ;;
             *)
@@ -848,6 +848,7 @@ _config_toggle_emit_result() {
 apl_feed_config_enable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_config_enable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -863,6 +864,7 @@ apl_feed_config_enable() {
 apl_feed_config_disable() {
     local opt_rc
     while [[ $# -gt 0 ]]; do
+        case "$1" in -h|--help) usage_config_disable; exit 0 ;; esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -875,15 +877,60 @@ apl_feed_config_disable() {
     _config_toggle_emit_result "REMOTE_CONFIG_ENABLED set to false (remote config sync disabled; the timer stays armed but the sync CLI exits silently each tick)"
 }
 
+usage_config() {
+    cat <<'USAGE'
+Usage: apl-feed config <subcommand> [options]
+
+Subcommands:
+  sync [--dry-run] [--no-restart]   Run a one-shot remote config sync
+  enable                            Enable remote config sync (opt-in)
+  disable                           Disable remote config sync
+
+Run 'apl-feed config <subcommand> --help' for details.
+USAGE
+}
+
+usage_config_sync() {
+    cat <<'USAGE'
+Usage: apl-feed config sync [--dry-run] [--no-restart]
+
+Pushes the local feed.env snapshot to airplanes.live and applies the
+server's merged response. Requires REMOTE_CONFIG_ENABLED=true (see
+'apl-feed config enable'). --dry-run prints the outgoing payload without
+contacting the server; --no-restart suppresses the post-apply restart.
+USAGE
+}
+
+usage_config_enable() {
+    cat <<'USAGE'
+Usage: apl-feed config enable
+
+Opts this feeder into remote config sync (sets REMOTE_CONFIG_ENABLED=true).
+The next sync tick within ~60s contacts the website.
+USAGE
+}
+
+usage_config_disable() {
+    cat <<'USAGE'
+Usage: apl-feed config disable
+
+Opts this feeder out of remote config sync (sets REMOTE_CONFIG_ENABLED=
+false). The timer stays armed but the sync exits silently each tick.
+USAGE
+}
+
 dispatch_config() {
     local sub="${1:-}"
-    [[ -n "$sub" ]] || die "config requires a subcommand (enable|disable|sync)"
+    [[ -n "$sub" ]] || usage_error usage_config
+    if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+        usage_config
+        return 0
+    fi
     shift || true
     case "$sub" in
         enable)  apl_feed_config_enable  "$@" ;;
         disable) apl_feed_config_disable "$@" ;;
         sync)    apl_feed_config_sync    "$@" ;;
-        -h|--help) usage ;;
-        *) die "unknown config subcommand: $sub" ;;
+        *) usage_error usage_config "unknown config subcommand: $sub" ;;
     esac
 }
