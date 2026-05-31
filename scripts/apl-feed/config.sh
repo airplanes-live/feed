@@ -22,6 +22,27 @@
 #       broken installation. systemctl marks the unit failed so the
 #       failure surfaces in `apl-feed status` and `systemctl status`.
 
+# State writer/reader. config-sync publishes its own runtime state file (the
+# same daemon-state pattern feed/mlat/diagnostics use) to record the server's
+# ownership verdict and detect the unowned→owned claim edge. Defensive source:
+# a missing lib (mid-update transient) degrades to no-op stubs rather than
+# breaking the sync. BASH_SOURCE-relative so it resolves in both the source
+# tree (scripts/apl-feed/.. -> scripts/lib) and the install layout.
+_config_sync_lib_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/../lib"
+if [[ -r "$_config_sync_lib_dir/state-writer.sh" ]]; then
+    # shellcheck source=../lib/state-writer.sh
+    source "$_config_sync_lib_dir/state-writer.sh"
+else
+    airplanes_write_state() { return 1; }
+fi
+if [[ -r "$_config_sync_lib_dir/state-reader.sh" ]]; then
+    # shellcheck source=../lib/state-reader.sh
+    source "$_config_sync_lib_dir/state-reader.sh"
+else
+    airplanes_read_state() { return 1; }
+fi
+unset _config_sync_lib_dir
+
 # Legacy fallback tuple matches the migration in
 # scripts/lib/update-migrations.sh:migrate_seed_feed_meta_json so a
 # feeder whose sidecar is missing or corrupt converges to the server's
@@ -60,6 +81,12 @@ _config_sync_parse_opt_in() {
 # unit without drift; the literal fallback covers manual / chroot invocations
 # where the unit env isn't present.
 CONFIG_SYNC_LAST_SUCCESS_FILE="${AIRPLANES_CONFIG_SYNC_LAST_SUCCESS:-${STATE_DIRECTORY:-/var/lib/airplanes-config-sync}/config-sync-last-success}"
+
+# Owned-state file (same StateDirectory, same override discipline as the
+# sentinel). Holds the server's last ownership verdict so the unowned→owned
+# claim edge can be detected across ticks. Persistent (not /run) so the edge
+# fires only on an actual claim, not on every reboot.
+CONFIG_SYNC_STATE_FILE="${AIRPLANES_CONFIG_SYNC_STATE:-${STATE_DIRECTORY:-/var/lib/airplanes-config-sync}/state}"
 
 # Structured logger. Mirrors airplanes-diagnostics.sh's `log` so the two
 # timers produce a uniform journal stream.
@@ -321,6 +348,51 @@ _config_sync_touch_sentinel() {
     dir="$(dirname "$file")"
     mkdir -p "$dir" 2>/dev/null || true
     : > "$file" 2>/dev/null || true
+}
+
+# Nudge one diagnostics push (best-effort, non-blocking) so a just-claimed
+# feeder's dashboard shows data within ~60s instead of waiting for the next
+# 10-min diagnostics tick. Guards mirror the apply-side service-action skips:
+# no host systemctl during chroot/--root or test runs, and respect the
+# operator's --no-restart. The diagnostics oneshot self-gates on REPORT_STATUS,
+# so a muted feeder makes this a harmless no-op.
+_config_sync_trigger_diagnostics_push() {
+    local skip_restart="$1"
+    if (( skip_restart )) || [[ "${ROOT:-/}" != "/" ]]; then
+        return 0
+    fi
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    systemctl start --no-block airplanes-diagnostics.service 2>/dev/null \
+        || _config_sync_log warn "reason=diagnostics_trigger_failed"
+    return 0
+}
+
+# Record the server's ownership verdict to the config-sync state file and, on
+# the unowned→owned edge (a fresh account claim), nudge a diagnostics push.
+# Reads the prior verdict BEFORE writing the new one. Best-effort: a missing /
+# unreadable prior reads as "not owned", so at worst one extra (rate-limited)
+# push fires; a state-write failure is logged, not fatal.
+_config_sync_record_owned() {
+    local now_owned="$1" skip_restart="$2"
+    local prior_owned='' write_ok=1
+    prior_owned="$(airplanes_read_state "$CONFIG_SYNC_STATE_FILE" owned 2>/dev/null || true)"
+    mkdir -p "$(dirname "$CONFIG_SYNC_STATE_FILE")" 2>/dev/null || true
+    if ! airplanes_write_state "$CONFIG_SYNC_STATE_FILE" \
+        service=airplanes-config-sync \
+        owned="$now_owned" \
+        decided_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; then
+        write_ok=0
+        _config_sync_log warn "reason=state_write_failed"
+    fi
+    # Only fire the edge if the new verdict actually persisted. If the write
+    # failed we can't record that we fired, so firing would re-trigger on every
+    # tick — leave it to the regular diagnostics timer instead.
+    if (( write_ok )) && [[ "$now_owned" == "true" && "$prior_owned" != "true" ]]; then
+        _config_sync_trigger_diagnostics_push "$skip_restart"
+    fi
+    return 0
 }
 
 # Translate the server's `fields` response into per-key arguments for
@@ -749,10 +821,12 @@ apl_feed_config_sync() {
                     if _config_sync_apply_response "$response_file" "$skip_restart"; then
                         _config_sync_touch_sentinel
                     fi
+                    _config_sync_record_owned true "$skip_restart"
                     ;;
                 false)
                     _config_sync_log info "reason=unowned"
                     _config_sync_touch_sentinel
+                    _config_sync_record_owned false "$skip_restart"
                     ;;
                 *)
                     _config_sync_log warn "reason=malformed_response body=$body_preview"

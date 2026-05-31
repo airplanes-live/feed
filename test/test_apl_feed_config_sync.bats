@@ -71,6 +71,9 @@ STUB
 
     AIRPLANES_CONFIG_SYNC_LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes-config-sync/config-sync-last-success"
     export AIRPLANES_CONFIG_SYNC_LAST_SUCCESS
+
+    AIRPLANES_CONFIG_SYNC_STATE="$ROOT_DIR/var/lib/airplanes-config-sync/state"
+    export AIRPLANES_CONFIG_SYNC_STATE
 }
 
 teardown() {
@@ -730,4 +733,123 @@ EOF
     run grep -E '^ReadWritePaths=' "$unit"
     [ "$status" -eq 0 ]
     [[ "$output" != *"/var/lib/airplanes"* ]]
+}
+
+# --- Diagnostics push on the unowned→owned claim edge ---------------------
+
+@test "200 owned records owned=true and does not start diagnostics under --root" {
+    seed_feed_env
+    seed_feed_meta MLAT_USER "2026-05-10T00:00:00Z"
+    set_canned 200 '{
+        "schema_version": 1,
+        "server_time": "2026-05-14T12:00:00Z",
+        "owned": true,
+        "fields": {
+            "position": {"value": {"lat": 47.0, "lon": 8.0}, "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"},
+            "alt": {"value": 120, "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"},
+            "mlat_user": {"value": "alice", "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"},
+            "mlat_enabled": {"value": true, "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"},
+            "mlat_private": {"value": false, "edited_at": "2026-05-10T10:00:00Z", "edited_by": "feeder"}
+        }
+    }'
+
+    run_sync --no-restart
+
+    [ "$SYNC_RC" -eq 0 ]
+    grep -qx 'owned=true' "$AIRPLANES_CONFIG_SYNC_STATE"
+    # The state was absent, so this is an unowned→owned edge — but the trigger
+    # must still be suppressed because the sync ran with --root.
+    if [ -f "$SYSTEMCTL_LOG" ]; then
+        ! grep -F 'airplanes-diagnostics.service' "$SYSTEMCTL_LOG"
+    fi
+}
+
+@test "200 unowned records owned=false in the config-sync state file" {
+    seed_feed_env
+    set_canned 200 '{"schema_version":1,"server_time":"2026-05-14T12:00:00Z","owned":false}'
+
+    run_sync
+
+    [ "$SYNC_RC" -eq 0 ]
+    grep -qx 'owned=false' "$AIRPLANES_CONFIG_SYNC_STATE"
+}
+
+# The edge trigger itself is host-root-only, so exercise it by calling the
+# helper directly with ROOT=/ and the setup() systemctl stub on PATH.
+_source_config_sh() {
+    # shellcheck source=../scripts/apl-feed/config.sh
+    source "$REPO_ROOT/scripts/apl-feed/config.sh"
+    ROOT="/"
+    WEBSITE_HOST=""
+    CONFIG_SYNC_STATE_FILE="$ROOT_DIR/state"
+}
+
+@test "edge false->true triggers one diagnostics push" {
+    _source_config_sh
+    _config_sync_record_owned false 0
+    : > "$SYSTEMCTL_LOG"
+    _config_sync_record_owned true 0
+    grep -F 'start --no-block airplanes-diagnostics.service' "$SYSTEMCTL_LOG"
+    grep -qx 'owned=true' "$CONFIG_SYNC_STATE_FILE"
+}
+
+@test "no edge true->true does not re-trigger" {
+    _source_config_sh
+    _config_sync_record_owned true 0
+    : > "$SYSTEMCTL_LOG"
+    _config_sync_record_owned true 0
+    if [ -f "$SYSTEMCTL_LOG" ]; then
+        ! grep -F 'airplanes-diagnostics.service' "$SYSTEMCTL_LOG"
+    fi
+}
+
+@test "owned=false does not trigger" {
+    _source_config_sh
+    : > "$SYSTEMCTL_LOG"
+    _config_sync_record_owned false 0
+    if [ -f "$SYSTEMCTL_LOG" ]; then
+        ! grep -F 'airplanes-diagnostics.service' "$SYSTEMCTL_LOG"
+    fi
+}
+
+@test "missing prior state makes the first owned=true an edge" {
+    _source_config_sh
+    [ ! -f "$CONFIG_SYNC_STATE_FILE" ]
+    : > "$SYSTEMCTL_LOG"
+    _config_sync_record_owned true 0
+    grep -F 'start --no-block airplanes-diagnostics.service' "$SYSTEMCTL_LOG"
+}
+
+@test "--no-restart suppresses the edge trigger" {
+    _source_config_sh
+    _config_sync_record_owned false 0
+    : > "$SYSTEMCTL_LOG"
+    _config_sync_record_owned true 1
+    if [ -f "$SYSTEMCTL_LOG" ]; then
+        ! grep -F 'airplanes-diagnostics.service' "$SYSTEMCTL_LOG"
+    fi
+}
+
+@test "non-host root suppresses the edge trigger" {
+    _source_config_sh
+    ROOT="$ROOT_DIR"
+    _config_sync_record_owned false 0
+    : > "$SYSTEMCTL_LOG"
+    _config_sync_record_owned true 0
+    if [ -f "$SYSTEMCTL_LOG" ]; then
+        ! grep -F 'airplanes-diagnostics.service' "$SYSTEMCTL_LOG"
+    fi
+}
+
+@test "systemctl trigger failure is non-fatal and still records owned=true" {
+    _source_config_sh
+    cat > "$STUB_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+    chmod +x "$STUB_DIR/systemctl"
+    _config_sync_record_owned false 0
+    run _config_sync_record_owned true 0
+    [ "$status" -eq 0 ]
+    grep -qx 'owned=true' "$CONFIG_SYNC_STATE_FILE"
 }
