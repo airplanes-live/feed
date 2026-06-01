@@ -6,8 +6,8 @@
 # trigger a one-shot run manually.
 #
 # Wire shape, gates, and merge semantics in
-# infrastructure/docs/feeder.md#remote-configuration. Authentication is
-# the standard Authorization: Bearer alv1.<uuid>.<secret> token. The
+# https://github.com/airplanes-live/infrastructure/blob/main/contracts/docs/feeder-config-sync.md.
+# Authentication is the standard Authorization: Bearer alv1.<uuid>.<secret> token. The
 # library's metadata-LWW gate (APL_APPLY_INCOMING_META_*) protects this
 # call site against a concurrent operator/webconfig write that lands
 # between the snapshot read and the apply step.
