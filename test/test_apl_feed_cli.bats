@@ -310,7 +310,8 @@ EOF
     run "$SCRIPT" status --json --root "$ROOT_DIR" --website-url "$(mock_url)"
 
     [ "$status" -eq 0 ]
-    [ "$(jq -r '.schema_version' <<< "$output")" = "2" ]
+    [ "$(jq -r '.schema_version' <<< "$output")" = "3" ]
+    [ "$(jq -r '.config_sync.remote_config' <<< "$output")" = "disabled" ]
     [ "$(jq -r '.claim.version' <<< "$output")" = "3" ]
     [ "$(jq -r '.website.reception_state' <<< "$output")" = "recent" ]
     [ "$(jq -r '.website.last_seen_age_seconds' <<< "$output")" = "90" ]
