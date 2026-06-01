@@ -18,8 +18,8 @@ SCRIPT_NAME="airplanes-diagnostics"
 EXIT_OK=0
 EXIT_BAD_CONFIG=64
 
-LAST_SUCCESS_FILE="${AIRPLANES_DIAGNOSTICS_LAST_SUCCESS:-/var/lib/airplanes/diagnostics-last-success}"
-INTENT_ACK_FILE="${AIRPLANES_DIAGNOSTICS_INTENT_ACK_FILE:-/var/lib/airplanes/diagnostics-intent-acked}"
+LAST_SUCCESS_FILE="${AIRPLANES_DIAGNOSTICS_LAST_SUCCESS:-${STATE_DIRECTORY:-/var/lib/airplanes-diagnostics}/diagnostics-last-success}"
+INTENT_ACK_FILE="${AIRPLANES_DIAGNOSTICS_INTENT_ACK_FILE:-${STATE_DIRECTORY:-/var/lib/airplanes-diagnostics}/diagnostics-intent-acked}"
 INSTALL_DIR="${AIRPLANES_DIAGNOSTICS_INSTALL_DIR:-}"
 
 _resolve_install_dir() {

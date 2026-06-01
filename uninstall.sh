@@ -75,7 +75,7 @@ rm -f "$IMAGE_INSTALL_MARKER"
 # State directories for the diagnostics and config-sync oneshots (last-success
 # timestamp files). Created by systemd's StateDirectory= on first fire of each
 # unit; nothing in them is user-supplied, so remove wholesale.
-rm -rf "$(airplanes_path /var/lib/airplanes)"
+rm -rf "$(airplanes_path /var/lib/airplanes-diagnostics)"
 rm -rf "$(airplanes_path /var/lib/airplanes-config-sync)"
 
 # Preserve the legacy fallback in memory before wiping IPATH so the canonical

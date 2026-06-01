@@ -608,12 +608,12 @@ claim_registration_status_line() {
 # diagnostics_status_line — render the airplanes-diagnostics push state.
 # Reads the REPORT_STATUS toggle from feed.env, then consults the systemd
 # unit (if a bad config caused an exit-64 failure on the last run) and
-# the mtime of /var/lib/airplanes/diagnostics-last-success.
+# the mtime of /var/lib/airplanes-diagnostics/diagnostics-last-success.
 diagnostics_status_line() {
     local label="Diagnostics push"
     local unit="airplanes-diagnostics.service"
     local last_success_file
-    last_success_file="$(root_path /var/lib/airplanes/diagnostics-last-success)"
+    last_success_file="$(root_path /var/lib/airplanes-diagnostics/diagnostics-last-success)"
 
     local raw lower
     raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
