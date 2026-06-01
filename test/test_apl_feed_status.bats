@@ -1147,3 +1147,97 @@ stop_python_mock() {
     [[ "$output" == *'OK'* ]]
     [[ "$output" == *'registered and claimed'* ]]
 }
+
+# --- config_sync_status_line (Remote config row) -------------------------
+
+_seed_config_sync_sentinel() {
+    # $1 (optional): a `touch -d` time spec for the mtime (default: now).
+    local f="$ROOT_DIR/var/lib/airplanes-config-sync/config-sync-last-success"
+    mkdir -p "$(dirname "$f")"
+    if [[ -n "${1:-}" ]]; then
+        touch -d "$1" "$f"
+    else
+        touch "$f"
+    fi
+}
+
+@test "config_sync_status_line: REMOTE_CONFIG_ENABLED absent → OK 'off' (sentinel not consulted)" {
+    : > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_config_sync_sentinel '40 minutes ago'   # stale on purpose
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run config_sync_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'off (remote config not enabled)'* ]]
+    # Off must short-circuit before the (stale) sentinel is read.
+    [[ "$output" != *'last sync'* ]]
+}
+
+@test "config_sync_status_line: REMOTE_CONFIG_ENABLED=false → OK 'off'" {
+    printf 'REMOTE_CONFIG_ENABLED=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run config_sync_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'off (remote config not enabled)'* ]]
+}
+
+@test "config_sync_status_line: invalid REMOTE_CONFIG_ENABLED → FIX" {
+    printf 'REMOTE_CONFIG_ENABLED=maybe\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run config_sync_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'REMOTE_CONFIG_ENABLED=maybe invalid'* ]]
+}
+
+@test "config_sync_status_line: enabled + recent sync → OK 'last sync'" {
+    printf 'REMOTE_CONFIG_ENABLED=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_config_sync_sentinel
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run config_sync_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'enabled, last sync'* ]]
+}
+
+@test "config_sync_status_line: enabled + stale sync (>30m) → CHECK '(stale)'" {
+    printf 'REMOTE_CONFIG_ENABLED=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_config_sync_sentinel '40 minutes ago'
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run config_sync_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'(stale)'* ]]
+}
+
+@test "config_sync_status_line: enabled + no sentinel → CHECK 'no successful sync'" {
+    printf 'REMOTE_CONFIG_ENABLED=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run config_sync_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'no successful sync observed yet'* ]]
+}
+
+@test "config_sync_status_line: enabled + unit failed → FIX" {
+    printf 'REMOTE_CONFIG_ENABLED=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    stub_systemctl_active_state failed 64
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run config_sync_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'unit failed'* ]]
+}
+
+@test "config_sync_status_line: JSON output carries config_sync block + schema_version 3" {
+    printf 'REMOTE_CONFIG_ENABLED=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_config_sync_sentinel
+    status_init
+    STATUS_OUTPUT_JSON=1
+    config_sync_status_line
+    run status_finish
+    [ "$(jq -r '.schema_version' <<< "$output")" = "3" ]
+    [ "$(jq -r '.config_sync.remote_config' <<< "$output")" = "enabled" ]
+    [ "$(jq -r '.config_sync.last_sync_age_seconds | type' <<< "$output")" = "number" ]
+}

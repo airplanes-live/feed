@@ -34,6 +34,8 @@ STATUS_LAST_SEEN_AGE_SECONDS=''
 STATUS_SERVER_RECEPTION_STATE=''
 STATUS_DIAGNOSTICS_TOGGLE=''
 STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS=''
+STATUS_CONFIG_SYNC_TOGGLE=''
+STATUS_CONFIG_SYNC_LAST_SYNC_AGE_SECONDS=''
 
 status_init() {
     STATUS_CHECKS_FILE="$(new_tmp_file)"
@@ -53,6 +55,8 @@ status_init() {
     STATUS_SERVER_RECEPTION_STATE=''
     STATUS_DIAGNOSTICS_TOGGLE=''
     STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS=''
+    STATUS_CONFIG_SYNC_TOGGLE=''
+    STATUS_CONFIG_SYNC_LAST_SYNC_AGE_SECONDS=''
 }
 
 status_line() {
@@ -114,6 +118,8 @@ status_finish() {
             --arg reception_state "$STATUS_SERVER_RECEPTION_STATE" \
             --arg diagnostics_toggle "$STATUS_DIAGNOSTICS_TOGGLE" \
             --arg diagnostics_last_push_age "$STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS" \
+            --arg config_sync_toggle "$STATUS_CONFIG_SYNC_TOGGLE" \
+            --arg config_sync_last_sync_age "$STATUS_CONFIG_SYNC_LAST_SYNC_AGE_SECONDS" \
             '
             def nullempty: if . == "" then null else . end;
             def boolish:
@@ -123,7 +129,7 @@ status_finish() {
               else null end;
             def numberish: if . == "" then null else tonumber end;
             {
-              schema_version: 2,
+              schema_version: 3,
               overall: $overall,
               feeder_uuid: ($feeder_uuid | nullempty),
               receiver: {
@@ -144,6 +150,10 @@ status_finish() {
               diagnostics: {
                 report_status: ($diagnostics_toggle | nullempty),
                 last_push_age_seconds: ($diagnostics_last_push_age | numberish)
+              },
+              config_sync: {
+                remote_config: ($config_sync_toggle | nullempty),
+                last_sync_age_seconds: ($config_sync_last_sync_age | numberish)
               },
               checks: .
             }' \
@@ -691,6 +701,86 @@ diagnostics_status_line() {
     fi
 }
 
+# config_sync_status_line — render the airplanes-config-sync remote-config
+# state. Reads the REMOTE_CONFIG_ENABLED opt-in from feed.env, then consults
+# the systemd unit (exit-64 hard-config failures) and the mtime of
+# /var/lib/airplanes-config-sync/config-sync-last-success. The sentinel is
+# touched on every successful sync (owned or unowned heartbeat), so it tracks
+# liveness regardless of whether the feeder is account-claimed.
+config_sync_status_line() {
+    local label="Remote config"
+    local unit="airplanes-config-sync.service"
+    local last_success_file
+    last_success_file="$(root_path /var/lib/airplanes-config-sync/config-sync-last-success)"
+
+    local raw lower
+    raw="$(feed_env_get REMOTE_CONFIG_ENABLED 2>/dev/null || true)"
+    lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+    lower="${lower#"${lower%%[![:space:]]*}"}"
+    lower="${lower%"${lower##*[![:space:]]}"}"
+
+    # Opt-in: absence/empty means "not consented" (off), not a default-on.
+    local toggle
+    case "$lower" in
+        '') toggle='disabled' ;;
+        true|yes|1|on) toggle='enabled' ;;
+        false|no|0|off) toggle='disabled' ;;
+        *) toggle='invalid' ;;
+    esac
+    STATUS_CONFIG_SYNC_TOGGLE="$toggle"
+
+    if [[ "$toggle" == "invalid" ]]; then
+        status_line fail "$label" "REMOTE_CONFIG_ENABLED=$raw invalid; expected true/false"
+        return
+    fi
+    if [[ "$toggle" == "disabled" ]]; then
+        status_line ok "$label" "off (remote config not enabled)"
+        return
+    fi
+
+    # Surface a failed unit. config sync exits 64 on a hard config error
+    # (invalid REMOTE_CONFIG_ENABLED, missing feeder-id / claim secret).
+    if command -v systemctl >/dev/null 2>&1; then
+        local active_state
+        active_state="$(systemctl show --property=ActiveState --value "$unit" 2>/dev/null || true)"
+        if [[ "$active_state" == "failed" ]]; then
+            local exit_code
+            exit_code="$(systemctl show --property=ExecMainStatus --value "$unit" 2>/dev/null || true)"
+            status_line fail "$label" "enabled — unit failed${exit_code:+ (exit $exit_code)}; check journalctl -u $unit"
+            return
+        fi
+    fi
+
+    if [[ ! -f "$last_success_file" ]]; then
+        status_line warn "$label" "enabled, no successful sync observed yet"
+        return
+    fi
+    local mtime now age
+    mtime="$(stat -c %Y "$last_success_file" 2>/dev/null || true)"
+    now="$(date +%s 2>/dev/null || true)"
+    if [[ ! "$mtime" =~ ^[0-9]+$ ]] || [[ ! "$now" =~ ^[0-9]+$ ]]; then
+        status_line warn "$label" "enabled, last sync time unavailable"
+        return
+    fi
+    age=$(( now - mtime ))
+    if (( age < 0 )); then age=0; fi
+    STATUS_CONFIG_SYNC_LAST_SYNC_AGE_SECONDS="$age"
+    local age_text
+    age_text="$(human_duration_ago "$age")"
+    # Cadence: OnUnitActiveSec=60s + RandomizedDelaySec=30s + systemd's default
+    # AccuracySec=1min coalescing → worst-case ~2.5 min per tick. The sentinel
+    # is touched on every successful sync, so a couple of missed ticks stays OK
+    # (≤ 5 min); past that a tick has clearly been lost (warn ≤ 30 min); beyond
+    # 30 min it's stale.
+    if (( age <= 300 )); then
+        status_line ok "$label" "enabled, last sync $age_text"
+    elif (( age <= 1800 )); then
+        status_line warn "$label" "enabled, last sync $age_text"
+    else
+        status_line warn "$label" "enabled, last sync $age_text (stale)"
+    fi
+}
+
 usage_status() {
     cat <<'USAGE'
 Usage: apl-feed status [--json]
@@ -739,5 +829,6 @@ feed_status() {
     claim_registration_status_line
     mlat_status_line
     diagnostics_status_line
+    config_sync_status_line
     status_finish
 }
