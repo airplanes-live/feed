@@ -158,9 +158,9 @@ OSR
     chmod 0640 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     printf 'REPORT_STATUS=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
 
-    LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes/diagnostics-last-success"
+    LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes-diagnostics/diagnostics-last-success"
     mkdir -p "$(dirname "$LAST_SUCCESS")"
-    INTENT_ACK="$ROOT_DIR/var/lib/airplanes/diagnostics-intent-acked"
+    INTENT_ACK="$ROOT_DIR/var/lib/airplanes-diagnostics/diagnostics-intent-acked"
 }
 
 teardown() {

@@ -130,11 +130,11 @@ stage_install_footprint() {
         : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer"
     fi
 
-    # Diagnostics state directory — systemd's StateDirectory=airplanes
-    # creates /var/lib/airplanes owned by the diagnostics user on first
-    # timer fire. uninstall.sh wipes the whole directory.
-    mkdir -p "$ROOT_DIR/var/lib/airplanes"
-    : > "$ROOT_DIR/var/lib/airplanes/diagnostics-last-success"
+    # Diagnostics state directory — systemd's StateDirectory=airplanes-diagnostics
+    # creates /var/lib/airplanes-diagnostics owned by the diagnostics user on
+    # first timer fire. uninstall.sh wipes the whole directory.
+    mkdir -p "$ROOT_DIR/var/lib/airplanes-diagnostics"
+    : > "$ROOT_DIR/var/lib/airplanes-diagnostics/diagnostics-last-success"
 
     # Config-sync state directory — its own StateDirectory=airplanes-config-sync
     # (separate from diagnostics so the two oneshots never re-chown a shared
@@ -174,12 +174,12 @@ run_uninstall() {
     [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer" ]
 }
 
-@test "after install footprint, uninstall removes /var/lib/airplanes diagnostics state dir" {
+@test "after install footprint, uninstall removes /var/lib/airplanes-diagnostics state dir" {
     stage_install_footprint
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ ! -e "$ROOT_DIR/var/lib/airplanes" ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes-diagnostics" ]
 }
 
 @test "after install footprint, uninstall removes /var/lib/airplanes-config-sync state dir" {
