@@ -573,10 +573,12 @@ EOF
 
 @test "claim set never restarts feeder daemons (no daemon consumes the secret)" {
     # The claim secret is consumed only by apl-feed itself, not by
-    # airplanes-feed or airplanes-mlat. Saving it must not bounce a
-    # working feeder. The only permitted systemctl call is the post-write
-    # stop of airplanes-claim.timer (see test_claim_timer_stop.bats);
-    # this assertion pins that NOTHING ELSE is touched.
+    # airplanes-feed or airplanes-mlat. Saving it must not bounce a working
+    # feeder. The only permitted systemctl calls are the post-write
+    # claim-landed side effects — stop airplanes-claim.timer and nudge
+    # airplanes-config-sync.service (see test_claim_timer_stop.bats and
+    # test_config_sync_nudge.bats); this assertion pins that NOTHING ELSE
+    # (no daemon restart or reload) is touched.
     COMMAND_LOG="$(mktemp)"
     cat > "$STUB_BIN_DIR/systemctl" <<'STUB'
 #!/usr/bin/env bash
@@ -584,16 +586,17 @@ EOF
 exit 0
 STUB
     chmod +x "$STUB_BIN_DIR/systemctl"
-    export COMMAND_LOG APL_FEED_TEST_TIMER_STOP_FORCE=1
+    export COMMAND_LOG APL_FEED_TEST_TIMER_STOP_FORCE=1 APL_FEED_TEST_CONFIG_SYNC_NUDGE_FORCE=1
 
     run env "$SCRIPT" claim set --root "$ROOT_DIR" <<<"ABCDEFGHIJKLMNOP"
 
     [ "$status" -eq 0 ]
     [[ ! "$output" =~ "Restarted" ]]
-    # Every recorded systemctl invocation must be the timer-stop. No
-    # restart, no reload, no apl-feed daemon touched.
+    # Every recorded systemctl invocation must be one of the two claim-landed
+    # side effects. No restart, no reload, no apl-feed daemon touched.
     while IFS= read -r line; do
-        [[ "$line" == "systemctl --no-block stop airplanes-claim.timer" ]] \
+        [[ "$line" == "systemctl --no-block stop airplanes-claim.timer" \
+            || "$line" == "systemctl --no-block start airplanes-config-sync.service" ]] \
             || { echo "unexpected systemctl call: $line" >&2; false; }
     done < "$COMMAND_LOG"
     rm -f "$COMMAND_LOG"
