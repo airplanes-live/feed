@@ -68,16 +68,22 @@ detect_receiver_input() {
     fi
 }
 
-# Derive MLAT_USER from the sanitized user-supplied feeder name. Empty
-# input falls back to DEFAULT_MLAT_NAME. This function does not set
+# Derive MLAT_USER from the sanitized user-supplied feeder name. A
+# supplied name is used verbatim. Empty input falls back to
+# DEFAULT_MLAT_NAME — except in build mode, where it is left empty so a
+# generic baked image defers to airplanes-mlat's per-device
+# "Anonymous-<short-id>" runtime fallback instead of freezing one shared
+# literal name into every flashed card. This function does not set
 # MLAT_ENABLED — that's the caller's job (set explicitly from
 # AIRPLANES_MLAT_ENABLED in non-interactive mode, defaulted to "true"
 # in the interactive flow).
 derive_mlat_keys() {
-    if [[ -z "$NOSPACENAME" ]]; then
-        MLAT_USER="$DEFAULT_MLAT_NAME"
-    else
+    if [[ -n "$NOSPACENAME" ]]; then
         MLAT_USER="$NOSPACENAME"
+    elif airplanes_is_build_mode 2>/dev/null; then
+        MLAT_USER=""
+    else
+        MLAT_USER="$DEFAULT_MLAT_NAME"
     fi
 }
 
@@ -200,7 +206,8 @@ configure_noninteractive() {
     [[ "$missing" == "0" ]] || exit 1
 
     # MLAT_USER is optional. Empty / unset falls back to DEFAULT_MLAT_NAME
-    # via derive_mlat_keys (which write_feed_env calls).
+    # via derive_mlat_keys (which write_feed_env calls) — except in build
+    # mode, where it stays empty for the daemon's per-device fallback.
     ADSBFIUSERNAME="${AIRPLANES_MLAT_USER:-}"
     NOSPACENAME="$(sanitize_mlat_user "$ADSBFIUSERNAME")"
 

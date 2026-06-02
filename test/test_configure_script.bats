@@ -227,6 +227,37 @@ run_configure_env() {
     grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
 }
 
+@test "configure.sh build mode leaves an unset MLAT_USER empty (daemon fallback)" {
+    # Mirrors the image build invocation: build mode, MLAT off, geo
+    # placeholders, no name supplied. The baked default must NOT freeze
+    # "Anonymous" into the image — empty MLAT_USER lets airplanes-mlat pick
+    # a per-device "Anonymous-<short-id>" at runtime instead.
+    run_configure_env \
+        AIRPLANES_BUILD_MODE=1 \
+        AIRPLANES_MLAT_ENABLED="false" \
+        AIRPLANES_LATITUDE="0" \
+        AIRPLANES_LONGITUDE="0" \
+        AIRPLANES_ALTITUDE=""
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER=""' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'GEO_CONFIGURED=false' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'ALTITUDE=""' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="false"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh build mode still honors an explicit MLAT_USER" {
+    run_configure_env \
+        AIRPLANES_BUILD_MODE=1 \
+        AIRPLANES_MLAT_USER="ci-feeder" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="ci-feeder"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
 @test "configure.sh AIRPLANES_MLAT_ENABLED=false preserves the supplied name" {
     run_configure_env \
         AIRPLANES_MLAT_USER="alice" \
