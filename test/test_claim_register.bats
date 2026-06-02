@@ -396,12 +396,14 @@ mock_url() {
     grep -F -- '--no-block stop airplanes-claim.timer' "$COMMAND_LOG"
 }
 
-@test "201 success: timer stop sees secret on disk and no .pending (ordering)" {
-    # Pins the ordering invariant: stop_claim_timer_if_present must run
+@test "201 success: claim-landed side effects see secret on disk and no .pending (ordering)" {
+    # Pins the ordering invariant: the claim-landed side effects
+    # (stop_claim_timer_if_present + nudge_config_sync_if_present) must run
     # AFTER the mv "$pending" "$final" promotion, not before. A future
-    # refactor that moved the call earlier could stop the timer while
-    # the secret hasn't been persisted, breaking recovery if the script
-    # then aborts. The stub captures fs state at call time.
+    # refactor that moved the call earlier could stop the timer / nudge the
+    # syncer while the secret hasn't been persisted, breaking recovery if the
+    # script then aborts. The stub captures fs state at call time.
+    export APL_FEED_TEST_CONFIG_SYNC_NUDGE_FORCE=1
     cat > "$STUB_BIN_DIR/systemctl" <<STUB
 #!/usr/bin/env bash
 final_present=missing
@@ -416,19 +418,30 @@ STUB
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 0 ]
-    # When the helper was invoked, final must exist and pending must be gone.
-    grep -F -- 'final=present pending=missing' "$COMMAND_LOG"
-    # And the argv must be the timer-stop, not something else (defence
-    # against a refactor that calls systemctl elsewhere on the success path).
+    # Both side effects must observe the secret on disk with no leftover pending.
+    [ "$(grep -c -F -- 'final=present pending=missing' "$COMMAND_LOG")" = "2" ]
+    # Both expected argv shapes are present (defence against a refactor that
+    # calls systemctl elsewhere on the success path).
     grep -F -- 'argv=--no-block stop airplanes-claim.timer' "$COMMAND_LOG"
+    grep -F -- 'argv=--no-block start airplanes-config-sync.service' "$COMMAND_LOG"
+    # Timer stop precedes the config-sync nudge.
+    local stop_line start_line
+    stop_line="$(grep -n -F -- 'stop airplanes-claim.timer' "$COMMAND_LOG" | head -1 | cut -d: -f1)"
+    start_line="$(grep -n -F -- 'start airplanes-config-sync.service' "$COMMAND_LOG" | head -1 | cut -d: -f1)"
+    [ "$stop_line" -lt "$start_line" ]
 }
 
-@test "400 bad request does NOT stop the timer (secret not on disk)" {
+@test "400 bad request runs no claim-landed side effects (secret not on disk)" {
+    # Failure path: the secret is never written, so neither the timer-stop
+    # nor the config-sync nudge may fire. Force the nudge guard on to prove
+    # the gate is the success branch, not the ROOT check.
+    export APL_FEED_TEST_CONFIG_SYNC_NUDGE_FORCE=1
     write_contract_response secret invalid_claim_secret
     start_mock_server
     run "$SCRIPT" claim register --root "$ROOT_DIR" --website-url "$(mock_url)"
     [ "$status" -eq 1 ]
     ! grep -F -- 'stop airplanes-claim.timer' "$COMMAND_LOG"
+    ! grep -F -- 'start airplanes-config-sync.service' "$COMMAND_LOG"
 }
 
 @test "409 rotation_rejected does NOT stop the timer" {

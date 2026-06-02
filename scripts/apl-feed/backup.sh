@@ -283,6 +283,12 @@ config_restore() {
     rm -f "$(secret_pending_path)"
     echo "Restored feeder config for Feeder ID $BACKUP_UUID"
 
+    # Claim secret is on disk — nudge config-sync so a remote-config-enabled
+    # feeder picks up its server-side configuration within seconds instead of
+    # the unit's ~60s timer tick. Nudge-only (restore doesn't manage the claim
+    # retry timer); the service self-gates on the opt-in.
+    nudge_config_sync_if_present
+
     if [[ "$existing_uuid" != "$BACKUP_UUID" ]]; then
         if ! restart_feeder_services; then
             echo "Saved, but service restart failed — daemons may still advertise the old Feeder ID until you restart them manually." >&2

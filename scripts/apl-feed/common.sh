@@ -532,6 +532,40 @@ stop_claim_timer_if_present() {
     systemctl --no-block stop airplanes-claim.timer 2>/dev/null || true
 }
 
+# Nudge airplanes-config-sync.service so a just-claimed feeder syncs its
+# remote configuration within seconds instead of waiting for the unit's
+# ~60s timer tick. Mirrors stop_claim_timer_if_present's guards:
+# host-root-only (so a chroot / build-mode run doesn't poke the host's
+# systemd) and systemctl-present. The service self-gates — it skips when
+# the claim secret is absent (ConditionPathExists) and exits silently
+# unless REMOTE_CONFIG_ENABLED is opted in — so an unconditional nudge on
+# every secret-landed path is safe and idempotent.
+#
+# APL_FEED_TEST_CONFIG_SYNC_NUDGE_FORCE is the test-only override (separate
+# from APL_FEED_TEST_TIMER_STOP_FORCE so a test can exercise one helper
+# without implicitly forcing the other). Production callers must never set
+# it.
+nudge_config_sync_if_present() {
+    if [[ "$ROOT" != "/" && -z "${APL_FEED_TEST_CONFIG_SYNC_NUDGE_FORCE:-}" ]]; then
+        return 0
+    fi
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    systemctl --no-block start airplanes-config-sync.service 2>/dev/null || true
+}
+
+# Run the systemd side effects for "a claim secret just landed on disk":
+# stop the now-pointless claim retry timer, then nudge the config syncer.
+# Grouping the two keeps every secret-write success path consistent — a
+# future path can't silently pick up one side effect and miss the other.
+# Both self-gate, so calling this on a re-confirm or an already-claimed
+# feeder is a harmless no-op.
+claim_secret_landed_side_effects() {
+    stop_claim_timer_if_present
+    nudge_config_sync_if_present
+}
+
 parse_common_option() {
     case "${1:-}" in
         --root)

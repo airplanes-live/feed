@@ -119,11 +119,12 @@ claim_register() {
                     chmod 640 "$pending"
                     mv "$pending" "$final"
                 fi
-                # The secret is on disk; stop the timer before any later
-                # failure (write_version_file errno, echo EPIPE, etc.)
-                # could abort under `set -e` and leave the retry timer
-                # firing indefinitely against a now-claimed feeder.
-                stop_claim_timer_if_present
+                # The secret is on disk; run the claim-landed side effects
+                # (stop the retry timer, nudge config-sync) before any later
+                # failure (write_version_file errno, echo EPIPE, etc.) could
+                # abort under `set -e` and leave the retry timer firing
+                # indefinitely against a now-claimed feeder.
+                claim_secret_landed_side_effects
                 write_version_file "$version"
                 echo "SUCCESS ($status, version $version)"
                 echo "Secret persisted to $final"
@@ -503,15 +504,16 @@ claim_set() {
         # and the file mode (0600). Don't drop the version file — the
         # local secret bytes haven't functionally changed.
         write_secret_file "$final" "$secret"
-        stop_claim_timer_if_present
+        claim_secret_landed_side_effects
         echo "Local claim secret already matches — no change."
         return 0
     fi
 
     write_secret_file "$final" "$secret"
-    # Secret is on disk; stop the timer before any later step (rm,
-    # echo EPIPE) could abort under `set -e`.
-    stop_claim_timer_if_present
+    # Secret is on disk; run the claim-landed side effects (stop the retry
+    # timer, nudge config-sync) before any later step (rm, echo EPIPE) could
+    # abort under `set -e`.
+    claim_secret_landed_side_effects
 
     # Local secret no longer matches whatever the version file claimed.
     # Drop the version file so `claim show` / `backup` can't pair a
