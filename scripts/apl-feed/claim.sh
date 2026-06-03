@@ -530,6 +530,165 @@ claim_set() {
 }
 
 
+# claim_status [--json]
+#
+# Read-only probe of the feeder's account-claim status against
+# /api/feeders/status. Distinguishes "registered with the backend" from
+# "claimed by a user account" (owner_present). Writes nothing — no
+# version-mirror update — so it runs unprivileged: the on-device webconfig
+# invokes it as the airplanes-webconfig user (the airplanes-feed group
+# grants read access to the claim secret). Emits a single result every
+# time; --json produces a stable schema-v1 object, otherwise a human line.
+claim_status() {
+    local opt_rc json=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_claim_status; exit 0 ;;
+            --json) json=1; shift; continue ;;
+        esac
+        if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
+        case "$opt_rc" in
+            1) shift ;;
+            2) shift 2 ;;
+            0) die "unknown flag for claim status: $1" ;;
+        esac
+    done
+    require_jq
+
+    local result uuid final secret
+
+    # Local state first — these answers need no network call.
+    if ! uuid="$(read_uuid 2>/dev/null)"; then
+        _claim_status_emit no_identity "$json"
+        return 0
+    fi
+    final="$(secret_final_path)"
+    if [[ ! -f "$final" ]]; then
+        _claim_status_emit unregistered "$json"
+        return 0
+    fi
+    if [[ ! -r "$final" ]]; then
+        # Present but unreadable (permissions) — distinct from malformed.
+        # Re-registering won't fix a perms problem, so don't suggest it.
+        _claim_status_emit error "$json"
+        return 2
+    fi
+    if ! secret="$(read_secret_file "$final" 2>/dev/null)"; then
+        # Present but empty / non-canonical — a local corruption, distinct
+        # from "no secret". UI action: re-register.
+        _claim_status_emit secret_invalid "$json"
+        return 0
+    fi
+
+    claim_status_probe "$uuid" "$secret"
+    case "$CLAIM_PROBE_OUTCOME" in
+        authenticated)
+            case "$CLAIM_PROBE_OWNER_PRESENT" in
+                true)  result=claimed ;;
+                false) result=unclaimed ;;
+                # An authenticated reply always carries a boolean
+                # owner_present; anything else is a contract fault, not
+                # an "unclaimed" feeder.
+                *)     result=error ;;
+            esac
+            ;;
+        minimal)          result=secret_mismatch ;;
+        registered_false) result=server_unregistered ;;
+        blocked)          result=blocked ;;
+        rate_limited)     result=rate_limited ;;
+        unreachable)      result=unreachable ;;
+        *)                result=error ;;
+    esac
+    _claim_status_emit "$result" "$json"
+    case "$result" in
+        unreachable|error) return 2 ;;
+        *) return 0 ;;
+    esac
+}
+
+# _claim_status_emit <result> <json-flag>
+# Renders <result> as schema-v1 JSON (json=1) or a human line. Reads the
+# CLAIM_PROBE_* globals for server-derived fields; for the local-only
+# results (no_identity/unregistered/secret_invalid) those are empty, which
+# the JSON nullifies.
+_claim_status_emit() {
+    local result="$1" json="$2"
+    if (( json )); then
+        jq -nc \
+            --arg result "$result" \
+            --arg registered "${CLAIM_PROBE_REGISTERED:-}" \
+            --arg owner_present "${CLAIM_PROBE_OWNER_PRESENT:-}" \
+            --arg version "${CLAIM_PROBE_VERSION:-}" \
+            --arg reset_until "${CLAIM_PROBE_RESET_UNTIL:-}" \
+            --arg last_seen_at "${CLAIM_PROBE_LAST_SEEN_AT:-}" \
+            --arg last_seen_age "${CLAIM_PROBE_LAST_SEEN_AGE:-}" \
+            --arg retry_after "${CLAIM_PROBE_RETRY_AFTER:-}" \
+            --arg detail "${CLAIM_PROBE_DETAIL:-}" \
+            '
+            def nullempty: if . == "" then null else . end;
+            def boolish: if . == "true" then true elif . == "false" then false else null end;
+            def numberish: if . == "" then null else (tonumber? // null) end;
+            {
+              schema_version: 1,
+              result: $result,
+              registered: ($registered | boolish),
+              owner_present: ($owner_present | boolish),
+              version: ($version | numberish),
+              reset_until: ($reset_until | nullempty),
+              last_seen_at: ($last_seen_at | nullempty),
+              last_seen_age_seconds: ($last_seen_age | numberish),
+              retry_after_seconds: ($retry_after | numberish),
+              detail: ($detail | nullempty)
+            }'
+        return
+    fi
+    _claim_status_human "$result"
+}
+
+# _claim_status_human <result> — one or two readable lines per result.
+_claim_status_human() {
+    local result="$1"
+    case "$result" in
+        claimed)
+            echo "Claimed: yes — this feeder is linked to an airplanes.live account." ;;
+        unclaimed)
+            echo "Claimed: no — registered, but not yet linked to an account."
+            echo "Claim it at: $(claim_page_url)" ;;
+        secret_mismatch)
+            echo "The claim secret on this feeder did not authenticate with airplanes.live."
+            echo "Re-register: sudo apl-feed claim register" ;;
+        server_unregistered)
+            echo "airplanes.live has no record of this feeder's claim secret."
+            echo "Register: sudo apl-feed claim register" ;;
+        unregistered)
+            echo "No claim secret on this feeder yet."
+            echo "Register: sudo apl-feed claim register" ;;
+        secret_invalid)
+            echo "The local claim secret is missing or malformed."
+            echo "Re-register: sudo apl-feed claim register" ;;
+        no_identity)
+            echo "This device has no Feeder ID yet." ;;
+        blocked)
+            echo "This feeder is blocked by an administrator." ;;
+        rate_limited)
+            echo "airplanes.live is rate-limiting status checks; try again shortly." ;;
+        unreachable)
+            echo "Could not reach airplanes.live to check claim status." ;;
+        *)
+            echo "Claim status unavailable." ;;
+    esac
+}
+
+usage_claim_status() {
+    cat <<'USAGE'
+Usage: apl-feed claim status [--json]
+
+Reports whether this feeder is registered with airplanes.live and whether a
+user account has claimed it. Contacts the website read-only and writes
+nothing. --json emits a machine-readable object instead of the summary.
+USAGE
+}
+
 usage_claim() {
     cat <<'USAGE'
 Usage: apl-feed claim <subcommand> [options]
@@ -537,6 +696,7 @@ Usage: apl-feed claim <subcommand> [options]
 Subcommands:
   register    Generate and register the claim secret with airplanes.live
   show        Print the local claim secret and the claim page URL
+  status      Show registration + account-claim status (--json available)
   rotate      Rotate the claim secret (--abort cancels a pending rotation)
   set         Save a claim secret minted by the website (reads stdin)
 
@@ -598,6 +758,7 @@ dispatch_claim() {
     case "$sub" in
         register) claim_register "$@" ;;
         show) claim_show "$@" ;;
+        status) claim_status "$@" ;;
         rotate) claim_rotate "$@" ;;
         set) claim_set "$@" ;;
         *) usage_error usage_claim "unknown claim subcommand: $sub" ;;
