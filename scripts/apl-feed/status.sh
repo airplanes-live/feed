@@ -519,9 +519,7 @@ server_reception_status_line() {
 claim_registration_status_line() {
     require_jq
 
-    local uuid final pending secret response_file body status curl_rc token
-    local registered version owner_present reset_until error preview
-    local last_seen_present last_seen_at last_seen_age
+    local uuid final pending secret
 
     if ! uuid="$(read_uuid 2>/dev/null)"; then
         status_line fail "Feeder ID" "missing or invalid"
@@ -547,70 +545,56 @@ claim_registration_status_line() {
         status_line warn "Claim rotation" "pending rotation file exists"
     fi
 
-    response_file="$(new_tmp_file)"
-    # Body carries only the UUID; auth is in the Bearer header.
-    body="$(printf '{"uuid":"%s"}' "$uuid")"
-    token="$(apl_auth_token "$uuid" "$secret")"
-    set +e
-    status="$(post_json_bearer "$token" '/api/feeders/status' "$body" "$response_file")"
-    curl_rc=$?
-    set -e
-    if [[ "$curl_rc" -ne 0 ]]; then
-        status_line warn "Website claim" "unreachable (curl rc=$curl_rc)"
-        return
-    fi
-
-    error="$(parse_field_from "$response_file" '.error')"
-    preview="$(body_preview "$response_file")"
-    case "$status" in
-        200)
-            registered="$(parse_field_from "$response_file" '.registered')"
-            version="$(parse_field_from "$response_file" '.version')"
-            owner_present="$(parse_field_from "$response_file" '.owner_present')"
-            reset_until="$(parse_field_from "$response_file" '.reset_until')"
-            STATUS_CLAIM_REGISTERED="$registered"
-            if [[ "$registered" != "true" ]]; then
-                status_line warn "Website claim" "not registered; run sudo apl-feed claim register"
-                return
-            fi
-            if [[ -n "$version" ]]; then
-                STATUS_CLAIM_VERSION="$version"
-                STATUS_OWNER_PRESENT="$owner_present"
-                write_version_file "$version"
-                # Claim-secret version is internal bookkeeping; exposed
-                # via --json (.claim.version) and the local mirror file
-                # ($IPATH/feeder-claim-secret.version) for tooling.
-                # Omitting it from the human line keeps the output
-                # readable — a `v1`-vs-`vN` number tells operators
-                # nothing actionable.
-                if [[ "$owner_present" == "true" ]]; then
-                    status_line ok "Website claim" "registered and claimed"
-                else
-                    status_line ok "Website claim" "registered, not yet claimed"
-                fi
-                if [[ -n "$reset_until" && "$reset_until" != "null" ]]; then
-                    status_line warn "Claim reset" "locked until $reset_until"
-                fi
-                last_seen_present="$(json_has_key "$response_file" 'last_seen_at')"
-                if [[ "$last_seen_present" == "true" ]]; then
-                    last_seen_at="$(parse_field_from "$response_file" '.last_seen_at')"
-                    last_seen_age="$(parse_field_from "$response_file" '.last_seen_age_seconds')"
-                    STATUS_LAST_SEEN_AT="$last_seen_at"
-                    STATUS_LAST_SEEN_AGE_SECONDS="$last_seen_age"
-                    server_reception_status_line
-                fi
+    # Probe POST /api/feeders/status via the shared helper (http.sh) so
+    # this renderer and `apl-feed claim status` never drift on the wire
+    # shape. The helper carries its outcome in CLAIM_PROBE_*; we render
+    # from those and own the version-mirror write here.
+    claim_status_probe "$uuid" "$secret"
+    case "$CLAIM_PROBE_OUTCOME" in
+        unreachable)
+            status_line warn "Website claim" "unreachable ($CLAIM_PROBE_DETAIL)"
+            ;;
+        registered_false)
+            STATUS_CLAIM_REGISTERED="$CLAIM_PROBE_REGISTERED"
+            status_line warn "Website claim" "not registered; run sudo apl-feed claim register"
+            ;;
+        authenticated)
+            STATUS_CLAIM_REGISTERED='true'
+            STATUS_CLAIM_VERSION="$CLAIM_PROBE_VERSION"
+            STATUS_OWNER_PRESENT="$CLAIM_PROBE_OWNER_PRESENT"
+            write_version_file "$CLAIM_PROBE_VERSION"
+            # Claim-secret version is internal bookkeeping; exposed
+            # via --json (.claim.version) and the local mirror file
+            # ($IPATH/feeder-claim-secret.version) for tooling.
+            # Omitting it from the human line keeps the output
+            # readable — a `v1`-vs-`vN` number tells operators
+            # nothing actionable.
+            if [[ "$CLAIM_PROBE_OWNER_PRESENT" == "true" ]]; then
+                status_line ok "Website claim" "registered and claimed"
             else
-                status_line warn "Website claim" "registered, but local secret did not authenticate"
+                status_line ok "Website claim" "registered, not yet claimed"
+            fi
+            if [[ -n "$CLAIM_PROBE_RESET_UNTIL" && "$CLAIM_PROBE_RESET_UNTIL" != "null" ]]; then
+                status_line warn "Claim reset" "locked until $CLAIM_PROBE_RESET_UNTIL"
+            fi
+            if [[ "$CLAIM_PROBE_LAST_SEEN_PRESENT" == "true" ]]; then
+                STATUS_LAST_SEEN_AT="$CLAIM_PROBE_LAST_SEEN_AT"
+                STATUS_LAST_SEEN_AGE_SECONDS="$CLAIM_PROBE_LAST_SEEN_AGE"
+                server_reception_status_line
             fi
             ;;
-        423)
-            status_line fail "Website claim" "${error:-blocked}: $preview"
+        minimal)
+            STATUS_CLAIM_REGISTERED='true'
+            status_line warn "Website claim" "registered, but local secret did not authenticate"
             ;;
-        429)
-            status_line warn "Website claim" "rate-limited: $preview"
+        blocked)
+            status_line fail "Website claim" "${CLAIM_PROBE_ERROR:-blocked}: $CLAIM_PROBE_DETAIL"
+            ;;
+        rate_limited)
+            status_line warn "Website claim" "rate-limited: $CLAIM_PROBE_DETAIL"
             ;;
         *)
-            status_line warn "Website claim" "unexpected HTTP $status: $preview"
+            status_line warn "Website claim" "unexpected HTTP $CLAIM_PROBE_HTTP: $CLAIM_PROBE_DETAIL"
             ;;
     esac
 }

@@ -103,3 +103,130 @@ status_probe_version() {
     [[ -n "$version" && "$version" != "null" ]] || return 1
     printf '%s' "$version"
 }
+
+# claim_status_probe <uuid> <secret>
+#
+# Single source of truth for probing POST /api/feeders/status and parsing
+# its response. Both `apl-feed status` (claim_registration_status_line)
+# and `apl-feed claim status` consume the CLAIM_PROBE_* output globals, so
+# the two never drift on the wire shape. Builds a Bearer token from the
+# uuid + secret, POSTs, and classifies the reply. Always returns 0 — the
+# outcome travels in CLAIM_PROBE_OUTCOME so callers under `set -e` are not
+# aborted by a non-2xx reply. Does NOT touch the on-disk version mirror;
+# a caller that wants that side effect calls write_version_file itself.
+#
+# Outputs (reset on every call; empty when not applicable):
+#   CLAIM_PROBE_OUTCOME   unreachable|registered_false|authenticated|minimal|blocked|rate_limited|http_error
+#   CLAIM_PROBE_HTTP      numeric HTTP status ("" on transport failure)
+#   CLAIM_PROBE_REGISTERED   raw .registered ("true"/"false"/"")
+#   CLAIM_PROBE_OWNER_PRESENT raw .owner_present ("true"/"false"/"")
+#   CLAIM_PROBE_VERSION   raw .version
+#   CLAIM_PROBE_RESET_UNTIL  raw .reset_until
+#   CLAIM_PROBE_LAST_SEEN_PRESENT  "true" when the last_seen_at key exists
+#                                  (distinct from a present-but-null value)
+#   CLAIM_PROBE_LAST_SEEN_AT  raw .last_seen_at ("" when null or key absent)
+#   CLAIM_PROBE_LAST_SEEN_AGE raw .last_seen_age_seconds
+#   CLAIM_PROBE_RETRY_AFTER   raw .retry_after (429 only)
+#   CLAIM_PROBE_ERROR     raw .error (non-200 diagnostics)
+#   CLAIM_PROBE_DETAIL    short body preview (diagnostics)
+#
+# CLAIM_PROBE_* are consumed by sibling apl-feed modules (claim.sh,
+# status.sh), not within this file (SC2034 is disabled repo-wide).
+claim_status_probe() {
+    local uuid="$1" secret="$2"
+    CLAIM_PROBE_OUTCOME=''
+    CLAIM_PROBE_HTTP=''
+    CLAIM_PROBE_REGISTERED=''
+    CLAIM_PROBE_OWNER_PRESENT=''
+    CLAIM_PROBE_VERSION=''
+    CLAIM_PROBE_RESET_UNTIL=''
+    CLAIM_PROBE_LAST_SEEN_PRESENT=''
+    CLAIM_PROBE_LAST_SEEN_AT=''
+    CLAIM_PROBE_LAST_SEEN_AGE=''
+    CLAIM_PROBE_RETRY_AFTER=''
+    CLAIM_PROBE_ERROR=''
+    CLAIM_PROBE_DETAIL=''
+
+    local response_file status curl_rc body token
+    response_file="$(mktemp)"
+    # Body carries only the UUID; auth is in the Bearer header.
+    body="$(printf '{"uuid":"%s"}' "$uuid")"
+    # Honor the always-returns-0 contract: bad uuid/secret inputs would
+    # otherwise abort under set -e via the failing command substitution.
+    if ! token="$(apl_auth_token "$uuid" "$secret")"; then
+        CLAIM_PROBE_OUTCOME='error'
+        CLAIM_PROBE_DETAIL='invalid auth token inputs'
+        rm -f "$response_file"
+        return 0
+    fi
+    set +e
+    status="$(post_json_bearer "$token" '/api/feeders/status' "$body" "$response_file")"
+    curl_rc=$?
+    set -e
+    CLAIM_PROBE_HTTP="$status"
+    if [[ "$curl_rc" -ne 0 ]]; then
+        CLAIM_PROBE_OUTCOME='unreachable'
+        CLAIM_PROBE_DETAIL="curl rc=$curl_rc"
+        rm -f "$response_file"
+        return 0
+    fi
+    CLAIM_PROBE_ERROR="$(parse_field_from "$response_file" '.error')"
+    CLAIM_PROBE_DETAIL="$(body_preview "$response_file")"
+    case "$status" in
+        200)
+            # A 200 must carry a JSON object; an HTML error page or a
+            # truncated body is a contract fault, not "unregistered".
+            if ! jq -e . "$response_file" >/dev/null 2>&1; then
+                CLAIM_PROBE_OUTCOME='http_error'
+                rm -f "$response_file"
+                return 0
+            fi
+            CLAIM_PROBE_REGISTERED="$(parse_field_from "$response_file" '.registered')"
+            case "$CLAIM_PROBE_REGISTERED" in
+                true) ;;
+                false)
+                    CLAIM_PROBE_OUTCOME='registered_false'
+                    rm -f "$response_file"
+                    return 0
+                    ;;
+                *)
+                    # `registered` missing or non-boolean on a valid-JSON
+                    # 200: a contract fault, surfaced as an error rather
+                    # than a (false) claim state.
+                    CLAIM_PROBE_OUTCOME='http_error'
+                    rm -f "$response_file"
+                    return 0
+                    ;;
+            esac
+            CLAIM_PROBE_VERSION="$(parse_field_from "$response_file" '.version')"
+            CLAIM_PROBE_OWNER_PRESENT="$(parse_field_from "$response_file" '.owner_present')"
+            CLAIM_PROBE_RESET_UNTIL="$(parse_field_from "$response_file" '.reset_until')"
+            # The authenticated reply carries a version; a minimal reply
+            # (wrong/superseded local secret) is registered:true with no
+            # version — surfaced distinctly so the UI says "re-register"
+            # rather than "claimed".
+            if [[ -n "$CLAIM_PROBE_VERSION" ]]; then
+                CLAIM_PROBE_OUTCOME='authenticated'
+                CLAIM_PROBE_LAST_SEEN_PRESENT="$(json_has_key "$response_file" 'last_seen_at')"
+                if [[ "$CLAIM_PROBE_LAST_SEEN_PRESENT" == "true" ]]; then
+                    CLAIM_PROBE_LAST_SEEN_AT="$(parse_field_from "$response_file" '.last_seen_at')"
+                    CLAIM_PROBE_LAST_SEEN_AGE="$(parse_field_from "$response_file" '.last_seen_age_seconds')"
+                fi
+            else
+                CLAIM_PROBE_OUTCOME='minimal'
+            fi
+            ;;
+        423)
+            CLAIM_PROBE_OUTCOME='blocked'
+            ;;
+        429)
+            CLAIM_PROBE_OUTCOME='rate_limited'
+            CLAIM_PROBE_RETRY_AFTER="$(parse_field_from "$response_file" '.retry_after')"
+            ;;
+        *)
+            CLAIM_PROBE_OUTCOME='http_error'
+            ;;
+    esac
+    rm -f "$response_file"
+    return 0
+}
