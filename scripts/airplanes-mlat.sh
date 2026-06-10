@@ -21,13 +21,23 @@ FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
 # PRIVACY / MLAT_MARKER / GEO_CONFIGURED (e.g. from a Drop-In) would
 # otherwise mask the on-disk value.
 unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER GEO_CONFIGURED
+# _mlat_config_sources records which files govern this activation so the
+# disabled branch's watch below only restarts on changes the next
+# activation would actually see. The legacy branch also watches feed.env
+# (its creation flips the feeder to the canonical branch); the canonical
+# branch does NOT watch the boot files — the legacy web UI keeps writing
+# /boot/airplanes-config.txt on migrated feeders, and those writes are
+# invisible to a feed.env-governed daemon.
 if [[ -f "$FEED_ENV" ]]; then
     source "$FEED_ENV"
+    _mlat_config_sources=("$FEED_ENV")
 elif [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && -f "$BOOT_CONFIG" ]]; then
     source "$BOOT_CONFIG"
     [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
+    _mlat_config_sources=("$FEED_ENV" "$BOOT_CONFIG" "$BOOT_ENV")
 else
     source "$FEED_ENV"
+    _mlat_config_sources=("$FEED_ENV")
 fi
 
 # Schema guard: this wrapper requires the new MLAT_USER + MLAT_ENABLED
@@ -194,21 +204,27 @@ _mlat_classify() {
 AIRPLANES_MLAT_DISABLED_SLEEP="${AIRPLANES_MLAT_DISABLED_SLEEP:-60}"
 if [[ "$AIRPLANES_MLAT_DISABLED_SLEEP" =~ ^[0-9]+$ ]]; then
     AIRPLANES_MLAT_DISABLED_SLEEP=$((10#$AIRPLANES_MLAT_DISABLED_SLEEP))
+    # An absurd digit string overflows bash arithmetic to a negative
+    # value, and a failing `sleep -N` would hot-loop the watch (no set -e
+    # here to stop it).
+    if (( AIRPLANES_MLAT_DISABLED_SLEEP < 0 )); then
+        echo "AIRPLANES_MLAT_DISABLED_SLEEP overflowed; using 60." >&2
+        AIRPLANES_MLAT_DISABLED_SLEEP=60
+    fi
 else
     echo "AIRPLANES_MLAT_DISABLED_SLEEP='$AIRPLANES_MLAT_DISABLED_SLEEP' is not a non-negative integer; using 60." >&2
     AIRPLANES_MLAT_DISABLED_SLEEP=60
 fi
 
-# Fingerprint of every config source this wrapper may have sourced above
-# (feed.env on current installs; the boot config + boot env on legacy
-# images). device:inode:size plus nanosecond mtime/ctime catch atomic-
-# rename replacement, in-place rewrites, and creation/deletion ("missing",
-# so a file appearing counts as a change). stat needs only search
-# permission on the parent directory, so this works for the unprivileged
-# service user.
+# Fingerprint of the config sources governing this activation (see
+# _mlat_config_sources above). device:inode:size plus nanosecond
+# mtime/ctime catch atomic-rename replacement, in-place rewrites, and
+# creation/deletion ("missing", so a file appearing counts as a change).
+# stat needs only search permission on the parent directory, so this
+# works for the unprivileged service user.
 _mlat_config_fingerprint() {
     local f out=""
-    for f in "$FEED_ENV" "$BOOT_CONFIG" "$BOOT_ENV"; do
+    for f in "${_mlat_config_sources[@]}"; do
         out+="$(stat -c '%d:%i:%s:%y:%z' "$f" 2>/dev/null || printf 'missing');"
     done
     printf '%s' "$out"

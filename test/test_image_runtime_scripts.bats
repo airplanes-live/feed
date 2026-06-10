@@ -756,9 +756,69 @@ SH
     [[ "$output" == *'MLAT DISABLED'* ]]
 }
 
-@test "airplanes-mlat.sh: disabled watch — legacy boot config change also wakes the watch" {
-    # Legacy images source the boot config; the watch covers every config
-    # source, not just feed.env.
+# Write a legacy-image layout: no feed.env, the airplanes-feeder binary
+# marker present, and a post-migration-schema boot config that classifies
+# as disabled. The wrapper then takes the BOOT_CONFIG source branch.
+write_legacy_disabled_boot_config() {
+    local root="$1"
+    mkdir -p "$root/boot" "$root/usr/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/usr/bin/airplanes-feeder"
+    cat > "$root/boot/airplanes-config.txt" <<'EOF'
+MLAT_USER="legacy-feeder"
+MLAT_ENABLED=false
+LATITUDE="52.52000"
+LONGITUDE="13.40500"
+ALTITUDE="35"
+EOF
+}
+
+@test "airplanes-mlat.sh: disabled watch — legacy mode, boot config change → exit 0" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_legacy_disabled_boot_config "$root"
+    cat > "$ROOT_DIR/bin/sleep" <<SH
+#!/usr/bin/env bash
+printf 'HOSTNAME=feeder\n' >> "$root/boot/airplanes-config.txt"
+SH
+    chmod +x "$ROOT_DIR/bin/sleep"
+
+    run env AIRPLANES_ROOT="$root" AIRPLANES_MLAT_DISABLED_SLEEP=5 \
+        PATH="$ROOT_DIR/bin:$PATH" timeout 10 bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'MLAT DISABLED'* ]]
+}
+
+@test "airplanes-mlat.sh: disabled watch — legacy mode, feed.env creation → exit 0" {
+    # feed.env appearing flips the feeder to the canonical config branch
+    # on the next activation, so its creation must wake the legacy watch.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_legacy_disabled_boot_config "$root"
+    cat > "$ROOT_DIR/bin/sleep" <<SH
+#!/usr/bin/env bash
+mkdir -p "$root/etc/airplanes"
+printf 'MLAT_ENABLED=false\n' > "$root/etc/airplanes/feed.env"
+SH
+    chmod +x "$ROOT_DIR/bin/sleep"
+
+    run env AIRPLANES_ROOT="$root" AIRPLANES_MLAT_DISABLED_SLEEP=5 \
+        PATH="$ROOT_DIR/bin:$PATH" timeout 10 bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+}
+
+@test "airplanes-mlat.sh: disabled watch — unchanged feed.env keeps idling (no blind exit)" {
+    # The core regression guard: with the governing config unchanged the
+    # wrapper must NOT exit on its own (the old behavior slept once and
+    # exited). The sleep stub rewrites the boot config on every pass —
+    # which the canonical (feed.env) branch must ignore: the legacy web UI
+    # keeps writing boot files on migrated feeders and those writes are
+    # invisible to a feed.env-governed daemon. timeout kills the spin at
+    # 2s and reports 124, proving it was still idling.
     local root="$ROOT_DIR/root"
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
@@ -769,22 +829,6 @@ SH
 printf 'HOSTNAME=feeder\n' > "$root/boot/airplanes-config.txt"
 SH
     chmod +x "$ROOT_DIR/bin/sleep"
-
-    run env AIRPLANES_ROOT="$root" AIRPLANES_MLAT_DISABLED_SLEEP=5 \
-        PATH="$ROOT_DIR/bin:$PATH" timeout 10 bash "$MLAT_SCRIPT"
-
-    [ "$status" -eq 0 ]
-}
-
-@test "airplanes-mlat.sh: disabled watch — unchanged config keeps idling (no blind exit)" {
-    # The core regression guard: with no config change the wrapper must
-    # NOT exit on its own (the old behavior slept once and exited). The
-    # no-op sleep stub from setup_mlat_runtime spins the loop fast;
-    # timeout kills it at 2s and reports 124, proving it was still idling.
-    local root="$ROOT_DIR/root"
-    install_state_writer_lib "$root"
-    setup_mlat_runtime "$root"
-    write_feed_env "$root" 'MLAT_ENABLED=false'
 
     run env AIRPLANES_ROOT="$root" AIRPLANES_MLAT_DISABLED_SLEEP=5 \
         PATH="$ROOT_DIR/bin:$PATH" timeout 2 bash "$MLAT_SCRIPT"
