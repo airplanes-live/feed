@@ -77,7 +77,7 @@ Format: `schema_version=1`, env-style `KEY=value` lines, atomic mktemp+rename so
 
 **`MLAT_ENABLED` is checked before geo** in `airplanes-mlat.sh`'s state classifier — explicit disable wins over a 0/0 (unset coords) misconfiguration. The classifier produces `enabled` / `disabled` / `misconfigured`.
 
-**`update.sh` does NOT disable `airplanes-mlat` at the systemd level** based on config-derived disable. The unit stays enabled; the daemon self-disables via `sleep`+`exit`. User-visible: a `MLAT_ENABLED=false` feeder shows the unit as `enabled+active(sleeping)` rather than `disabled+inactive`. This keeps the daemon-owned state-file pattern coherent — future state consumers don't need to re-derive the predicate from `feed.env`.
+**`update.sh` does NOT disable `airplanes-mlat` at the systemd level** based on config-derived disable. The unit stays enabled; the daemon self-disables by idling in a config-watch loop that exits 0 (→ `Restart=always` re-exec) only when a config source actually changes — a blind periodic exit would climb the systemd restart counter forever on disabled feeders. User-visible: a `MLAT_ENABLED=false` feeder shows the unit as `enabled+active(sleeping)` rather than `disabled+inactive`. This keeps the daemon-owned state-file pattern coherent — future state consumers don't need to re-derive the predicate from `feed.env`.
 
 Daemons use a **defensive `source`** of the state-writer so a partial install (lib missing or unreadable) can't take the daemon down at startup.
 
