@@ -4,6 +4,11 @@ setup() {
     FEED_SCRIPT="$BATS_TEST_DIRNAME/../scripts/airplanes-feed.sh"
     MLAT_SCRIPT="$BATS_TEST_DIRNAME/../scripts/airplanes-mlat.sh"
     ROOT_DIR="$(mktemp -d)"
+    # Interval 0 makes the disabled branch's config-watch single-pass so
+    # wrapper invocations return promptly (the stubbed no-op `sleep` would
+    # otherwise spin the watch loop forever). Watch-specific tests override
+    # this with a positive interval.
+    export AIRPLANES_MLAT_DISABLED_SLEEP=0
 }
 
 teardown() {
@@ -591,7 +596,8 @@ install_legacy_mlat_translation_lib() {
 
 # Set up an mlat run with stubbed nc/sleep/mlat-client so the daemon
 # proceeds through its decision and either (a) emits MLAT DISABLED +
-# sleep + exit 0, (b) exits 64, or (c) execs the mlat-client stub.
+# single-pass watch + exit 0, (b) exits 64, or (c) execs the mlat-client
+# stub.
 setup_mlat_runtime() {
     local root="$1"
     local stub_bin="$ROOT_DIR/bin"
@@ -723,6 +729,90 @@ write_feed_env() {
     grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
     grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
     grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
+}
+
+# ---- disabled branch: config watch loop -----------------------------------
+# The disabled branch idles until a config source changes and only then
+# exits 0 for a systemd restart (Restart=always). A mutating `sleep` stub
+# drives the loop deterministically; `timeout` turns a watch regression
+# into status 124 instead of a bats hang. AIRPLANES_MLAT_DISABLED_SLEEP=5
+# overrides the single-pass 0 exported by setup().
+
+@test "airplanes-mlat.sh: disabled watch — feed.env change → exit 0" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" 'MLAT_ENABLED=false' 'ALTITUDE=35'
+    cat > "$ROOT_DIR/bin/sleep" <<SH
+#!/usr/bin/env bash
+printf 'LATITUDE=52\n' >> "$root/etc/airplanes/feed.env"
+SH
+    chmod +x "$ROOT_DIR/bin/sleep"
+
+    run env AIRPLANES_ROOT="$root" AIRPLANES_MLAT_DISABLED_SLEEP=5 \
+        PATH="$ROOT_DIR/bin:$PATH" timeout 10 bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'MLAT DISABLED'* ]]
+}
+
+@test "airplanes-mlat.sh: disabled watch — legacy boot config change also wakes the watch" {
+    # Legacy images source the boot config; the watch covers every config
+    # source, not just feed.env.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" 'MLAT_ENABLED=false'
+    mkdir -p "$root/boot"
+    cat > "$ROOT_DIR/bin/sleep" <<SH
+#!/usr/bin/env bash
+printf 'HOSTNAME=feeder\n' > "$root/boot/airplanes-config.txt"
+SH
+    chmod +x "$ROOT_DIR/bin/sleep"
+
+    run env AIRPLANES_ROOT="$root" AIRPLANES_MLAT_DISABLED_SLEEP=5 \
+        PATH="$ROOT_DIR/bin:$PATH" timeout 10 bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+}
+
+@test "airplanes-mlat.sh: disabled watch — unchanged config keeps idling (no blind exit)" {
+    # The core regression guard: with no config change the wrapper must
+    # NOT exit on its own (the old behavior slept once and exited). The
+    # no-op sleep stub from setup_mlat_runtime spins the loop fast;
+    # timeout kills it at 2s and reports 124, proving it was still idling.
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" 'MLAT_ENABLED=false'
+
+    run env AIRPLANES_ROOT="$root" AIRPLANES_MLAT_DISABLED_SLEEP=5 \
+        PATH="$ROOT_DIR/bin:$PATH" timeout 2 bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 124 ]
+    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh: disabled watch — invalid interval falls back to 60" {
+    local root="$ROOT_DIR/root"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" 'MLAT_ENABLED=false'
+    # The stub asserts the fallback value actually reached sleep (a non-60
+    # argv fails the stub, the fingerprint never changes, and timeout
+    # reports 124), then mutates the config so the wrapper exits promptly.
+    cat > "$ROOT_DIR/bin/sleep" <<SH
+#!/usr/bin/env bash
+[ "\$1" = "60" ] || exit 99
+printf 'LATITUDE=52\n' >> "$root/etc/airplanes/feed.env"
+SH
+    chmod +x "$ROOT_DIR/bin/sleep"
+
+    run env AIRPLANES_ROOT="$root" AIRPLANES_MLAT_DISABLED_SLEEP=abc \
+        PATH="$ROOT_DIR/bin:$PATH" timeout 10 bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'not a non-negative integer'* ]]
 }
 
 @test "airplanes-mlat.sh derives GEO_CONFIGURED=false from legacy LATITUDE=0/LONGITUDE=0 pair" {
