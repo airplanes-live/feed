@@ -123,6 +123,15 @@ valid_gain() {
     awk -v G="$1" 'BEGIN { exit !(G >= 0 && G <= 60) }'
 }
 
+# READSB_SDR_SERIAL: empty (single-SDR default, no --device) or 1-32 chars
+# in [0-9A-Za-z_-]. Same rules as valid_dump978_serial, kept separate so the
+# webconfig JS twin (isValidReadsbSdrSerial) maps 1:1 and the two keys can
+# diverge later.
+valid_readsb_sdr_serial() {
+    [[ -z "$1" ]] && return 0
+    [[ "$1" =~ ^[0-9A-Za-z_-]{1,32}$ ]]
+}
+
 # UAT_INPUT v1: only "" (978 disabled) or the local dump978-fa endpoint.
 # Mirrors Go configspec.validateUATInput.
 valid_uat_input() {

@@ -304,6 +304,50 @@ EOF
     grep -q '^systemctl restart airplanes-mlat$' "$SYSTEMCTL_LOG"
 }
 
+@test "READSB_SDR_SERIAL change restarts readsb and nothing else" {
+    seed_feed_env
+    do_apply READSB_SDR_SERIAL=1090
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ "${APL_APPLY_CHANGED[*]}" = "READSB_SDR_SERIAL" ]
+    grep -q '^READSB_SDR_SERIAL="1090"$' "$FEED_ENV"
+    grep -q '^systemctl restart readsb$' "$SYSTEMCTL_LOG"
+    ! grep -q 'restart airplanes-feed' "$SYSTEMCTL_LOG"
+    ! grep -q 'restart airplanes-mlat' "$SYSTEMCTL_LOG"
+    ! grep -q 'restart airplanes-978' "$SYSTEMCTL_LOG"
+    ! grep -q 'restart dump978-fa' "$SYSTEMCTL_LOG"
+}
+
+@test "clearing READSB_SDR_SERIAL also restarts readsb" {
+    seed_feed_env
+    printf 'READSB_SDR_SERIAL="1090"\n' >> "$FEED_ENV"
+    do_apply READSB_SDR_SERIAL=
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ "${APL_APPLY_CHANGED[*]}" = "READSB_SDR_SERIAL" ]
+    grep -q '^READSB_SDR_SERIAL=""$' "$FEED_ENV"
+    grep -q '^systemctl restart readsb$' "$SYSTEMCTL_LOG"
+}
+
+@test "rejects bad READSB_SDR_SERIAL without touching feed.env or restarting" {
+    seed_feed_env
+    cp "$FEED_ENV" "$FEED_ENV.before"
+    do_apply READSB_SDR_SERIAL="$(printf 'a%.0s' {1..33})"
+    [ "$APL_APPLY_RC" -eq 2 ]
+    [ "$APL_APPLY_STATUS" = "rejected" ]
+    [ -n "${APL_APPLY_ERRORS[READSB_SDR_SERIAL]}" ]
+    diff -u "$FEED_ENV.before" "$FEED_ENV"
+    [ ! -s "$SYSTEMCTL_LOG" ]
+}
+
+@test "GAIN and READSB_SDR_SERIAL in one apply restart readsb once" {
+    seed_feed_env
+    do_apply GAIN=43.9 READSB_SDR_SERIAL=1090
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    [ "$(grep -c '^systemctl restart readsb$' "$SYSTEMCTL_LOG")" -eq 1 ]
+}
+
 @test "GEO_CONFIGURED-only change does not restart anything" {
     cat > "$FEED_ENV" <<EOF
 LATITUDE="1"

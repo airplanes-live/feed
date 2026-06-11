@@ -58,8 +58,8 @@ run_apply() {
     [ "$(jq -r .version <<<"$OUT")" = "1" ]
     [ "$(jq -r '.writable_keys | type' <<<"$OUT")" = "array" ]
     [ "$(jq -r '.readable_keys | type' <<<"$OUT")" = "array" ]
-    [ "$(jq -r '.writable_keys | contains(["LATITUDE","LONGITUDE","MLAT_ENABLED"])' <<<"$OUT")" = "true" ]
-    [ "$(jq -r '.readable_keys | contains(["INPUT","INPUT_TYPE"])' <<<"$OUT")" = "true" ]
+    [ "$(jq -r '.writable_keys | contains(["LATITUDE","LONGITUDE","MLAT_ENABLED","READSB_SDR_SERIAL"])' <<<"$OUT")" = "true" ]
+    [ "$(jq -r '.readable_keys | contains(["INPUT","INPUT_TYPE","READSB_SDR_SERIAL"])' <<<"$OUT")" = "true" ]
 }
 
 @test "apply with empty payload returns no_change" {

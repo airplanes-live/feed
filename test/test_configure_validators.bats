@@ -166,6 +166,19 @@ setup() {
     ! valid_gain abc
 }
 
+@test "valid_readsb_sdr_serial accepts empty or 1-32 chars in [0-9A-Za-z_-]" {
+    valid_readsb_sdr_serial ''
+    valid_readsb_sdr_serial 1090
+    # All-numeric serials are valid here even though readsb may interpret
+    # small integers as device indexes — that ambiguity is a UI concern.
+    valid_readsb_sdr_serial 0
+    valid_readsb_sdr_serial 00000001
+    valid_readsb_sdr_serial 'SDR-Alpha_2'
+    ! valid_readsb_sdr_serial 'has space'
+    ! valid_readsb_sdr_serial '1090;rm'
+    ! valid_readsb_sdr_serial "$(printf 'a%.0s' {1..33})"
+}
+
 @test "valid_uat_input accepts only empty or the local dump978-fa endpoint" {
     valid_uat_input ''
     valid_uat_input 127.0.0.1:30978

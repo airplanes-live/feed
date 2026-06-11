@@ -24,6 +24,7 @@ declare -ga APL_FEED_WRITABLE_KEYS=(
     MLAT_ENABLED
     MLAT_PRIVATE
     GAIN
+    READSB_SDR_SERIAL
     UAT_INPUT
     DUMP978_SDR_SERIAL
     DUMP978_GAIN
@@ -42,6 +43,7 @@ declare -ga APL_FEED_READABLE_KEYS=(
     INPUT
     INPUT_TYPE
     GAIN
+    READSB_SDR_SERIAL
     UAT_INPUT
     DUMP978_SDR_SERIAL
     DUMP978_GAIN
@@ -58,6 +60,7 @@ declare -gA APL_FEED_KEY_TYPE=(
     [MLAT_ENABLED]=bool
     [MLAT_PRIVATE]=bool
     [GAIN]=gain
+    [READSB_SDR_SERIAL]=readsb_sdr_serial
     [UAT_INPUT]=uat_input
     [DUMP978_SDR_SERIAL]=dump978_serial
     [DUMP978_GAIN]=dump978_gain
@@ -79,6 +82,7 @@ declare -gA APL_FEED_KEY_RESTART=(
     [MLAT_ENABLED]="airplanes-mlat"
     [MLAT_PRIVATE]="airplanes-mlat"
     [GAIN]="readsb"
+    [READSB_SDR_SERIAL]="readsb"
     [UAT_INPUT]="airplanes-feed dump978-fa airplanes-978"
     [DUMP978_SDR_SERIAL]="dump978-fa airplanes-978"
     [DUMP978_GAIN]="dump978-fa"
