@@ -182,6 +182,12 @@ _apl_feed_apply_validate_one() {
                 return 1
             fi
             ;;
+        readsb_sdr_serial)
+            if ! valid_readsb_sdr_serial "$value"; then
+                APL_APPLY_ERRORS[$key]='must match [0-9A-Za-z_-]{1,32} or be empty'
+                return 1
+            fi
+            ;;
         uat_input)
             if ! valid_uat_input "$value"; then
                 APL_APPLY_ERRORS[$key]='must be "" or "127.0.0.1:30978"'
