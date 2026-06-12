@@ -211,7 +211,7 @@
         "body": {
           "registered": true,
           "version": 1,
-          "set_at": "2026-04-28T18:00:00+00:00",
+          "set_at": "2026-04-20T18:00:00+00:00",
           "owner_present": false,
           "reset_until": null,
           "last_seen_at": null,
