@@ -127,11 +127,14 @@ KEY="x" \tx'
 }
 
 @test "divergence: dollar expansion is live under source, literal in the CLI readers" {
-    printf 'KEY="$HOME"\n' > "$FEED_ENV"
+    # Purpose-built sentinel instead of an inherited variable like HOME,
+    # so the expected expansion is fully under the test's control.
+    export APL_CONTRACT_SENTINEL="expanded-by-source"
+    printf 'KEY="$APL_CONTRACT_SENTINEL"\n' > "$FEED_ENV"
 
-    [ "$(read_via_source KEY)" = "$HOME" ]
-    [ "$(read_via_get KEY)" = '$HOME' ]
-    [ "$(read_via_strict KEY)" = '$HOME' ]
+    [ "$(read_via_source KEY)" = "expanded-by-source" ]
+    [ "$(read_via_get KEY)" = '$APL_CONTRACT_SENTINEL' ]
+    [ "$(read_via_strict KEY)" = '$APL_CONTRACT_SENTINEL' ]
 }
 
 @test "divergence: unterminated quote breaks source entirely" {

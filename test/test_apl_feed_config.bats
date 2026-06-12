@@ -356,3 +356,46 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"LATITUDE=52.52"* ]]
 }
+
+@test "config show --json escapes shell-hostile value content correctly" {
+    # Single-quoted on disk so the strict reader takes it verbatim; the
+    # JSON path must round-trip the raw bytes through jq --arg.
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+GAIN='a"b$c\d'
+EOF
+    run apl_feed_config_show --json
+
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.values.GAIN' <<< "$output")" = 'a"b$c\d' ]
+}
+
+@test "config show resolves feed.env through --root in either flag order" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+EOF
+    local saved_root="$ROOT"
+    ROOT="/nonexistent-root"
+    run apl_feed_config_show --root "$saved_root" --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.values.LATITUDE' <<< "$output")" = "52.52" ]
+
+    ROOT="/nonexistent-root"
+    run apl_feed_config_show --json --root "$saved_root"
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.values.LATITUDE' <<< "$output")" = "52.52" ]
+    ROOT="$saved_root"
+}
+
+@test "config show legacy fallback works when airplanes-env is absent" {
+    rm -f "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
+    printf '#!/bin/true\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
+LATITUDE="50.00"
+EOF
+    run apl_feed_config_show --json
+
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.values.LATITUDE' <<< "$output")" = "50.00" ]
+}
