@@ -144,6 +144,23 @@ MLATSERVER="${MLATSERVER:-feed.airplanes.live:31090}"
 INPUT="${INPUT:-127.0.0.1:30005}"
 INPUT_TYPE="${INPUT_TYPE:-dump1090}"
 
+# Effective MLAT endpoint, published to the state file below so status
+# surfaces can flag a feeder pointed at a non-default backend. Charset
+# guard (same as the feed wrapper's, [] for bracketed IPv6) keeps
+# arbitrary feed.env content out of state-file values that consumers
+# render onto a root tty; empty value + empty is_default means the
+# configured MLATSERVER was rejected, surfaced as invalid downstream.
+MLAT_SERVER_STATE=""
+MLAT_SERVER_IS_DEFAULT=""
+if [[ "$MLATSERVER" =~ ^[][A-Za-z0-9._:-]+$ ]]; then
+    MLAT_SERVER_STATE="$MLATSERVER"
+    if [[ "$MLATSERVER" == "feed.airplanes.live:31090" ]]; then
+        MLAT_SERVER_IS_DEFAULT="true"
+    else
+        MLAT_SERVER_IS_DEFAULT="false"
+    fi
+fi
+
 # RESULTS bundle: only apply the default outputs when none of the
 # RESULTS* slots are set on disk. Legacy single-line feed.env may carry
 # a combined `RESULTS="--results ... --results ..."` and we must not
@@ -241,6 +258,8 @@ airplanes_write_state "$STATE_FILE" \
     "mlat_enabled=${MLAT_ENABLED:-}" \
     "mlat_user=${MLAT_USER:-}" \
     "mlat_private=${MLAT_PRIVATE:-}" \
+    "mlat_server=$MLAT_SERVER_STATE" \
+    "mlat_server_is_default=$MLAT_SERVER_IS_DEFAULT" \
     "geo_configured=${GEO_CONFIGURED:-}" \
     "latitude=${LATITUDE:-}" \
     "longitude=${LONGITUDE:-}" \

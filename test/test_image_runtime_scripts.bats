@@ -658,8 +658,57 @@ write_feed_env() {
     grep -qx 'longitude=13' "$root/run/airplanes-mlat/state"
     grep -qx 'altitude=35' "$root/run/airplanes-mlat/state"
     grep -qE '^decided_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$root/run/airplanes-mlat/state"
+    # Default MLATSERVER → endpoint keys carry the default and flag it.
+    grep -qx 'mlat_server=feed.airplanes.live:31090' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_server_is_default=true' "$root/run/airplanes-mlat/state"
     # mlat-client was invoked.
     [ -f "$arg_log" ]
+}
+
+@test "airplanes-mlat.sh publishes a non-default MLATSERVER endpoint to the state file" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="feed.airplanes.test:31090"'
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" \
+        PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'mlat_server=feed.airplanes.test:31090' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_server_is_default=false' "$root/run/airplanes-mlat/state"
+}
+
+@test "airplanes-mlat.sh publishes empty endpoint keys for a charset-invalid MLATSERVER" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/mlat-args.log"
+    install_state_writer_lib "$root"
+    setup_mlat_runtime "$root"
+    write_feed_env "$root" \
+        'MLAT_USER="alice"' \
+        'MLAT_ENABLED=true' \
+        'LATITUDE=52' \
+        'LONGITUDE=13' \
+        'ALTITUDE=35' \
+        'INPUT="127.0.0.1:30005"' \
+        'INPUT_TYPE="dump1090"' \
+        'MLATSERVER="bad host;rm -rf"'
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" \
+        PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'mlat_server=' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_server_is_default=' "$root/run/airplanes-mlat/state"
 }
 
 @test "airplanes-mlat.sh writes state=disabled,reason=mlat_enabled_false when MLAT_ENABLED=false" {
@@ -1307,6 +1356,94 @@ SH
     grep -qx 'longitude=13.40500' "$root/run/airplanes-feed/state"
     grep -qx 'input=127.0.0.1:30005' "$root/run/airplanes-feed/state"
     grep -q -- "feed_bin=$root/usr/bin/airplanes-feeder" "$root/run/airplanes-feed/state"
+    # Default TARGET → endpoint keys carry the default and flag it as such.
+    grep -qx 'target_host=feed.airplanes.live' "$root/run/airplanes-feed/state"
+    grep -qx 'target_port=30004' "$root/run/airplanes-feed/state"
+    grep -qx 'target_is_default=true' "$root/run/airplanes-feed/state"
+}
+
+@test "airplanes-feed.sh publishes a non-default TARGET endpoint to the state file" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/feed-args.log"
+    install_state_writer_lib "$root"
+    write_image_config "$root"
+    write_feed_env "$root" \
+        'LATITUDE="52.52"' \
+        'LONGITUDE="13.40"' \
+        'ALTITUDE="35"' \
+        'MLAT_USER="image-feeder"' \
+        'MLAT_ENABLED=true' \
+        'TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"'
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'target_host=feed.airplanes.test' "$root/run/airplanes-feed/state"
+    grep -qx 'target_port=30004' "$root/run/airplanes-feed/state"
+    grep -qx 'target_is_default=false' "$root/run/airplanes-feed/state"
+}
+
+@test "airplanes-feed.sh parses --net-connector=host TARGET form and flags a non-default port" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/feed-args.log"
+    install_state_writer_lib "$root"
+    write_image_config "$root"
+    write_feed_env "$root" \
+        'LATITUDE="52.52"' \
+        'LONGITUDE="13.40"' \
+        'ALTITUDE="35"' \
+        'MLAT_USER="image-feeder"' \
+        'MLAT_ENABLED=true' \
+        'TARGET="--net-connector=feed.airplanes.live,9999,beast_reduce_plus_out"'
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    # Default host on a non-default port is still a non-default endpoint.
+    grep -qx 'target_host=feed.airplanes.live' "$root/run/airplanes-feed/state"
+    grep -qx 'target_port=9999' "$root/run/airplanes-feed/state"
+    grep -qx 'target_is_default=false' "$root/run/airplanes-feed/state"
+}
+
+@test "airplanes-feed.sh publishes empty endpoint keys for an unparseable TARGET" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/feed-args.log"
+    install_state_writer_lib "$root"
+    write_image_config "$root"
+    write_feed_env "$root" \
+        'LATITUDE="52.52"' \
+        'LONGITUDE="13.40"' \
+        'ALTITUDE="35"' \
+        'MLAT_USER="image-feeder"' \
+        'MLAT_ENABLED=true' \
+        'TARGET="no connector flag here"'
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+
+    [ "$status" -eq 0 ]
+    # Present-but-empty keys signal "configured but unparseable" to
+    # consumers, distinct from key-absent (older daemon, no state).
+    grep -qx 'target_host=' "$root/run/airplanes-feed/state"
+    grep -qx 'target_port=' "$root/run/airplanes-feed/state"
+    grep -qx 'target_is_default=' "$root/run/airplanes-feed/state"
 }
 
 @test "airplanes-mlat.sh: RESULTS bundle default routes to 30104 + 31015 + 30157" {

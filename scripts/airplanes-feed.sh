@@ -83,6 +83,43 @@ else
     FEED_IMAGE_OPTIONS=""
 fi
 
+# Effective first ADS-B connector, published to the state file below so
+# status surfaces (apl-feed status, the image dashboard) can flag a
+# feeder pointed at a non-default backend. First connector only — the
+# failover endpoint inside the same connector arg is not compared.
+# Empty host + empty is_default means TARGET was present but did not
+# parse as a `--net-connector host,port,...` flag; consumers surface
+# that as invalid rather than silently rendering it as the default.
+TARGET_HOST=""
+TARGET_PORT=""
+TARGET_IS_DEFAULT=""
+_target_rest="${TARGET#*--net-connector}"
+if [[ "$_target_rest" != "$TARGET" ]]; then
+    _target_rest="${_target_rest#=}"
+    _target_rest="${_target_rest#"${_target_rest%%[![:space:]]*}"}"
+    _target_rest="${_target_rest%%[[:space:]]*}"
+    _target_host="${_target_rest%%,*}"
+    _target_port=""
+    if [[ "$_target_rest" == *,* ]]; then
+        _target_port="${_target_rest#*,}"
+        _target_port="${_target_port%%,*}"
+    fi
+    # Charset mirrors apl-feed's website-host guard, plus [] for
+    # bracketed IPv6 literals. Keeps arbitrary feed.env content out of
+    # state-file values that consumers render onto a root tty.
+    if [[ "$_target_host" =~ ^[][A-Za-z0-9._:-]+$ && "$_target_port" =~ ^[0-9]+$ ]]; then
+        TARGET_HOST="$_target_host"
+        TARGET_PORT="$_target_port"
+        if [[ "$_target_host" == "feed.airplanes.live" && "$_target_port" == "30004" ]]; then
+            TARGET_IS_DEFAULT="true"
+        else
+            TARGET_IS_DEFAULT="false"
+        fi
+    fi
+    unset _target_host _target_port
+fi
+unset _target_rest
+
 # State writer (defensive: a partial install where this script is in
 # place but the lib isn't yet must not take down the daemon).
 STATE_WRITER="$(airplanes_path /usr/local/share/airplanes/lib/state-writer.sh)"
@@ -108,6 +145,9 @@ airplanes_write_state "$STATE_FILE" \
     "latitude=${LATITUDE:-}" \
     "longitude=${LONGITUDE:-}" \
     "input=${INPUT:-}" \
+    "target_host=$TARGET_HOST" \
+    "target_port=$TARGET_PORT" \
+    "target_is_default=$TARGET_IS_DEFAULT" \
     "feed_bin=$FEED_BIN" || true
 
 exec "$FEED_BIN" --net --net-only --quiet \
