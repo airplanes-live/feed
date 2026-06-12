@@ -1,5 +1,4 @@
 {
-  "_doc": "Fixture shape for /api/feeders/secret (DEV-427): request.uuid is the bearer UUID identifier and is NOT a body field. The body sent on the wire is exactly {\"new_secret\": <request.new_secret>}. The Authorization header is Bearer alv1.<request.uuid>.<bearer_secret>. Mirrors the /status fixture shape used elsewhere.",
   "schema_version": 1,
   "secret": {
     "create_success": {
@@ -156,7 +155,9 @@
           "owner_present": true,
           "reset_until": null,
           "last_seen_at": "2026-04-28T18:40:30+00:00",
-          "last_seen_age_seconds": 90
+          "last_seen_age_seconds": 90,
+          "claimable": true,
+          "claim_unavailable_reason": null
         }
       }
     },
@@ -174,7 +175,9 @@
           "owner_present": false,
           "reset_until": null,
           "last_seen_at": "2026-04-28T18:12:00+00:00",
-          "last_seen_age_seconds": 1800
+          "last_seen_age_seconds": 1800,
+          "claimable": true,
+          "claim_unavailable_reason": null
         }
       }
     },
@@ -192,7 +195,29 @@
           "owner_present": false,
           "reset_until": null,
           "last_seen_at": null,
-          "last_seen_age_seconds": null
+          "last_seen_age_seconds": null,
+          "claimable": true,
+          "claim_unavailable_reason": null
+        }
+      }
+    },
+    "authenticated_not_claimable": {
+      "request": {
+        "uuid": "55555555-6666-7777-8888-999999999999"
+      },
+      "bearer_secret": "ABCDEFGHIJKLMNOP",
+      "response": {
+        "status": 200,
+        "body": {
+          "registered": true,
+          "version": 1,
+          "set_at": "2026-04-28T18:00:00+00:00",
+          "owner_present": false,
+          "reset_until": null,
+          "last_seen_at": null,
+          "last_seen_age_seconds": null,
+          "claimable": false,
+          "claim_unavailable_reason": "not_seen_feeding"
         }
       }
     },

@@ -29,6 +29,8 @@ STATUS_RECEIVER_ACTIVITY_BYTES=''
 STATUS_CLAIM_REGISTERED=''
 STATUS_CLAIM_VERSION=''
 STATUS_OWNER_PRESENT=''
+STATUS_CLAIM_CLAIMABLE=''
+STATUS_CLAIM_UNAVAILABLE_REASON=''
 STATUS_LAST_SEEN_AT=''
 STATUS_LAST_SEEN_AGE_SECONDS=''
 STATUS_SERVER_RECEPTION_STATE=''
@@ -60,6 +62,8 @@ status_init() {
     STATUS_CLAIM_REGISTERED=''
     STATUS_CLAIM_VERSION=''
     STATUS_OWNER_PRESENT=''
+    STATUS_CLAIM_CLAIMABLE=''
+    STATUS_CLAIM_UNAVAILABLE_REASON=''
     STATUS_LAST_SEEN_AT=''
     STATUS_LAST_SEEN_AGE_SECONDS=''
     STATUS_SERVER_RECEPTION_STATE=''
@@ -133,6 +137,8 @@ status_finish() {
             --arg claim_registered "$STATUS_CLAIM_REGISTERED" \
             --arg claim_version "$STATUS_CLAIM_VERSION" \
             --arg owner_present "$STATUS_OWNER_PRESENT" \
+            --arg claimable "$STATUS_CLAIM_CLAIMABLE" \
+            --arg claim_unavailable_reason "$STATUS_CLAIM_UNAVAILABLE_REASON" \
             --arg last_seen_at "$STATUS_LAST_SEEN_AT" \
             --arg last_seen_age_seconds "$STATUS_LAST_SEEN_AGE_SECONDS" \
             --arg reception_state "$STATUS_SERVER_RECEPTION_STATE" \
@@ -169,7 +175,9 @@ status_finish() {
               claim: {
                 registered: ($claim_registered | boolish),
                 version: ($claim_version | numberish),
-                owner_present: ($owner_present | boolish)
+                owner_present: ($owner_present | boolish),
+                claimable: ($claimable | boolish),
+                claim_unavailable_reason: ($claim_unavailable_reason | nullempty)
               },
               website: {
                 reception_state: ($reception_state | nullempty),
@@ -686,6 +694,8 @@ claim_registration_status_line() {
             STATUS_CLAIM_REGISTERED='true'
             STATUS_CLAIM_VERSION="$CLAIM_PROBE_VERSION"
             STATUS_OWNER_PRESENT="$CLAIM_PROBE_OWNER_PRESENT"
+            STATUS_CLAIM_CLAIMABLE="$CLAIM_PROBE_CLAIMABLE"
+            STATUS_CLAIM_UNAVAILABLE_REASON="$CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON"
             write_version_file "$CLAIM_PROBE_VERSION"
             # Claim-secret version is internal bookkeeping; exposed
             # via --json (.claim.version) and the local mirror file
@@ -695,6 +705,19 @@ claim_registration_status_line() {
             # nothing actionable.
             if [[ "$CLAIM_PROBE_OWNER_PRESENT" == "true" ]]; then
                 status_line ok "Website claim" "registered and claimed$(_website_host_suffix)"
+            elif [[ "$CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON" == "not_seen_feeding" ]]; then
+                # Server says the claim gate is the liveness flag. Split
+                # the copy on whether it has EVER been seen so the fix
+                # ("start feeding" vs "reconnect") is the right one.
+                if [[ -n "$CLAIM_PROBE_LAST_SEEN_AT" && "$CLAIM_PROBE_LAST_SEEN_AT" != "null" ]]; then
+                    status_line warn "Website claim" "registered, but not seen feeding recently — not claimable until it reconnects$(_website_host_suffix)"
+                else
+                    status_line warn "Website claim" "registered, waiting for first data — not yet claimable$(_website_host_suffix)"
+                fi
+            elif [[ "$CLAIM_PROBE_CLAIMABLE" == "false" ]]; then
+                # Unclaimable for some other (or unreported) reason —
+                # stay generic; this is not a data problem.
+                status_line warn "Website claim" "registered, not currently claimable$(_website_host_suffix)"
             else
                 status_line ok "Website claim" "registered, not yet claimed$(_website_host_suffix)"
             fi
