@@ -388,3 +388,317 @@ run_configure_env() {
     [[ "$output" =~ "Missing required non-interactive configure value: AIRPLANES_LATITUDE" ]]
     [ ! -e "$WHIPTAIL_LOG" ]
 }
+
+## Preservation on re-run (feed#131): write_feed_env must not clobber
+## operator data it doesn't own.
+
+seed_feed_env() {
+    mkdir -p "$ROOT_DIR/etc/airplanes"
+    cat > "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+rerun_coords_only() {
+    run_configure_env \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+}
+
+@test "configure.sh re-run carries unowned keys over verbatim" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.00000"
+LONGITUDE="8.00000"
+ALTITUDE="100"
+MLAT_USER="alice"
+TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"
+MLATSERVER="feed.airplanes.test:31090"
+APL_FEED_WEBSITE_URL="https://airplanes.test"
+REPORT_STATUS="false"
+GAIN="auto"
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    local env_file="$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"' "$env_file"
+    grep -qx 'MLATSERVER="feed.airplanes.test:31090"' "$env_file"
+    grep -qx 'APL_FEED_WEBSITE_URL="https://airplanes.test"' "$env_file"
+    grep -qx 'REPORT_STATUS="false"' "$env_file"
+    grep -qx 'GAIN="auto"' "$env_file"
+    grep -q 'Carried over from the previous feed.env' "$env_file"
+    # New coordinates landed; owned keys are not duplicated by carry-over.
+    grep -q 'LATITUDE="52.52000"' "$env_file"
+    [ "$(grep -c '^LATITUDE=' "$env_file")" -eq 1 ]
+    [ "$(grep -c '^MLAT_USER=' "$env_file")" -eq 1 ]
+}
+
+@test "configure.sh re-run keeps duplicate unowned lines in order" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+GAIN="auto"
+GAIN="42"
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    # Both occurrences survive, original order (source last-write-wins).
+    [ "$(grep -c '^GAIN=' "$ROOT_DIR/etc/airplanes/feed.env")" -eq 2 ]
+    grep -A1 '^GAIN="auto"' "$ROOT_DIR/etc/airplanes/feed.env" | grep -qx 'GAIN="42"'
+}
+
+@test "configure.sh re-run does not carry comments or non-KEY= lines" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+# operator note about the override below
+TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"
+export SHELLISH=1
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    grep -qx 'TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -q 'operator note about the override' "$ROOT_DIR/etc/airplanes/feed.env"
+    ! grep -q 'SHELLISH' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh re-run twice is idempotent (byte-identical file)" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"
+REPORT_STATUS="false"
+EOF
+    rerun_coords_only
+    [ "$status" -eq 0 ]
+    cp "$ROOT_DIR/etc/airplanes/feed.env" "$ROOT_DIR/first-pass"
+
+    rerun_coords_only
+    [ "$status" -eq 0 ]
+    cmp "$ROOT_DIR/first-pass" "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh fresh install writes no carried-over section" {
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    ! grep -q 'Carried over from the previous feed.env' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh re-run preserves MLAT_ENABLED=false and MLAT_PRIVATE=true" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+MLAT_ENABLED="false"
+MLAT_PRIVATE=true
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_ENABLED="false"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh interactive re-run preserves MLAT toggles and name on blank input" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+MLAT_USER="keepme"
+MLAT_ENABLED="false"
+MLAT_PRIVATE=true
+EOF
+    run_configure $'\n52.52000\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="keepme"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'MLAT_ENABLED="false"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'MLAT_PRIVATE=true' "$ROOT_DIR/etc/airplanes/feed.env"
+    # The name prompt advertises keep-current semantics on a re-run.
+    grep -q 'keep the current name "keepme"' "$WHIPTAIL_LOG"
+}
+
+@test "configure.sh interactive re-run: explicit name input still wins" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+MLAT_USER="keepme"
+EOF
+    run_configure $'newname\n52.52000\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="newname"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh explicit AIRPLANES_MLAT_ENABLED=true overrides preserved false" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+MLAT_ENABLED="false"
+EOF
+    run_configure_env \
+        AIRPLANES_MLAT_ENABLED="true" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh empty AIRPLANES_MLAT_ENABLED preserves the existing value" {
+    # Set-but-empty means "no explicit choice" — same as unset.
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+MLAT_ENABLED="false"
+EOF
+    run_configure_env \
+        AIRPLANES_MLAT_ENABLED="" \
+        AIRPLANES_LATITUDE="52.52000" \
+        AIRPLANES_LONGITUDE="13.40500" \
+        AIRPLANES_ALTITUDE="35m"
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_ENABLED="false"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh re-run: invalid existing toggle falls back to default" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+MLAT_ENABLED="banana"
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh re-run: quoted toggle with trailing comment falls back to default" {
+    # `MLAT_ENABLED="false" # note` doesn't match any strict read form
+    # (the bare rule captures the opening quote), so preservation
+    # refuses it and the default applies. Pinned: this is the parser
+    # behavior that makes same-line comments a forbidden shape.
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+MLAT_ENABLED="false" # operator note
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_ENABLED="true"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh re-run preserves a custom INPUT/INPUT_TYPE" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+INPUT="192.168.1.10:30005"
+INPUT_TYPE="dump1090"
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    grep -qx 'INPUT="192.168.1.10:30005"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'INPUT_TYPE="dump1090"' "$ROOT_DIR/etc/airplanes/feed.env"
+    [ "$(grep -c '^INPUT=' "$ROOT_DIR/etc/airplanes/feed.env")" -eq 1 ]
+}
+
+@test "configure.sh re-run preserves MLAT_USER when no name is supplied" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+MLAT_USER="keepme"
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_USER="keepme"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh build mode with pre-existing overrides preserves them, no sidecar" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"
+EOF
+    run_configure_env \
+        AIRPLANES_BUILD_MODE=1 \
+        AIRPLANES_LATITUDE="0" \
+        AIRPLANES_LONGITUDE="0" \
+        AIRPLANES_ALTITUDE=""
+
+    [ "$status" -eq 0 ]
+    grep -qx 'TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"' "$ROOT_DIR/etc/airplanes/feed.env"
+    # Build mode is not an operator edit — no metadata stamps.
+    [ ! -e "$ROOT_DIR/etc/airplanes/feed.meta.json" ]
+}
+
+@test "configure.sh stamps sidecar metadata for changed tracked keys only" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.00000"
+LONGITUDE="8.00000"
+ALTITUDE="35"
+MLAT_USER="alice"
+MLAT_ENABLED="false"
+MLAT_PRIVATE=false
+EOF
+    cat > "$ROOT_DIR/etc/airplanes/feed.meta.json" <<'EOF'
+{"schema_version":1,"fields":{"MLAT_USER":{"edited_at":"2026-01-01T00:00:00.000000Z","edited_by":"website"}}}
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    local meta="$ROOT_DIR/etc/airplanes/feed.meta.json"
+    # Coordinates changed → fresh feeder stamps.
+    [ "$(jq -r '.fields.LATITUDE.edited_by' "$meta")" = "feeder" ]
+    [ "$(jq -r '.fields.LATITUDE.edited_at' "$meta")" != "2026-01-01T00:00:00.000000Z" ]
+    # MLAT_USER unchanged (preserved) → existing website tuple kept.
+    [ "$(jq -r '.fields.MLAT_USER.edited_by' "$meta")" = "website" ]
+    [ "$(jq -r '.fields.MLAT_USER.edited_at' "$meta")" = "2026-01-01T00:00:00.000000Z" ]
+    # MLAT_ENABLED preserved unchanged → no stamp materializes.
+    [ "$(jq -r '.fields.MLAT_ENABLED' "$meta")" = "null" ]
+}
+
+@test "configure.sh carried keys survive a subsequent apl_feed_apply write" {
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"
+EOF
+    rerun_coords_only
+    [ "$status" -eq 0 ]
+
+    # Run the canonical key-level writer over the rewritten file the way
+    # apl-feed diagnostics/config would; the carried TARGET value must
+    # survive (apply normalizes formatting but keeps the value).
+    mkdir -p "$ROOT_DIR/run/airplanes"
+    run bash -c '
+        source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/configure-validators.sh"
+        source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/feed-env-keys.sh"
+        source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/feed-env-apply.sh"
+        apl_feed_apply --no-restart --no-audit \
+            --feed-env "'"$ROOT_DIR"'/etc/airplanes/feed.env" \
+            --lock-file "'"$ROOT_DIR"'/run/airplanes/feed-env.lock" \
+            REPORT_STATUS=false
+    '
+    [ "$status" -eq 0 ]
+    grep -qx 'TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -qx 'REPORT_STATUS="false"' "$ROOT_DIR/etc/airplanes/feed.env"
+}
