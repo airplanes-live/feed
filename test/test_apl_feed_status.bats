@@ -1052,20 +1052,24 @@ setup_claim_state() {
     setup_claim_state 1
     stub_post_json 200 '{"registered":true,"version":5,"owner_present":false,"reset_until":null,"claimable":false,"claim_unavailable_reason":"not_seen_feeding","last_seen_at":null,"last_seen_age_seconds":null}'
     status_init
-    STATUS_OUTPUT_JSON=0
+    STATUS_OUTPUT_JSON=1
     claim_registration_status_line >/dev/null
-    [ "$STATUS_CLAIM_CLAIMABLE" = 'false' ]
-    [ "$STATUS_CLAIM_UNAVAILABLE_REASON" = 'not_seen_feeding' ]
+    run status_finish
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.claimable')" = 'false' ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.claim_unavailable_reason')" = 'not_seen_feeding' ]
 }
 
 @test "status --json: .claim.claimable null when server omits the field" {
     setup_claim_state 1
     stub_post_json 200 '{"registered":true,"version":5,"owner_present":false,"reset_until":null,"last_seen_at":null,"last_seen_age_seconds":null}'
     status_init
-    STATUS_OUTPUT_JSON=0
+    STATUS_OUTPUT_JSON=1
     claim_registration_status_line >/dev/null
-    [ "$STATUS_CLAIM_CLAIMABLE" = '' ]
-    [ "$STATUS_CLAIM_UNAVAILABLE_REASON" = '' ]
+    run status_finish
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.claimable')" = 'null' ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.claim_unavailable_reason')" = 'null' ]
 }
 
 @test "claim_registration_status_line: 200 + registered:true + missing version → warn 'did not authenticate'" {

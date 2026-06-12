@@ -183,6 +183,16 @@ jqr() { printf '%s' "$1" | jq -r "$2"; }
     [[ "$output" != *"waiting for first data"* ]]
 }
 
+@test "claim status: reset_locked reason → admin-reset copy with expiry" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":7,"owner_present":false,"claimable":false,"claim_unavailable_reason":"reset_locked","reset_until":"2026-06-13T10:00:00Z"}'
+    run claim_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"administrator reset is in progress"* ]]
+    [[ "$output" == *"2026-06-13T10:00:00Z"* ]]
+    [[ "$output" != *"waiting for first data"* ]]
+}
+
 @test "claim status: claimable:false with non-liveness reason → generic copy, no data hint" {
     setup_claim_state 1
     stub_post_json 200 '{"registered":true,"version":7,"owner_present":false,"claimable":false,"claim_unavailable_reason":"claim_blocked"}'

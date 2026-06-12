@@ -667,6 +667,11 @@ _claim_status_human() {
                     echo "Claimed: no — registered, waiting for first data before it can be claimed."
                     echo "Claiming unlocks a few minutes after data starts flowing."
                 fi
+            elif [[ "${CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON:-}" == "reset_locked" ]]; then
+                echo "Claimed: no — an administrator reset is in progress; claiming is locked."
+                if [[ -n "${CLAIM_PROBE_RESET_UNTIL:-}" && "${CLAIM_PROBE_RESET_UNTIL:-}" != "null" ]]; then
+                    echo "Locked until: $CLAIM_PROBE_RESET_UNTIL"
+                fi
             elif [[ "${CLAIM_PROBE_CLAIMABLE:-}" == "false" ]]; then
                 echo "Claimed: no — registered, but not currently claimable."
             else
