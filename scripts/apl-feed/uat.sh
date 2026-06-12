@@ -21,10 +21,11 @@ DEFAULT_DUMP978_SDR_SERIAL="978"
 DEFAULT_DUMP978_GAIN="42.1"
 LOCAL_UAT_ENDPOINT="127.0.0.1:30978"
 
-# Image-only systemd units. On a standalone-feed install these don't
-# exist; the apply library tries to restart them and reports the failure
-# via APL_APPLY_PENDING_RESTART without aborting the write. status
-# inspection still uses these helpers.
+# Image-only systemd units. On a standalone-feed install these are
+# either absent or — name collision — belong to a third-party package
+# (dump978-fa is also FlightAware's unit name); the apply library's
+# unit-ownership gate skips both cases silently. status inspection
+# still uses these helpers.
 _UAT_OPTIONAL_UNITS=(dump978-fa.service airplanes-978.service)
 
 _uat_unit_exists() {

@@ -39,6 +39,9 @@ setup() {
 printf 'systemctl %s\n' "\$*" >> "$SYSTEMCTL_LOG"
 case "\$1" in
     is-active) echo active ;;
+    # Ownership gate in the apply lib reads `systemctl cat` output and
+    # only restarts units that ExecStart our wrappers.
+    cat) printf 'ExecStart=/usr/local/share/airplanes/%s.sh\n' "\${@: -1}" ;;
 esac
 exit 0
 STUB

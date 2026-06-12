@@ -421,6 +421,23 @@ _apl_feed_apply_restart_set() {
 # standalone-feed install) is silently skipped — that matches the
 # pre-refactor _uat_unit_exists gate. The library does not consider
 # absent-unit cases a failure.
+#
+# A unit that exists but is NOT ours is also skipped. Unit names collide
+# with third-party packages: dump978-fa is also FlightAware's unit name,
+# readsb is also the wiedehopf adsb-scripts decoder unit. `systemctl
+# restart` STARTS a stopped unit, so restarting a foreign unit can bring
+# up an SDR daemon that steals the dongle another decoder was using —
+# and a foreign unit doesn't read feed.env, so the restart could never
+# apply the change anyway. Ownership test: every unit installed by the
+# feed scripts or the image runtime overlay ExecStarts a wrapper under
+# /usr/local/share/airplanes/.
+_apl_feed_apply_unit_is_ours() {
+    local unit="$1"
+    # `systemctl cat` returns 0 iff the unit (or a generator-emitted
+    # instance) is known to systemd; output includes drop-ins.
+    systemctl cat "$unit" 2>/dev/null | grep -q '/usr/local/share/airplanes/'
+}
+
 _apl_feed_apply_restart_services() {
     local services=("$@")
     APL_APPLY_PENDING_RESTART=()
@@ -435,9 +452,7 @@ _apl_feed_apply_restart_services() {
 
     local svc
     for svc in "${services[@]}"; do
-        # Skip units that aren't installed. `systemctl cat` returns 0 iff
-        # the unit (or a generator-emitted instance) is known to systemd.
-        if ! systemctl cat "$svc" >/dev/null 2>&1; then
+        if ! _apl_feed_apply_unit_is_ours "$svc"; then
             continue
         fi
         if ! systemctl restart "$svc" 2>/dev/null; then
