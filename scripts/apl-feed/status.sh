@@ -41,9 +41,11 @@ STATUS_FEED_TARGET_PRESENT=0
 STATUS_FEED_TARGET_HOST=''
 STATUS_FEED_TARGET_PORT=''
 STATUS_FEED_TARGET_IS_DEFAULT=''
+STATUS_FEED_TARGET_INVALID=''
 STATUS_MLAT_SERVER_PRESENT=0
 STATUS_MLAT_SERVER=''
 STATUS_MLAT_SERVER_IS_DEFAULT=''
+STATUS_MLAT_SERVER_INVALID=''
 
 status_init() {
     STATUS_CHECKS_FILE="$(new_tmp_file)"
@@ -70,9 +72,11 @@ status_init() {
     STATUS_FEED_TARGET_HOST=''
     STATUS_FEED_TARGET_PORT=''
     STATUS_FEED_TARGET_IS_DEFAULT=''
+    STATUS_FEED_TARGET_INVALID=''
     STATUS_MLAT_SERVER_PRESENT=0
     STATUS_MLAT_SERVER=''
     STATUS_MLAT_SERVER_IS_DEFAULT=''
+    STATUS_MLAT_SERVER_INVALID=''
 }
 
 status_line() {
@@ -141,8 +145,10 @@ status_finish() {
             --arg feed_target_host "$STATUS_FEED_TARGET_HOST" \
             --arg feed_target_port "$STATUS_FEED_TARGET_PORT" \
             --arg feed_target_is_default "$STATUS_FEED_TARGET_IS_DEFAULT" \
+            --arg feed_target_invalid "$STATUS_FEED_TARGET_INVALID" \
             --arg mlat_server "$STATUS_MLAT_SERVER" \
             --arg mlat_server_is_default "$STATUS_MLAT_SERVER_IS_DEFAULT" \
+            --arg mlat_server_invalid "$STATUS_MLAT_SERVER_INVALID" \
             '
             def nullempty: if . == "" then null else . end;
             def boolish:
@@ -184,8 +190,10 @@ status_finish() {
                 feed_target_host: ($feed_target_host | nullempty),
                 feed_target_port: ($feed_target_port | numberish),
                 feed_target_is_default: ($feed_target_is_default | boolish),
+                feed_target_invalid: ($feed_target_invalid | boolish),
                 mlat_server: ($mlat_server | nullempty),
-                mlat_server_is_default: ($mlat_server_is_default | boolish)
+                mlat_server_is_default: ($mlat_server_is_default | boolish),
+                mlat_server_invalid: ($mlat_server_invalid | boolish)
               },
               checks: .
             }' \
@@ -220,6 +228,11 @@ _derive_backend_endpoints() {
             || STATUS_FEED_TARGET_PORT=''
         STATUS_FEED_TARGET_IS_DEFAULT="$(airplanes_read_state "$state_file" target_is_default)" \
             || STATUS_FEED_TARGET_IS_DEFAULT=''
+        if [[ -z "$value" ]]; then
+            STATUS_FEED_TARGET_INVALID='true'
+        else
+            STATUS_FEED_TARGET_INVALID='false'
+        fi
     fi
     state_file="$(root_path /run/airplanes-mlat/state)"
     if value="$(airplanes_read_state "$state_file" mlat_server)"; then
@@ -227,6 +240,11 @@ _derive_backend_endpoints() {
         STATUS_MLAT_SERVER="$value"
         STATUS_MLAT_SERVER_IS_DEFAULT="$(airplanes_read_state "$state_file" mlat_server_is_default)" \
             || STATUS_MLAT_SERVER_IS_DEFAULT=''
+        if [[ -z "$value" ]]; then
+            STATUS_MLAT_SERVER_INVALID='true'
+        else
+            STATUS_MLAT_SERVER_INVALID='false'
+        fi
     fi
     # WEBSITE_HOST is resolved per-invocation by common.sh (env var >
     # feed.env > default), so this process's value IS the effective one
@@ -691,16 +709,16 @@ claim_registration_status_line() {
             ;;
         minimal)
             STATUS_CLAIM_REGISTERED='true'
-            status_line warn "Website claim" "registered, but local secret did not authenticate"
+            status_line warn "Website claim" "registered, but local secret did not authenticate$(_website_host_suffix)"
             ;;
         blocked)
-            status_line fail "Website claim" "${CLAIM_PROBE_ERROR:-blocked}: $CLAIM_PROBE_DETAIL"
+            status_line fail "Website claim" "${CLAIM_PROBE_ERROR:-blocked}: $CLAIM_PROBE_DETAIL$(_website_host_suffix)"
             ;;
         rate_limited)
-            status_line warn "Website claim" "rate-limited: $CLAIM_PROBE_DETAIL"
+            status_line warn "Website claim" "rate-limited: $CLAIM_PROBE_DETAIL$(_website_host_suffix)"
             ;;
         *)
-            status_line warn "Website claim" "unexpected HTTP $CLAIM_PROBE_HTTP: $CLAIM_PROBE_DETAIL"
+            status_line warn "Website claim" "unexpected HTTP $CLAIM_PROBE_HTTP: $CLAIM_PROBE_DETAIL$(_website_host_suffix)"
             ;;
     esac
 }

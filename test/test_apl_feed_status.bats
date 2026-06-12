@@ -1426,3 +1426,38 @@ STUB
     [ "$(jq -r '.backend.website_host' <<< "$output")" = "airplanes.live" ]
     [ "$(jq -r '.backend.website_is_default' <<< "$output")" = "true" ]
 }
+
+@test "website suffix: rate-limited probe names the overridden backend" {
+    setup_claim_state 1
+    stub_post_json 429 '{"retry_after":60}'
+    WEBSITE_HOST="web.dev.airplanes.live"
+    status_init
+    _derive_backend_endpoints
+    run claim_registration_status_line
+    [[ "$output" == *'rate-limited'* ]]
+    [[ "$output" == *'[web.dev.airplanes.live]'* ]]
+}
+
+@test "status --json: present-but-empty endpoint keys set the invalid flags" {
+    write_feed_daemon_state '' '' ''
+    write_mlat_state_with_server enabled ok '' ''
+    status_init
+    _derive_backend_endpoints
+    STATUS_OUTPUT_JSON=1
+    run status_finish
+    [ "$(jq -r '.backend.feed_target_host' <<< "$output")" = "null" ]
+    [ "$(jq -r '.backend.feed_target_invalid' <<< "$output")" = "true" ]
+    [ "$(jq -r '.backend.mlat_server' <<< "$output")" = "null" ]
+    [ "$(jq -r '.backend.mlat_server_invalid' <<< "$output")" = "true" ]
+}
+
+@test "status --json: invalid flags are false when endpoints parsed, null when absent" {
+    write_feed_daemon_state feed.airplanes.test 30004 false
+    status_init
+    _derive_backend_endpoints
+    STATUS_OUTPUT_JSON=1
+    run status_finish
+    [ "$(jq -r '.backend.feed_target_invalid' <<< "$output")" = "false" ]
+    # No mlat state file at all → absent, not invalid.
+    [ "$(jq -r '.backend.mlat_server_invalid' <<< "$output")" = "null" ]
+}
