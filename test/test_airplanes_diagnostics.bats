@@ -1038,3 +1038,15 @@ SH
     run jq '.services[] | select(.name=="airplanes-mlat") | .state // empty' "$BODY_LOG"
     [ -z "$output" ]
 }
+
+@test "REPORT_STATUS=false with same-line comment exits 64 (fail closed, not fail open)" {
+    # The strict reader refuses the line, so the value reads as absent —
+    # but an unreadable present key must not fall through to the enabled
+    # default. Same bad-config posture as a garbage value.
+    printf 'REPORT_STATUS=false # opted out\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    run_script
+    [ "$status" -eq 64 ]
+    [[ "$output" == *"status=bad_config"* ]]
+    [[ "$output" == *"REPORT_STATUS"* ]]
+    [ ! -f "$COMMAND_LOG" ]
+}

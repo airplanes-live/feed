@@ -571,6 +571,20 @@ main() {
     # timer cadence until the server acks.
     local report_status_raw
     report_status_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
+    # A REPORT_STATUS line the strict reader refuses (same-line comment,
+    # broken quoting) must not fail open to the enabled default: a key
+    # that is present but unreadable gets the same bad-config exit as a
+    # parseable-but-invalid value. Privacy toggles fail closed.
+    if [[ -z "$report_status_raw" ]]; then
+        local _rs_path
+        while IFS= read -r _rs_path; do
+            [[ -f "$_rs_path" ]] || continue
+            if grep -q '^[[:space:]]*REPORT_STATUS=.' "$_rs_path"; then
+                log error "status=bad_config key=REPORT_STATUS value=unreadable"
+                exit "$EXIT_BAD_CONFIG"
+            fi
+        done < <(feed_env_paths)
+    fi
     local toggle
     toggle="$(parse_report_status "$report_status_raw")"
     case "$toggle" in
