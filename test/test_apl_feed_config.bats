@@ -399,3 +399,24 @@ EOF
     [ "$status" -eq 0 ]
     [ "$(jq -r '.values.LATITUDE' <<< "$output")" = "50.00" ]
 }
+
+@test "config show --json surfaces APL_FEED_WEBSITE_URL when overridden" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+APL_FEED_WEBSITE_URL="https://airplanes.test"
+EOF
+    run apl_feed_config_show --json
+
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.values.APL_FEED_WEBSITE_URL' <<< "$output")" = "https://airplanes.test" ]
+}
+
+@test "config show --json reports APL_FEED_WEBSITE_URL null on a default feeder" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+EOF
+    run apl_feed_config_show --json
+
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.values.APL_FEED_WEBSITE_URL' <<< "$output")" = "null" ]
+}

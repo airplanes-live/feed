@@ -49,6 +49,11 @@ declare -ga APL_FEED_READABLE_KEYS=(
     DUMP978_GAIN
     REPORT_STATUS
     REMOTE_CONFIG_ENABLED
+    # Read-only backend pointer (like INPUT/INPUT_TYPE it has no writer
+    # here): consumers such as the webconfig claim page need the website
+    # host a custom-backend feeder registered against, and `config show`
+    # is the supported way to read it without parsing feed.env.
+    APL_FEED_WEBSITE_URL
 )
 
 declare -gA APL_FEED_KEY_TYPE=(
