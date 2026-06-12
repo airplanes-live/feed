@@ -261,3 +261,98 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"opt_in_required"* ]]
 }
+
+## `apl-feed config show` — effective-config read surface.
+
+@test "config show prints present readable keys as KEY=value lines" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+LONGITUDE="13.40"
+MLAT_ENABLED="true"
+TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"
+EOF
+    run apl_feed_config_show
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LATITUDE=52.52"* ]]
+    [[ "$output" == *"MLAT_ENABLED=true"* ]]
+    # Non-readable keys (backend overrides) are not part of the surface.
+    [[ "$output" != *"TARGET"* ]]
+    # Absent readable keys produce no line in the human format.
+    [[ "$output" != *"GAIN"* ]]
+}
+
+@test "config show --json emits null for absent and empty string for empty" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+UAT_INPUT=""
+EOF
+    run apl_feed_config_show --json
+
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.schema_version' <<< "$output")" = "1" ]
+    [ "$(jq -r '.values.LATITUDE' <<< "$output")" = "52.52" ]
+    # Explicitly empty value round-trips as "" — distinct from absent.
+    [ "$(jq -r '.values.UAT_INPUT | type' <<< "$output")" = "string" ]
+    [ "$(jq -r '.values.UAT_INPUT' <<< "$output")" = "" ]
+    [ "$(jq -r '.values.GAIN' <<< "$output")" = "null" ]
+    # Every readable key appears, even when feed.env is sparse.
+    [ "$(jq -r '.values | length' <<< "$output")" = "${#APL_FEED_READABLE_KEYS[@]}" ]
+}
+
+@test "config show --json works against an absent feed.env (all null)" {
+    rm -f "$ROOT_DIR/etc/airplanes/feed.env"
+    run apl_feed_config_show --json
+
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '[.values[] | select(. != null)] | length' <<< "$output")" = "0" ]
+}
+
+@test "config show falls back to the legacy boot config like the daemons do" {
+    rm -f "$ROOT_DIR/etc/airplanes/feed.env"
+    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
+    printf '#!/bin/true\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
+LATITUDE="50.00"
+MLAT_ENABLED="true"
+EOF
+    cat > "$ROOT_DIR/boot/airplanes-env" <<'EOF'
+LATITUDE="51.00"
+EOF
+    run apl_feed_config_show --json
+
+    [ "$status" -eq 0 ]
+    # airplanes-env overrides airplanes-config.txt (feed_env_paths order).
+    [ "$(jq -r '.values.LATITUDE' <<< "$output")" = "51.00" ]
+    [ "$(jq -r '.values.MLAT_ENABLED' <<< "$output")" = "true" ]
+}
+
+@test "config show uses the strict reader: contract-violating lines are absent" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+MLAT_ENABLED="true" # trailing comment makes this line malformed
+EOF
+    run apl_feed_config_show --json
+
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.values.LATITUDE' <<< "$output")" = "52.52" ]
+    [ "$(jq -r '.values.MLAT_ENABLED' <<< "$output")" = "null" ]
+}
+
+@test "config show rejects unknown flags via die" {
+    run apl_feed_config_show --bogus
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"unknown flag for config show"* ]]
+}
+
+@test "dispatch_config routes show" {
+    cat > "$ROOT_DIR/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+EOF
+    run dispatch_config show
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LATITUDE=52.52"* ]]
+}

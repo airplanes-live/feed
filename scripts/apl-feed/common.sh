@@ -102,7 +102,7 @@ Commands:
   mlat          Configure MLAT (enable/disable/setup/user/geo/private)
   978           Configure 978 MHz UAT (enable/disable/setup/status)
   diagnostics   Enable or disable diagnostics push (enable/disable)
-  config        Remote config sync (sync/enable/disable)
+  config        Show config and remote sync (show/sync/enable/disable)
   import        Import configuration (legacy-config)
   apply         Apply config keys from a JSON payload on stdin
   schema        Print the feed.env config schema as JSON
