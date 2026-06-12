@@ -702,3 +702,39 @@ EOF
     grep -qx 'TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"' "$ROOT_DIR/etc/airplanes/feed.env"
     grep -qx 'REPORT_STATUS="false"' "$ROOT_DIR/etc/airplanes/feed.env"
 }
+
+@test "configure.sh re-run: unsafe existing INPUT falls back to detection" {
+    # A single-quoted command substitution is inert when sourced; the
+    # template re-emits preserved values double-quoted, which would make
+    # it live. The charset guard must refuse to preserve it.
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+INPUT='$(reboot)'
+INPUT_TYPE="dump1090"
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    ! grep -q 'reboot' "$ROOT_DIR/etc/airplanes/feed.env"
+    # Detection yields the defaults, so no INPUT block is emitted at all.
+    ! grep -q '^INPUT=' "$ROOT_DIR/etc/airplanes/feed.env"
+}
+
+@test "configure.sh re-run preserves an indented owned key's value" {
+    # An indented MLAT_ENABLED is valid for `source`; the harvest treats
+    # it as owned (not carried), so the preservation reader must see it
+    # too — otherwise the value would be silently reset.
+    seed_feed_env <<'EOF'
+LATITUDE="50.0"
+LONGITUDE="8.0"
+ALTITUDE="100"
+  MLAT_ENABLED="false"
+EOF
+    rerun_coords_only
+
+    [ "$status" -eq 0 ]
+    grep -q 'MLAT_ENABLED="false"' "$ROOT_DIR/etc/airplanes/feed.env"
+    [ "$(grep -c 'MLAT_ENABLED=' "$ROOT_DIR/etc/airplanes/feed.env")" -eq 1 ]
+}

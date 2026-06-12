@@ -125,16 +125,19 @@ WRITE_FEED_ENV_OWNED_KEYS=" LATITUDE LONGITUDE ALTITUDE GEO_CONFIGURED MLAT_USER
 
 # Strict single-key read from an existing feed.env: double-quoted,
 # single-quoted, or bare-until-whitespace/comment forms; last occurrence
-# wins (matches `source` last-write-wins). Deliberately NOT `source` —
-# configure.sh must not execute operator-supplied shell content. Returns
-# 1 when the key is absent, empty, or doesn't match a strict form.
+# wins (matches `source` last-write-wins). Leading whitespace is
+# tolerated, mirroring harvest_feed_env_overrides' owned-key match (an
+# indented owned key must be readable here, or it would be neither
+# carried nor preserved). Deliberately NOT `source` — configure.sh must
+# not execute operator-supplied shell content. Returns 1 when the key is
+# absent, empty, or doesn't match a strict form.
 read_existing_feed_env_value() {
     local key="$1" file="$2" output
     [[ -f "$file" ]] || return 1
     output="$(sed -n \
-        -e "s/^${key}=\"\\(.*\\)\"[[:space:]]*$/\\1/p" \
-        -e "s/^${key}='\\(.*\\)'[[:space:]]*$/\\1/p" \
-        -e "s/^${key}=\\([^#[:space:]]*\\).*$/\\1/p" \
+        -e "s/^[[:space:]]*${key}=\"\\(.*\\)\"[[:space:]]*$/\\1/p" \
+        -e "s/^[[:space:]]*${key}='\\(.*\\)'[[:space:]]*$/\\1/p" \
+        -e "s/^[[:space:]]*${key}=\\([^#[:space:]]*\\).*$/\\1/p" \
         "$file" | tail -n 1)"
     [[ -n "$output" ]] || return 1
     printf '%s' "$output"
@@ -266,11 +269,16 @@ write_feed_env() {
     fi
     # A hand-set receiver override (custom INPUT/INPUT_TYPE) survives a
     # setup re-run; detect_receiver_input's heuristic only fills keys the
-    # operator never set.
-    if _existing="$(read_existing_feed_env_value INPUT "$FEED_ENV")"; then
+    # operator never set. Charset-guarded: the preserved value is
+    # re-emitted inside double quotes by the template, so anything that
+    # could change meaning there (quotes, $, backticks, whitespace) falls
+    # back to detection instead of being rewritten into a live shape.
+    if _existing="$(read_existing_feed_env_value INPUT "$FEED_ENV")" \
+        && [[ "$_existing" =~ ^[A-Za-z0-9._:-]+$ ]]; then
         INPUT="$_existing"
     fi
-    if _existing="$(read_existing_feed_env_value INPUT_TYPE "$FEED_ENV")"; then
+    if _existing="$(read_existing_feed_env_value INPUT_TYPE "$FEED_ENV")" \
+        && [[ "$_existing" =~ ^[A-Za-z0-9_]+$ ]]; then
         INPUT_TYPE="$_existing"
     fi
     local -A _prev_tracked=()
