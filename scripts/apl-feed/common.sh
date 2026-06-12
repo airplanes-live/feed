@@ -382,21 +382,32 @@ read_version_file() {
     printf '%s' "$version"
 }
 
+# Single-key read over the effective config files (feed_env_paths order,
+# later files override). Delegates to the strict reader from
+# feed-env-apply.sh — the same parser behind `apply` and `config show` —
+# so the CLI has one feed.env parser. Contract: rc 0 + value when the
+# key is present and non-empty; rc 1 when absent, explicitly empty, or
+# on a contract-violating line the strict reader drops (callers treat
+# absent and empty identically, e.g. UAT_INPUT's disabled state).
 feed_env_get() {
     local key="$1"
-    local path output
-    output="$(
-        while IFS= read -r path; do
-            [[ -f "$path" ]] || continue
-            sed -n \
-                -e "s/^${key}=\"\\(.*\\)\"[[:space:]]*$/\\1/p" \
-                -e "s/^${key}='\\(.*\\)'[[:space:]]*$/\\1/p" \
-                -e "s/^${key}=\\([^#[:space:]]*\\).*$/\\1/p" \
-                "$path"
-        done < <(feed_env_paths)
-    )"
-    [[ -n "$output" ]] || return 1
-    printf '%s\n' "$output" | tail -n 1
+    local path value="" found=0
+    if ! declare -F _apl_feed_apply_read >/dev/null 2>&1; then
+        echo "feed_env_get: feed-env-apply.sh not in scope; reinstall feed" >&2
+        return 1
+    fi
+    while IFS= read -r path; do
+        [[ -f "$path" ]] || continue
+        local -A _feg_file=()
+        _apl_feed_apply_read "$path" _feg_file
+        if [[ -n "${_feg_file[$key]+set}" ]]; then
+            value="${_feg_file[$key]}"
+            found=1
+        fi
+    done < <(feed_env_paths)
+    (( found )) || return 1
+    [[ -n "$value" ]] || return 1
+    printf '%s\n' "$value"
 }
 
 apl_auth_token() {
