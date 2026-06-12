@@ -29,6 +29,11 @@ setup() {
     # sourcing — without this, `skip` from inside a test silently
     # marks the test "not run".
     bats_exit_trap="$(trap -p EXIT)"
+    # feed_env_get delegates to the strict reader; both production
+    # consumers (apl-feed.sh, airplanes-diagnostics.sh) source the apply
+    # lib before common.sh, so the harness mirrors that.
+    # shellcheck source=../scripts/lib/feed-env-apply.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-apply.sh"
     # shellcheck source=../scripts/apl-feed/common.sh
     source "$LIB_DIR/common.sh"
     eval "$bats_exit_trap"
@@ -154,8 +159,23 @@ run_strict() {
     [ "$output" = '127.0.0.1:30005' ]
 }
 
-@test "feed_env_get: strips trailing comment from unquoted value" {
+@test "feed_env_get: drops a bare value with a same-line comment (contract violation)" {
+    # The strict reader refuses `KEY=value # note` rather than guessing
+    # where the value ends — same-line comments are outside the feed.env
+    # value contract and parse differently across consumers.
     printf 'GAIN=42 # autogain\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    run feed_env_get GAIN
+    [ "$status" -eq 1 ]
+}
+
+@test "feed_env_get: explicitly empty value reports rc 1 like absent" {
+    printf 'UAT_INPUT=""\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    run feed_env_get UAT_INPUT
+    [ "$status" -eq 1 ]
+}
+
+@test "feed_env_get: reads an indented key (source-visible lines stay visible)" {
+    printf '  GAIN="42"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
     run feed_env_get GAIN
     [ "$status" -eq 0 ]
     [ "$output" = '42' ]

@@ -21,6 +21,10 @@ setup() {
     export APL_FEED_SECRET_OWNER APL_FEED_SECRET_GROUP
 
     bats_exit_trap="$(trap -p EXIT)"
+    # feed_env_get delegates to the strict reader from feed-env-apply.sh;
+    # the production sourcers load it before common.sh.
+    # shellcheck source=../scripts/lib/feed-env-apply.sh
+    source "$BATS_TEST_DIRNAME/../scripts/lib/feed-env-apply.sh"
     # shellcheck source=../scripts/apl-feed/common.sh
     source "$LIB_DIR/common.sh"
     # shellcheck source=../scripts/apl-feed/http.sh

@@ -5,9 +5,9 @@
 # comments — see the header configure.sh writes).
 #
 # feed.env is consumed by several parsers: bash `source` (the daemons),
-# systemd EnvironmentFile= (image units), and the CLI's readers —
-# feed_env_get (sed, apl-feed/common.sh) and _apl_feed_apply_read (the
-# strict reader behind `apl-feed apply` and `apl-feed config show`).
+# systemd EnvironmentFile= (image units), and the CLI's single reader —
+# _apl_feed_apply_read (the strict reader behind `apl-feed apply`,
+# `apl-feed config show`, and feed_env_get, which delegates to it).
 # Conforming values must parse identically in the ones executable here;
 # the divergence tests pin exactly how the forbidden shapes fall apart,
 # so a parser change that shifts the boundary is visible in CI.
@@ -107,22 +107,23 @@ KEY="x" \tx'
     [ "$status" -eq 1 ]
 }
 
-@test "divergence: quoted value with trailing comment splits three ways" {
-    # Forbidden by the contract precisely because of this split: source
-    # reads the clean value, the strict reader drops the line, and
-    # feed_env_get's bare rule captures the opening quote.
+@test "divergence: quoted value with trailing comment is dropped by both CLI readers" {
+    # Forbidden by the contract: source reads the clean value, but both
+    # CLI readers (feed_env_get delegates to the strict reader) refuse
+    # the line rather than guessing — historically feed_env_get's bare
+    # rule captured the opening quote here.
     printf 'KEY="false" # note\n' > "$FEED_ENV"
 
     [ "$(read_via_source KEY)" = "false" ]
     [ "$(read_via_strict KEY)" = "__UNSET__" ]
-    [ "$(read_via_get KEY)" = '"false"' ]
+    [ "$(read_via_get KEY)" = "__UNSET__" ]
 }
 
-@test "divergence: bare value with trailing comment is dropped by the strict reader" {
+@test "divergence: bare value with trailing comment is dropped by both CLI readers" {
     printf 'KEY=auto # note\n' > "$FEED_ENV"
 
     [ "$(read_via_source KEY)" = "auto" ]
-    [ "$(read_via_get KEY)" = "auto" ]
+    [ "$(read_via_get KEY)" = "__UNSET__" ]
     [ "$(read_via_strict KEY)" = "__UNSET__" ]
 }
 

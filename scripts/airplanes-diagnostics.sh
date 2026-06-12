@@ -37,23 +37,30 @@ _INSTALL_DIR="$(_resolve_install_dir)"
 # Source helpers from apl-feed/. In production these live at
 # /usr/local/share/airplanes/apl-feed/. In the source tree they're at
 # feed/scripts/apl-feed/. Both resolutions land at the same directory
-# relative to this script.
+# relative to this script. feed-env-apply.sh sits next to them in the
+# sibling lib/ directory (production $_INSTALL_DIR/lib/, source tree
+# scripts/lib/) and is required: common.sh's feed_env_get delegates to
+# its strict reader.
 for _candidate in \
     "$_INSTALL_DIR/apl-feed/common.sh" \
     "$_INSTALL_DIR/../scripts/apl-feed/common.sh"; do
     if [[ -r "$_candidate" ]]; then
         _COMMON_SH="$_candidate"
         _HTTP_SH="$(dirname "$_candidate")/http.sh"
+        _FEED_ENV_APPLY_SH="$(dirname "$_candidate")/../lib/feed-env-apply.sh"
         break
     fi
 done
 
-if [[ -z "${_COMMON_SH:-}" ]] || [[ ! -r "${_HTTP_SH:-}" ]]; then
+if [[ -z "${_COMMON_SH:-}" ]] || [[ ! -r "${_HTTP_SH:-}" ]] \
+    || [[ ! -r "${_FEED_ENV_APPLY_SH:-}" ]]; then
     printf '%s level=error status=fatal reason=helpers_missing install_dir=%s\n' \
         "$SCRIPT_NAME" "$_INSTALL_DIR" >&2
     exit "$EXIT_BAD_CONFIG"
 fi
 
+# shellcheck source=lib/feed-env-apply.sh
+source "$_FEED_ENV_APPLY_SH"
 # shellcheck source=apl-feed/common.sh
 source "$_COMMON_SH"
 # shellcheck source=apl-feed/http.sh
@@ -564,6 +571,20 @@ main() {
     # timer cadence until the server acks.
     local report_status_raw
     report_status_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
+    # A REPORT_STATUS line the strict reader refuses (same-line comment,
+    # broken quoting) must not fail open to the enabled default: a key
+    # that is present but unreadable gets the same bad-config exit as a
+    # parseable-but-invalid value. Privacy toggles fail closed.
+    if [[ -z "$report_status_raw" ]]; then
+        local _rs_path
+        while IFS= read -r _rs_path; do
+            [[ -f "$_rs_path" ]] || continue
+            if grep -q '^[[:space:]]*REPORT_STATUS=.' "$_rs_path"; then
+                log error "status=bad_config key=REPORT_STATUS value=unreadable"
+                exit "$EXIT_BAD_CONFIG"
+            fi
+        done < <(feed_env_paths)
+    fi
     local toggle
     toggle="$(parse_report_status "$report_status_raw")"
     case "$toggle" in
