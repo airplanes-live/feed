@@ -11,6 +11,7 @@ setup() {
     STUB_DIR="$ROOT_DIR/bin"
     SYSTEMCTL_LOG="$ROOT_DIR/systemctl.log"
     INSTALLED_UNITS_FILE="$ROOT_DIR/installed-units"
+    FOREIGN_UNITS_FILE="$ROOT_DIR/foreign-units"
     mkdir -p "$TMPDIR" "$STUB_DIR" "$ROOT_DIR/etc/airplanes"
     export TMPDIR
 
@@ -46,8 +47,15 @@ printf 'systemctl %s\n' "\$*" >> "$SYSTEMCTL_LOG"
 case "\$1" in
     cat)
         unit="\${@: -1}"
+        # Foreign units (e.g. FlightAware's dump978-fa on a PiAware box)
+        # exist but ExecStart a path outside /usr/local/share/airplanes/,
+        # so the apply lib's ownership gate must skip them.
+        if grep -Fxq "\$unit" "$FOREIGN_UNITS_FILE" 2>/dev/null; then
+            printf 'ExecStart=/usr/bin/%s\n' "\$unit"
+            exit 0
+        fi
         if grep -Fxq "\$unit" "$INSTALLED_UNITS_FILE" 2>/dev/null; then
-            printf '# %s\n' "\$unit"
+            printf 'ExecStart=/usr/local/share/airplanes/%s.sh\n' "\$unit"
             exit 0
         fi
         exit 1
@@ -90,6 +98,13 @@ teardown() {
 
 mark_unit_installed() {
     printf '%s\n' "$1" >> "$INSTALLED_UNITS_FILE"
+}
+
+# A unit that exists on the host but belongs to a third-party package
+# (ExecStart outside /usr/local/share/airplanes/), e.g. FlightAware's
+# dump978-fa on a PiAware install.
+mark_unit_foreign() {
+    printf '%s\n' "$1" >> "$FOREIGN_UNITS_FILE"
 }
 
 plug_sdr() {
@@ -171,6 +186,41 @@ EOF
     run grep -q '^systemctl restart airplanes-978$' "$SYSTEMCTL_LOG"
     [ "$status" -ne 0 ]
     grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
+}
+
+@test "enable: a foreign dump978-fa unit is never restarted" {
+    write_feed_env
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    # PiAware shape: dump978-fa.service exists but is FlightAware's unit.
+    # `systemctl restart` would START it even when stopped, and with FA's
+    # unpinned SDR config it can grab the dongle another decoder is using.
+    mark_unit_foreign dump978-fa
+
+    run apl_feed_uat_enable
+    [ "$status" -eq 0 ]
+    grep -q '^UAT_INPUT="127.0.0.1:30978"$' "$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
+    run grep -q '^systemctl restart dump978-fa$' "$SYSTEMCTL_LOG"
+    [ "$status" -ne 0 ]
+    # The skip is silent — not surfaced as a failed restart.
+    [[ "$output" != *'failed to restart'* ]]
+}
+
+@test "disable: a foreign dump978-fa unit is never restarted" {
+    write_feed_env
+    printf 'UAT_INPUT="127.0.0.1:30978"\n' >> "$ROOT_DIR/etc/airplanes/feed.env"
+    ROOT="/"
+    feed_env_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    feed_env_write_path() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    mark_unit_foreign dump978-fa
+
+    run apl_feed_uat_disable
+    [ "$status" -eq 0 ]
+    grep -q '^UAT_INPUT=""$' "$ROOT_DIR/etc/airplanes/feed.env"
+    run grep -q '^systemctl restart dump978-fa$' "$SYSTEMCTL_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "enable --serial / --gain pin the wrapper defaults in feed.env" {
@@ -335,6 +385,31 @@ EOF
     run apl_feed_uat_status
     [ "$status" -eq 0 ]
     [[ "$output" == *'dump978-fa'*'not installed (image-only)'* ]]
+    [[ "$output" == *'airplanes-978'*'not installed (image-only)'* ]]
+}
+
+@test "status: shows systemd state for image-managed 978 units" {
+    write_feed_env
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    mark_unit_installed dump978-fa.service
+    mark_unit_installed airplanes-978.service
+
+    run apl_feed_uat_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'dump978-fa.service'*'active'* ]]
+    [[ "$output" == *'airplanes-978.service'*'active'* ]]
+}
+
+@test "status: flags a foreign dump978-fa unit as not managed" {
+    write_feed_env
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    # PiAware shape: the unit name exists but it's FlightAware's — its
+    # systemd state must not be presented as our 978 chain's state.
+    mark_unit_foreign dump978-fa.service
+
+    run apl_feed_uat_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'dump978-fa.service'*'owned by another package (not managed)'* ]]
     [[ "$output" == *'airplanes-978'*'not installed (image-only)'* ]]
 }
 

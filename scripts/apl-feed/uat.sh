@@ -21,10 +21,11 @@ DEFAULT_DUMP978_SDR_SERIAL="978"
 DEFAULT_DUMP978_GAIN="42.1"
 LOCAL_UAT_ENDPOINT="127.0.0.1:30978"
 
-# Image-only systemd units. On a standalone-feed install these don't
-# exist; the apply library tries to restart them and reports the failure
-# via APL_APPLY_PENDING_RESTART without aborting the write. status
-# inspection still uses these helpers.
+# Image-only systemd units. On a standalone-feed install these are
+# either absent or — name collision — belong to a third-party package
+# (dump978-fa is also FlightAware's unit name); the apply library's
+# unit-ownership gate skips both cases silently. status inspection
+# still uses these helpers.
 _UAT_OPTIONAL_UNITS=(dump978-fa.service airplanes-978.service)
 
 _uat_unit_exists() {
@@ -254,10 +255,15 @@ apl_feed_uat_status() {
     echo
     local unit
     for unit in "${_UAT_OPTIONAL_UNITS[@]}"; do
-        if _uat_unit_exists "$unit"; then
+        if _apl_feed_apply_unit_is_ours "$unit"; then
             local active
             active="$(systemctl is-active "$unit" 2>/dev/null || true)"
             printf '  %-26s %s\n' "$unit" "${active:-unknown}"
+        elif _uat_unit_exists "$unit"; then
+            # Name collision: the unit exists but belongs to a third-party
+            # package (e.g. FlightAware's dump978-fa). Its systemd state
+            # says nothing about our 978 chain — don't present it as ours.
+            printf '  %-26s %s\n' "$unit" "owned by another package (not managed)"
         else
             printf '  %-26s %s\n' "$unit" "not installed (image-only)"
         fi

@@ -26,9 +26,15 @@ setup() {
     FEED_ENV="$ROOT_DIR/etc/airplanes/feed.env"
     LOCK_FILE="$ROOT_DIR/run/airplanes/feed-env.lock"
 
+    # `cat` answers with an ExecStart under /usr/local/share/airplanes/ so
+    # the apply lib's unit-ownership gate treats every unit as ours by
+    # default; the foreign-unit tests override this stub per-test.
     cat > "$STUB_DIR/systemctl" <<STUB
 #!/usr/bin/env bash
 printf 'systemctl %s\n' "\$*" >> "$SYSTEMCTL_LOG"
+if [ "\$1" = cat ]; then
+    printf 'ExecStart=/usr/local/share/airplanes/%s.sh\n' "\${@: -1}"
+fi
 exit 0
 STUB
     chmod +x "$STUB_DIR/systemctl"
@@ -346,6 +352,54 @@ EOF
     [ "$APL_APPLY_RC" -eq 0 ]
     [ "$APL_APPLY_STATUS" = "applied" ]
     [ "$(grep -c '^systemctl restart readsb$' "$SYSTEMCTL_LOG")" -eq 1 ]
+}
+
+# Replace the systemctl stub with one where the named units exist but
+# belong to a third-party package (ExecStart outside our install tree),
+# while every other unit stays ours. Models a PiAware box, where
+# dump978-fa.service is FlightAware's, or a wiedehopf adsb-scripts box,
+# where readsb.service ExecStarts /usr/bin/readsb.
+stub_foreign_units() {
+    local foreign="$*"
+    cat > "$STUB_DIR/systemctl" <<STUB
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "\$*" >> "$SYSTEMCTL_LOG"
+if [ "\$1" = cat ]; then
+    unit="\${@: -1}"
+    case " $foreign " in
+        *" \$unit "*) printf 'ExecStart=/usr/bin/%s\n' "\$unit" ;;
+        *) printf 'ExecStart=/usr/local/share/airplanes/%s.sh\n' "\$unit" ;;
+    esac
+fi
+exit 0
+STUB
+    chmod +x "$STUB_DIR/systemctl"
+}
+
+@test "UAT_INPUT change skips a foreign dump978-fa unit" {
+    seed_feed_env
+    stub_foreign_units dump978-fa airplanes-978
+    do_apply UAT_INPUT=127.0.0.1:30978
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    grep -q '^systemctl restart airplanes-feed$' "$SYSTEMCTL_LOG"
+    run grep -q '^systemctl restart dump978-fa$' "$SYSTEMCTL_LOG"
+    [ "$status" -ne 0 ]
+    run grep -q '^systemctl restart airplanes-978$' "$SYSTEMCTL_LOG"
+    [ "$status" -ne 0 ]
+    # Skipped foreign units are not failures.
+    [ "${#APL_APPLY_PENDING_RESTART[@]}" -eq 0 ]
+}
+
+@test "GAIN change skips a foreign readsb unit" {
+    seed_feed_env
+    stub_foreign_units readsb
+    do_apply GAIN=38.6
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    run grep -q '^systemctl restart readsb$' "$SYSTEMCTL_LOG"
+    [ "$status" -ne 0 ]
+    [ "${#APL_APPLY_PENDING_RESTART[@]}" -eq 0 ]
 }
 
 @test "GEO_CONFIGURED-only change does not restart anything" {
