@@ -59,7 +59,9 @@ run_apply() {
     [ "$(jq -r '.writable_keys | type' <<<"$OUT")" = "array" ]
     [ "$(jq -r '.readable_keys | type' <<<"$OUT")" = "array" ]
     [ "$(jq -r '.writable_keys | contains(["LATITUDE","LONGITUDE","MLAT_ENABLED","READSB_SDR_SERIAL"])' <<<"$OUT")" = "true" ]
-    [ "$(jq -r '.readable_keys | contains(["INPUT","INPUT_TYPE","READSB_SDR_SERIAL"])' <<<"$OUT")" = "true" ]
+    [ "$(jq -r '.readable_keys | contains(["INPUT","INPUT_TYPE","READSB_SDR_SERIAL","APL_FEED_WEBSITE_URL"])' <<<"$OUT")" = "true" ]
+    # Read-only backend pointer: readable, never writable.
+    [ "$(jq -r '.writable_keys | contains(["APL_FEED_WEBSITE_URL"])' <<<"$OUT")" = "false" ]
 }
 
 @test "apply with empty payload returns no_change" {
