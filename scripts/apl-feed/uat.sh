@@ -255,10 +255,15 @@ apl_feed_uat_status() {
     echo
     local unit
     for unit in "${_UAT_OPTIONAL_UNITS[@]}"; do
-        if _uat_unit_exists "$unit"; then
+        if _apl_feed_apply_unit_is_ours "$unit"; then
             local active
             active="$(systemctl is-active "$unit" 2>/dev/null || true)"
             printf '  %-26s %s\n' "$unit" "${active:-unknown}"
+        elif _uat_unit_exists "$unit"; then
+            # Name collision: the unit exists but belongs to a third-party
+            # package (e.g. FlightAware's dump978-fa). Its systemd state
+            # says nothing about our 978 chain — don't present it as ours.
+            printf '  %-26s %s\n' "$unit" "owned by another package (not managed)"
         else
             printf '  %-26s %s\n' "$unit" "not installed (image-only)"
         fi

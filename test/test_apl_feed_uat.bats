@@ -388,6 +388,31 @@ EOF
     [[ "$output" == *'airplanes-978'*'not installed (image-only)'* ]]
 }
 
+@test "status: shows systemd state for image-managed 978 units" {
+    write_feed_env
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    mark_unit_installed dump978-fa.service
+    mark_unit_installed airplanes-978.service
+
+    run apl_feed_uat_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'dump978-fa.service'*'active'* ]]
+    [[ "$output" == *'airplanes-978.service'*'active'* ]]
+}
+
+@test "status: flags a foreign dump978-fa unit as not managed" {
+    write_feed_env
+    feed_env_paths() { printf '%s\n' "$ROOT_DIR/etc/airplanes/feed.env"; }
+    # PiAware shape: the unit name exists but it's FlightAware's — its
+    # systemd state must not be presented as our 978 chain's state.
+    mark_unit_foreign dump978-fa.service
+
+    run apl_feed_uat_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'dump978-fa.service'*'owned by another package (not managed)'* ]]
+    [[ "$output" == *'airplanes-978'*'not installed (image-only)'* ]]
+}
+
 @test "bridged-legacy: _uat_apply targets canonical feed.env, not boot config" {
     # Same shape as the mlat bridged-legacy regression — guards against
     # the writer side resolving via feed_env_path()'s reader fallback
