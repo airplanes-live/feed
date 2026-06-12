@@ -36,6 +36,16 @@ STATUS_DIAGNOSTICS_TOGGLE=''
 STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS=''
 STATUS_CONFIG_SYNC_TOGGLE=''
 STATUS_CONFIG_SYNC_LAST_SYNC_AGE_SECONDS=''
+STATUS_WEBSITE_IS_DEFAULT=''
+STATUS_FEED_TARGET_PRESENT=0
+STATUS_FEED_TARGET_HOST=''
+STATUS_FEED_TARGET_PORT=''
+STATUS_FEED_TARGET_IS_DEFAULT=''
+STATUS_FEED_TARGET_INVALID=''
+STATUS_MLAT_SERVER_PRESENT=0
+STATUS_MLAT_SERVER=''
+STATUS_MLAT_SERVER_IS_DEFAULT=''
+STATUS_MLAT_SERVER_INVALID=''
 
 status_init() {
     STATUS_CHECKS_FILE="$(new_tmp_file)"
@@ -57,6 +67,16 @@ status_init() {
     STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS=''
     STATUS_CONFIG_SYNC_TOGGLE=''
     STATUS_CONFIG_SYNC_LAST_SYNC_AGE_SECONDS=''
+    STATUS_WEBSITE_IS_DEFAULT=''
+    STATUS_FEED_TARGET_PRESENT=0
+    STATUS_FEED_TARGET_HOST=''
+    STATUS_FEED_TARGET_PORT=''
+    STATUS_FEED_TARGET_IS_DEFAULT=''
+    STATUS_FEED_TARGET_INVALID=''
+    STATUS_MLAT_SERVER_PRESENT=0
+    STATUS_MLAT_SERVER=''
+    STATUS_MLAT_SERVER_IS_DEFAULT=''
+    STATUS_MLAT_SERVER_INVALID=''
 }
 
 status_line() {
@@ -120,6 +140,15 @@ status_finish() {
             --arg diagnostics_last_push_age "$STATUS_DIAGNOSTICS_LAST_PUSH_AGE_SECONDS" \
             --arg config_sync_toggle "$STATUS_CONFIG_SYNC_TOGGLE" \
             --arg config_sync_last_sync_age "$STATUS_CONFIG_SYNC_LAST_SYNC_AGE_SECONDS" \
+            --arg website_host "$WEBSITE_HOST" \
+            --arg website_is_default "$STATUS_WEBSITE_IS_DEFAULT" \
+            --arg feed_target_host "$STATUS_FEED_TARGET_HOST" \
+            --arg feed_target_port "$STATUS_FEED_TARGET_PORT" \
+            --arg feed_target_is_default "$STATUS_FEED_TARGET_IS_DEFAULT" \
+            --arg feed_target_invalid "$STATUS_FEED_TARGET_INVALID" \
+            --arg mlat_server "$STATUS_MLAT_SERVER" \
+            --arg mlat_server_is_default "$STATUS_MLAT_SERVER_IS_DEFAULT" \
+            --arg mlat_server_invalid "$STATUS_MLAT_SERVER_INVALID" \
             '
             def nullempty: if . == "" then null else . end;
             def boolish:
@@ -155,6 +184,17 @@ status_finish() {
                 remote_config: ($config_sync_toggle | nullempty),
                 last_sync_age_seconds: ($config_sync_last_sync_age | numberish)
               },
+              backend: {
+                website_host: ($website_host | nullempty),
+                website_is_default: ($website_is_default | boolish),
+                feed_target_host: ($feed_target_host | nullempty),
+                feed_target_port: ($feed_target_port | numberish),
+                feed_target_is_default: ($feed_target_is_default | boolish),
+                feed_target_invalid: ($feed_target_invalid | boolish),
+                mlat_server: ($mlat_server | nullempty),
+                mlat_server_is_default: ($mlat_server_is_default | boolish),
+                mlat_server_invalid: ($mlat_server_invalid | boolish)
+              },
               checks: .
             }' \
             "$STATUS_CHECKS_FILE"
@@ -170,22 +210,106 @@ status_finish() {
     echo "Result: $result_text"
 }
 
+# _derive_backend_endpoints — read the effective ADS-B / MLAT endpoints
+# the daemons published to their /run state files, and classify the
+# website host common.sh already resolved. Populates the STATUS_*
+# backend globals consumed by the bracket-suffix helpers below and the
+# --json backend object. Key present but empty means the daemon saw a
+# value it could not accept (surfaced as invalid); key absent means an
+# older daemon or a service that has not run this boot (no signal, no
+# bracket).
+_derive_backend_endpoints() {
+    local state_file value
+    state_file="$(root_path /run/airplanes-feed/state)"
+    if value="$(airplanes_read_state "$state_file" target_host)"; then
+        STATUS_FEED_TARGET_PRESENT=1
+        STATUS_FEED_TARGET_HOST="$value"
+        STATUS_FEED_TARGET_PORT="$(airplanes_read_state "$state_file" target_port)" \
+            || STATUS_FEED_TARGET_PORT=''
+        STATUS_FEED_TARGET_IS_DEFAULT="$(airplanes_read_state "$state_file" target_is_default)" \
+            || STATUS_FEED_TARGET_IS_DEFAULT=''
+        if [[ -z "$value" ]]; then
+            STATUS_FEED_TARGET_INVALID='true'
+        else
+            STATUS_FEED_TARGET_INVALID='false'
+        fi
+    fi
+    state_file="$(root_path /run/airplanes-mlat/state)"
+    if value="$(airplanes_read_state "$state_file" mlat_server)"; then
+        STATUS_MLAT_SERVER_PRESENT=1
+        STATUS_MLAT_SERVER="$value"
+        STATUS_MLAT_SERVER_IS_DEFAULT="$(airplanes_read_state "$state_file" mlat_server_is_default)" \
+            || STATUS_MLAT_SERVER_IS_DEFAULT=''
+        if [[ -z "$value" ]]; then
+            STATUS_MLAT_SERVER_INVALID='true'
+        else
+            STATUS_MLAT_SERVER_INVALID='false'
+        fi
+    fi
+    # WEBSITE_HOST is resolved per-invocation by common.sh (env var >
+    # feed.env > default), so this process's value IS the effective one
+    # — `invalid` (malformed URL) counts as non-default on purpose: an
+    # override exists and the operator should see that.
+    if [[ -n "$WEBSITE_HOST" && "$WEBSITE_HOST" != "airplanes.live" ]]; then
+        STATUS_WEBSITE_IS_DEFAULT='false'
+    else
+        STATUS_WEBSITE_IS_DEFAULT='true'
+    fi
+}
+
+# Bracket suffixes appended to status details when the feeder points at
+# a non-default backend. Empty on the default endpoints so production
+# feeders render unchanged.
+_feed_target_suffix() {
+    if (( ! STATUS_FEED_TARGET_PRESENT )); then
+        return 0
+    fi
+    if [[ -z "$STATUS_FEED_TARGET_HOST" ]]; then
+        printf ' [invalid TARGET]'
+        return 0
+    fi
+    [[ "$STATUS_FEED_TARGET_IS_DEFAULT" == "false" ]] || return 0
+    if [[ -n "$STATUS_FEED_TARGET_PORT" && "$STATUS_FEED_TARGET_PORT" != "30004" ]]; then
+        printf ' [%s:%s]' "$STATUS_FEED_TARGET_HOST" "$STATUS_FEED_TARGET_PORT"
+    else
+        printf ' [%s]' "$STATUS_FEED_TARGET_HOST"
+    fi
+}
+
+_mlat_server_suffix() {
+    if (( ! STATUS_MLAT_SERVER_PRESENT )); then
+        return 0
+    fi
+    if [[ -z "$STATUS_MLAT_SERVER" ]]; then
+        printf ' [invalid MLATSERVER]'
+        return 0
+    fi
+    [[ "$STATUS_MLAT_SERVER_IS_DEFAULT" == "false" ]] || return 0
+    printf ' [%s]' "$STATUS_MLAT_SERVER"
+}
+
+_website_host_suffix() {
+    [[ "$STATUS_WEBSITE_IS_DEFAULT" == "false" ]] || return 0
+    printf ' [%s]' "$WEBSITE_HOST"
+}
+
 service_status_line() {
     local unit="$1"
     local label="$2"
+    local suffix="${3-}"
     if ! command -v systemctl >/dev/null 2>&1; then
         status_line warn "$label" "systemctl unavailable"
         return
     fi
     if systemctl is-active --quiet "$unit" 2>/dev/null; then
-        status_line ok "$label" "running"
+        status_line ok "$label" "running$suffix"
         return
     fi
     if [[ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" == "masked" ]]; then
-        status_line fail "$label" "masked"
+        status_line fail "$label" "masked$suffix"
         return
     fi
-    status_line fail "$label" "not running"
+    status_line fail "$label" "not running$suffix"
 }
 
 # _render_systemd_state <unit> <label> <active_state>
@@ -196,24 +320,24 @@ service_status_line() {
 # masked units report ActiveState=inactive AND is-enabled=masked, so
 # we check is-enabled separately.
 _render_systemd_state() {
-    local unit="$1" label="$2" active_state="$3"
+    local unit="$1" label="$2" active_state="$3" suffix="${4-}"
     local enabled
     enabled="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
     if [[ "$enabled" == "masked" ]]; then
-        status_line fail "$label" "masked"
+        status_line fail "$label" "masked$suffix"
         return
     fi
     case "$active_state" in
         failed)
             local exit_code
             exit_code="$(systemctl show --property=ExecMainStatus --value "$unit" 2>/dev/null || true)"
-            status_line fail "$label" "failed${exit_code:+ (exit $exit_code)}"
+            status_line fail "$label" "failed${exit_code:+ (exit $exit_code)}$suffix"
             ;;
         inactive|deactivating|'')
-            status_line fail "$label" "not running"
+            status_line fail "$label" "not running$suffix"
             ;;
         *)
-            status_line fail "$label" "not running ($active_state)"
+            status_line fail "$label" "not running ($active_state)$suffix"
             ;;
     esac
 }
@@ -269,10 +393,10 @@ mlat_status_line() {
                 status_line fail "$label" "failed (exit 64; check feed.env MLAT config)"
                 return
             fi
-            _render_systemd_state "$unit" "$label" "$active_state"
+            _render_systemd_state "$unit" "$label" "$active_state" "$(_mlat_server_suffix)"
             ;;
         *)
-            _render_systemd_state "$unit" "$label" "$active_state"
+            _render_systemd_state "$unit" "$label" "$active_state" "$(_mlat_server_suffix)"
             ;;
     esac
 }
@@ -316,7 +440,7 @@ _render_mlat_decision() {
     case "$decision" in
         enabled)
             if [[ "$active_state" == "active" ]]; then
-                status_line ok "$label" "running$(_mlat_privacy_suffix)"
+                status_line ok "$label" "running$(_mlat_privacy_suffix)$(_mlat_server_suffix)"
                 local unknown
                 unknown="$(_mlat_privacy_unknown_value)"
                 if [[ -n "$unknown" ]]; then
@@ -552,11 +676,11 @@ claim_registration_status_line() {
     claim_status_probe "$uuid" "$secret"
     case "$CLAIM_PROBE_OUTCOME" in
         unreachable)
-            status_line warn "Website claim" "unreachable ($CLAIM_PROBE_DETAIL)"
+            status_line warn "Website claim" "unreachable ($CLAIM_PROBE_DETAIL)$(_website_host_suffix)"
             ;;
         registered_false)
             STATUS_CLAIM_REGISTERED="$CLAIM_PROBE_REGISTERED"
-            status_line warn "Website claim" "not registered; run sudo apl-feed claim register"
+            status_line warn "Website claim" "not registered; run sudo apl-feed claim register$(_website_host_suffix)"
             ;;
         authenticated)
             STATUS_CLAIM_REGISTERED='true'
@@ -570,9 +694,9 @@ claim_registration_status_line() {
             # readable — a `v1`-vs-`vN` number tells operators
             # nothing actionable.
             if [[ "$CLAIM_PROBE_OWNER_PRESENT" == "true" ]]; then
-                status_line ok "Website claim" "registered and claimed"
+                status_line ok "Website claim" "registered and claimed$(_website_host_suffix)"
             else
-                status_line ok "Website claim" "registered, not yet claimed"
+                status_line ok "Website claim" "registered, not yet claimed$(_website_host_suffix)"
             fi
             if [[ -n "$CLAIM_PROBE_RESET_UNTIL" && "$CLAIM_PROBE_RESET_UNTIL" != "null" ]]; then
                 status_line warn "Claim reset" "locked until $CLAIM_PROBE_RESET_UNTIL"
@@ -585,16 +709,16 @@ claim_registration_status_line() {
             ;;
         minimal)
             STATUS_CLAIM_REGISTERED='true'
-            status_line warn "Website claim" "registered, but local secret did not authenticate"
+            status_line warn "Website claim" "registered, but local secret did not authenticate$(_website_host_suffix)"
             ;;
         blocked)
-            status_line fail "Website claim" "${CLAIM_PROBE_ERROR:-blocked}: $CLAIM_PROBE_DETAIL"
+            status_line fail "Website claim" "${CLAIM_PROBE_ERROR:-blocked}: $CLAIM_PROBE_DETAIL$(_website_host_suffix)"
             ;;
         rate_limited)
-            status_line warn "Website claim" "rate-limited: $CLAIM_PROBE_DETAIL"
+            status_line warn "Website claim" "rate-limited: $CLAIM_PROBE_DETAIL$(_website_host_suffix)"
             ;;
         *)
-            status_line warn "Website claim" "unexpected HTTP $CLAIM_PROBE_HTTP: $CLAIM_PROBE_DETAIL"
+            status_line warn "Website claim" "unexpected HTTP $CLAIM_PROBE_HTTP: $CLAIM_PROBE_DETAIL$(_website_host_suffix)"
             ;;
     esac
 }
@@ -806,9 +930,10 @@ feed_status() {
     # outbound socket, then identity (gates the server-side ack query),
     # then the server-side reception ack, then MLAT (parallel feed) and
     # diagnostics (telemetry side-channel) below.
+    _derive_backend_endpoints
     receiver_status_line
     receiver_activity_status_line
-    service_status_line airplanes-feed "Feed service"
+    service_status_line airplanes-feed "Feed service" "$(_feed_target_suffix)"
     adsb_uplink_status_line
     claim_registration_status_line
     mlat_status_line

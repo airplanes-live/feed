@@ -1241,3 +1241,223 @@ _seed_config_sync_sentinel() {
     [ "$(jq -r '.config_sync.remote_config' <<< "$output")" = "enabled" ]
     [ "$(jq -r '.config_sync.last_sync_age_seconds | type' <<< "$output")" = "number" ]
 }
+
+# --- backend endpoint brackets (non-default backends) ---
+
+# Helper: write a feed daemon state file carrying the published
+# effective-endpoint keys. write_feed_daemon_state <host> <port> <is_default>
+write_feed_daemon_state() {
+    mkdir -p "$ROOT_DIR/run/airplanes-feed"
+    {
+        printf 'schema_version=1\n'
+        printf 'service=airplanes-feed\n'
+        printf 'state=enabled\n'
+        printf 'reason=ok\n'
+        printf 'target_host=%s\n' "$1"
+        printf 'target_port=%s\n' "$2"
+        printf 'target_is_default=%s\n' "$3"
+    } > "$ROOT_DIR/run/airplanes-feed/state"
+}
+
+# Helper: like write_mlat_state but with the endpoint keys.
+# write_mlat_state_with_server <decision> <reason> <server> <is_default>
+write_mlat_state_with_server() {
+    mkdir -p "$ROOT_DIR/run/airplanes-mlat"
+    {
+        printf 'schema_version=1\n'
+        printf 'service=airplanes-mlat\n'
+        printf 'state=%s\n' "$1"
+        printf 'reason=%s\n' "$2"
+        printf 'mlat_server=%s\n' "$3"
+        printf 'mlat_server_is_default=%s\n' "$4"
+    } > "$ROOT_DIR/run/airplanes-mlat/state"
+}
+
+@test "feed target suffix: non-default host renders bracket" {
+    write_feed_daemon_state feed.airplanes.test 30004 false
+    status_init
+    _derive_backend_endpoints
+    [ "$(_feed_target_suffix)" = " [feed.airplanes.test]" ]
+}
+
+@test "feed target suffix: default endpoint renders nothing" {
+    write_feed_daemon_state feed.airplanes.live 30004 true
+    status_init
+    _derive_backend_endpoints
+    [ -z "$(_feed_target_suffix)" ]
+}
+
+@test "feed target suffix: non-default port renders host:port" {
+    write_feed_daemon_state feed.airplanes.live 9999 false
+    status_init
+    _derive_backend_endpoints
+    [ "$(_feed_target_suffix)" = " [feed.airplanes.live:9999]" ]
+}
+
+@test "feed target suffix: present-but-empty keys render invalid TARGET" {
+    write_feed_daemon_state '' '' ''
+    status_init
+    _derive_backend_endpoints
+    [ "$(_feed_target_suffix)" = " [invalid TARGET]" ]
+}
+
+@test "feed target suffix: no state file renders nothing" {
+    status_init
+    _derive_backend_endpoints
+    [ -z "$(_feed_target_suffix)" ]
+}
+
+@test "service_status_line: running Feed service carries the backend bracket" {
+    write_feed_daemon_state feed.airplanes.test 30004 false
+    cat > "$STUB_DIR/systemctl" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    is-active) exit 0 ;;
+    is-enabled) printf 'enabled\n'; exit 0 ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_DIR/systemctl"
+    status_init
+    _derive_backend_endpoints
+    run service_status_line airplanes-feed 'Feed service' "$(_feed_target_suffix)"
+    [[ "$output" == *'running [feed.airplanes.test]'* ]]
+}
+
+@test "service_status_line: not-running Feed service still carries the bracket" {
+    write_feed_daemon_state feed.airplanes.test 30004 false
+    status_init
+    _derive_backend_endpoints
+    run service_status_line airplanes-feed 'Feed service' "$(_feed_target_suffix)"
+    [[ "$output" == *'not running [feed.airplanes.test]'* ]]
+}
+
+@test "mlat_status_line: running line carries a non-default MLATSERVER bracket" {
+    write_mlat_state_with_server enabled ok feed.airplanes.test:31090 false
+    stub_systemctl_active_state active
+    status_init
+    _derive_backend_endpoints
+    run mlat_status_line
+    [[ "$output" == *'running'* ]]
+    [[ "$output" == *'[feed.airplanes.test:31090]'* ]]
+}
+
+@test "mlat_status_line: default MLATSERVER renders no bracket" {
+    write_mlat_state_with_server enabled ok feed.airplanes.live:31090 true
+    stub_systemctl_active_state active
+    status_init
+    _derive_backend_endpoints
+    run mlat_status_line
+    [[ "$output" == *'running'* ]]
+    [[ "$output" != *'['* ]]
+}
+
+@test "mlat_status_line: failed unit still carries the MLATSERVER bracket" {
+    # RuntimeDirectoryPreserve keeps the state file across the failure,
+    # so the endpoint stays visible while the service is down.
+    write_mlat_state_with_server enabled ok feed.airplanes.test:31090 false
+    stub_systemctl_active_state failed 1
+    status_init
+    _derive_backend_endpoints
+    run mlat_status_line
+    [[ "$output" == *'FIX'* ]]
+    [[ "$output" == *'[feed.airplanes.test:31090]'* ]]
+}
+
+@test "website suffix: non-default WEBSITE_HOST renders on the Website claim line" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":5,"owner_present":true,"reset_until":null,"last_seen_at":null,"last_seen_age_seconds":null}'
+    WEBSITE_HOST="web.dev.airplanes.live"
+    status_init
+    _derive_backend_endpoints
+    run claim_registration_status_line
+    [[ "$output" == *'registered and claimed [web.dev.airplanes.live]'* ]]
+}
+
+@test "website suffix: default WEBSITE_HOST renders no bracket" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":5,"owner_present":true,"reset_until":null,"last_seen_at":null,"last_seen_age_seconds":null}'
+    WEBSITE_HOST="airplanes.live"
+    status_init
+    _derive_backend_endpoints
+    run claim_registration_status_line
+    [[ "$output" == *'registered and claimed'* ]]
+    [[ "$output" != *'['* ]]
+}
+
+@test "website suffix: unreachable probe names the overridden backend" {
+    setup_claim_state 1
+    stub_post_json 99 ''
+    WEBSITE_HOST="web.dev.airplanes.live"
+    status_init
+    _derive_backend_endpoints
+    run claim_registration_status_line
+    [[ "$output" == *'unreachable'* ]]
+    [[ "$output" == *'[web.dev.airplanes.live]'* ]]
+}
+
+@test "status --json: backend object carries non-default endpoint fields" {
+    write_feed_daemon_state feed.airplanes.test 9999 false
+    write_mlat_state_with_server enabled ok feed.airplanes.test:31090 false
+    WEBSITE_HOST="web.dev.airplanes.live"
+    status_init
+    _derive_backend_endpoints
+    STATUS_OUTPUT_JSON=1
+    run status_finish
+    [ "$(jq -r '.backend.feed_target_host' <<< "$output")" = "feed.airplanes.test" ]
+    [ "$(jq -r '.backend.feed_target_port' <<< "$output")" = "9999" ]
+    [ "$(jq -r '.backend.feed_target_port | type' <<< "$output")" = "number" ]
+    [ "$(jq -r '.backend.feed_target_is_default' <<< "$output")" = "false" ]
+    [ "$(jq -r '.backend.mlat_server' <<< "$output")" = "feed.airplanes.test:31090" ]
+    [ "$(jq -r '.backend.mlat_server_is_default' <<< "$output")" = "false" ]
+    [ "$(jq -r '.backend.website_host' <<< "$output")" = "web.dev.airplanes.live" ]
+    [ "$(jq -r '.backend.website_is_default' <<< "$output")" = "false" ]
+}
+
+@test "status --json: backend object is null/default without daemon state" {
+    WEBSITE_HOST="airplanes.live"
+    status_init
+    _derive_backend_endpoints
+    STATUS_OUTPUT_JSON=1
+    run status_finish
+    [ "$(jq -r '.backend.feed_target_host' <<< "$output")" = "null" ]
+    [ "$(jq -r '.backend.feed_target_is_default' <<< "$output")" = "null" ]
+    [ "$(jq -r '.backend.mlat_server' <<< "$output")" = "null" ]
+    [ "$(jq -r '.backend.website_host' <<< "$output")" = "airplanes.live" ]
+    [ "$(jq -r '.backend.website_is_default' <<< "$output")" = "true" ]
+}
+
+@test "website suffix: rate-limited probe names the overridden backend" {
+    setup_claim_state 1
+    stub_post_json 429 '{"retry_after":60}'
+    WEBSITE_HOST="web.dev.airplanes.live"
+    status_init
+    _derive_backend_endpoints
+    run claim_registration_status_line
+    [[ "$output" == *'rate-limited'* ]]
+    [[ "$output" == *'[web.dev.airplanes.live]'* ]]
+}
+
+@test "status --json: present-but-empty endpoint keys set the invalid flags" {
+    write_feed_daemon_state '' '' ''
+    write_mlat_state_with_server enabled ok '' ''
+    status_init
+    _derive_backend_endpoints
+    STATUS_OUTPUT_JSON=1
+    run status_finish
+    [ "$(jq -r '.backend.feed_target_host' <<< "$output")" = "null" ]
+    [ "$(jq -r '.backend.feed_target_invalid' <<< "$output")" = "true" ]
+    [ "$(jq -r '.backend.mlat_server' <<< "$output")" = "null" ]
+    [ "$(jq -r '.backend.mlat_server_invalid' <<< "$output")" = "true" ]
+}
+
+@test "status --json: invalid flags are false when endpoints parsed, null when absent" {
+    write_feed_daemon_state feed.airplanes.test 30004 false
+    status_init
+    _derive_backend_endpoints
+    STATUS_OUTPUT_JSON=1
+    run status_finish
+    [ "$(jq -r '.backend.feed_target_invalid' <<< "$output")" = "false" ]
+    # No mlat state file at all → absent, not invalid.
+    [ "$(jq -r '.backend.mlat_server_invalid' <<< "$output")" = "null" ]
+}
