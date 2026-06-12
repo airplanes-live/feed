@@ -956,12 +956,88 @@ usage_config() {
 Usage: apl-feed config <subcommand> [options]
 
 Subcommands:
+  show [--json]                     Print the effective feeder configuration
   sync [--dry-run] [--no-restart]   Run a one-shot remote config sync
   enable                            Enable remote config sync (opt-in)
   disable                           Disable remote config sync
 
 Run 'apl-feed config <subcommand> --help' for details.
 USAGE
+}
+
+usage_config_show() {
+    cat <<'USAGE'
+Usage: apl-feed config show [--json]
+
+Prints the effective feeder configuration: the readable feed.env keys
+with the values the daemons resolve, read from the same files the
+daemons read (a not-yet-migrated legacy image falls back to its boot
+config). Values are parsed with the same strict reader 'apl-feed apply'
+uses — this command is the supported way for other software to read the
+feeder configuration instead of parsing feed.env itself.
+
+Default output is one KEY=value line per present key. --json emits
+{"schema_version":1,"values":{...}} with one entry per readable key:
+a string when the key is present (empty string for an explicitly empty
+value), null when absent.
+USAGE
+}
+
+apl_feed_config_show() {
+    local as_json=0 opt_rc
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help) usage_config_show; exit 0 ;;
+            --json) as_json=1; shift; continue ;;
+        esac
+        if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
+        case "$opt_rc" in
+            1) shift ;;
+            2) shift 2 ;;
+            0) die "unknown flag for config show: $1" ;;
+        esac
+    done
+
+    # The strict reader lives in feed-env-apply.sh, sourced defensively by
+    # the CLI entrypoint; a partial install only stubs apl_feed_apply.
+    declare -F _apl_feed_apply_read >/dev/null 2>&1 \
+        || die "feed-env-apply.sh missing; reinstall feed"
+
+    # Effective values: every file the daemons read, in feed_env_paths
+    # order with later files overriding earlier ones, parsed with the
+    # strict reader so this command and `apply` share one parser.
+    local -A _show_values=()
+    local _show_path _show_k
+    while IFS= read -r _show_path; do
+        [[ -n "$_show_path" && -f "$_show_path" ]] || continue
+        local -A _show_file=()
+        _apl_feed_apply_read "$_show_path" _show_file
+        for _show_k in "${!_show_file[@]}"; do
+            _show_values[$_show_k]="${_show_file[$_show_k]}"
+        done
+    done < <(feed_env_paths)
+
+    local key
+    if (( as_json )); then
+        require_jq
+        local jq_args=() filter='{schema_version: 1, values: {}}' i=0
+        for key in "${APL_FEED_READABLE_KEYS[@]}"; do
+            if [[ -n "${_show_values[$key]+set}" ]]; then
+                jq_args+=(--arg "k${i}" "$key" --arg "v${i}" "${_show_values[$key]}")
+                filter+=" | .values[\$k${i}] = \$v${i}"
+            else
+                jq_args+=(--arg "k${i}" "$key")
+                filter+=" | .values[\$k${i}] = null"
+            fi
+            i=$((i + 1))
+        done
+        jq -nc "${jq_args[@]}" "$filter"
+    else
+        for key in "${APL_FEED_READABLE_KEYS[@]}"; do
+            [[ -n "${_show_values[$key]+set}" ]] || continue
+            printf '%s=%s\n' "$key" "${_show_values[$key]}"
+        done
+    fi
 }
 
 usage_config_sync() {
@@ -1002,6 +1078,7 @@ dispatch_config() {
     fi
     shift || true
     case "$sub" in
+        show)    apl_feed_config_show    "$@" ;;
         enable)  apl_feed_config_enable  "$@" ;;
         disable) apl_feed_config_disable "$@" ;;
         sync)    apl_feed_config_sync    "$@" ;;

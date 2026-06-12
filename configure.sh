@@ -300,6 +300,13 @@ write_feed_env() {
 # readsb tuning, the local RESULTS output bundle, REDUCE_INTERVAL) live
 # in the daemon scripts; add overrides here only if you run a custom
 # airplanes.live backend or non-default decoder hardware.
+#
+# Format contract: one KEY=value or KEY="value" per line, plain scalar
+# values only — no shell expansion or escapes, no 'export' prefix, no
+# comment on a value's line, no line continuations. This file has
+# several consumers (shell, systemd, the apl-feed CLI); other shapes
+# parse differently between them and may be dropped on rewrite. Read
+# values with 'apl-feed config show' instead of parsing this file.
 
 LATITUDE="$RECEIVERLATITUDE"
 LONGITUDE="$RECEIVERLONGITUDE"
