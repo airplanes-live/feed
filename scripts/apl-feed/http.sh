@@ -122,6 +122,11 @@ status_probe_version() {
 #   CLAIM_PROBE_OWNER_PRESENT raw .owner_present ("true"/"false"/"")
 #   CLAIM_PROBE_VERSION   raw .version
 #   CLAIM_PROBE_RESET_UNTIL  raw .reset_until
+#   CLAIM_PROBE_CLAIMABLE  raw .claimable ("true"/"false"; "" when the
+#                          server predates the field — render as today)
+#   CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON  raw .claim_unavailable_reason
+#                          (not_seen_feeding|reset_locked|claim_blocked;
+#                          "" when null/absent)
 #   CLAIM_PROBE_LAST_SEEN_PRESENT  "true" when the last_seen_at key exists
 #                                  (distinct from a present-but-null value)
 #   CLAIM_PROBE_LAST_SEEN_AT  raw .last_seen_at ("" when null or key absent)
@@ -140,6 +145,8 @@ claim_status_probe() {
     CLAIM_PROBE_OWNER_PRESENT=''
     CLAIM_PROBE_VERSION=''
     CLAIM_PROBE_RESET_UNTIL=''
+    CLAIM_PROBE_CLAIMABLE=''
+    CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON=''
     CLAIM_PROBE_LAST_SEEN_PRESENT=''
     CLAIM_PROBE_LAST_SEEN_AT=''
     CLAIM_PROBE_LAST_SEEN_AGE=''
@@ -207,6 +214,11 @@ claim_status_probe() {
             # rather than "claimed".
             if [[ -n "$CLAIM_PROBE_VERSION" ]]; then
                 CLAIM_PROBE_OUTCOME='authenticated'
+                # Absent and null both collapse to "" = unknown (older
+                # server) — callers then render exactly as before the
+                # field existed.
+                CLAIM_PROBE_CLAIMABLE="$(parse_field_from "$response_file" '.claimable')"
+                CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON="$(parse_field_from "$response_file" '.claim_unavailable_reason')"
                 CLAIM_PROBE_LAST_SEEN_PRESENT="$(json_has_key "$response_file" 'last_seen_at')"
                 if [[ "$CLAIM_PROBE_LAST_SEEN_PRESENT" == "true" ]]; then
                     CLAIM_PROBE_LAST_SEEN_AT="$(parse_field_from "$response_file" '.last_seen_at')"

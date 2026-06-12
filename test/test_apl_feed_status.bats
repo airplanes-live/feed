@@ -1006,6 +1006,72 @@ setup_claim_state() {
     [[ "$output" != *'(v'* ]]
 }
 
+@test "claim_registration_status_line: claimable:false not_seen_feeding never seen → warn 'waiting for first data'" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":5,"owner_present":false,"reset_until":null,"claimable":false,"claim_unavailable_reason":"not_seen_feeding","last_seen_at":null,"last_seen_age_seconds":null}'
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run claim_registration_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'waiting for first data'* ]]
+    [[ "$output" != *'not yet claimed'* ]]
+}
+
+@test "claim_registration_status_line: claimable:false not_seen_feeding with stale last_seen → warn 'reconnects'" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":5,"owner_present":false,"reset_until":null,"claimable":false,"claim_unavailable_reason":"not_seen_feeding","last_seen_at":"2026-04-01T10:00:00+00:00","last_seen_age_seconds":3000000}'
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run claim_registration_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'not claimable until it reconnects'* ]]
+}
+
+@test "claim_registration_status_line: claimable:false with other reason → warn 'not currently claimable'" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":5,"owner_present":false,"reset_until":null,"claimable":false,"claim_unavailable_reason":"claim_blocked","last_seen_at":null,"last_seen_age_seconds":null}'
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run claim_registration_status_line
+    [[ "$output" == *'CHECK'* ]]
+    [[ "$output" == *'not currently claimable'* ]]
+    [[ "$output" != *'waiting for first data'* ]]
+}
+
+@test "claim_registration_status_line: claimable absent (older server) → unchanged ok line" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":5,"owner_present":false,"reset_until":null,"last_seen_at":null,"last_seen_age_seconds":null}'
+    status_init
+    STATUS_OUTPUT_JSON=0
+    run claim_registration_status_line
+    [[ "$output" == *'OK'* ]]
+    [[ "$output" == *'not yet claimed'* ]]
+}
+
+@test "status --json: .claim.claimable false + reason round-trip" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":5,"owner_present":false,"reset_until":null,"claimable":false,"claim_unavailable_reason":"not_seen_feeding","last_seen_at":null,"last_seen_age_seconds":null}'
+    status_init
+    STATUS_OUTPUT_JSON=1
+    claim_registration_status_line >/dev/null
+    run status_finish
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.claimable')" = 'false' ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.claim_unavailable_reason')" = 'not_seen_feeding' ]
+}
+
+@test "status --json: .claim.claimable null when server omits the field" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":5,"owner_present":false,"reset_until":null,"last_seen_at":null,"last_seen_age_seconds":null}'
+    status_init
+    STATUS_OUTPUT_JSON=1
+    claim_registration_status_line >/dev/null
+    run status_finish
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.claimable')" = 'null' ]
+    [ "$(printf '%s' "$output" | jq -r '.claim.claim_unavailable_reason')" = 'null' ]
+}
+
 @test "claim_registration_status_line: 200 + registered:true + missing version → warn 'did not authenticate'" {
     setup_claim_state 1
     stub_post_json 200 '{"registered":true,"owner_present":true}'

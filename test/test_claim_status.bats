@@ -139,6 +139,73 @@ jqr() { printf '%s' "$1" | jq -r "$2"; }
     [ "$(jqr "$output" '.owner_present')" = 'false' ]
 }
 
+@test "claim status: claimable absent (older server) → .claimable null, default copy" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":7,"owner_present":false}'
+    run claim_status --json
+    [ "$status" -eq 0 ]
+    [ "$(jqr "$output" '.claimable')" = 'null' ]
+    [ "$(jqr "$output" '.claim_unavailable_reason')" = 'null' ]
+    run claim_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Claim it at:"* ]]
+}
+
+@test "claim status: claimable:true passes through" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":7,"owner_present":false,"claimable":true,"claim_unavailable_reason":null}'
+    run claim_status --json
+    [ "$status" -eq 0 ]
+    [ "$(jqr "$output" '.result')" = 'unclaimed' ]
+    [ "$(jqr "$output" '.claimable')" = 'true' ]
+}
+
+@test "claim status: not_seen_feeding, never seen → waiting-for-first-data copy" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":7,"owner_present":false,"claimable":false,"claim_unavailable_reason":"not_seen_feeding","last_seen_at":null,"last_seen_age_seconds":null}'
+    run claim_status --json
+    [ "$status" -eq 0 ]
+    [ "$(jqr "$output" '.result')" = 'unclaimed' ]
+    [ "$(jqr "$output" '.claimable')" = 'false' ]
+    [ "$(jqr "$output" '.claim_unavailable_reason')" = 'not_seen_feeding' ]
+    run claim_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"waiting for first data"* ]]
+    [[ "$output" != *"Claim it at:"* ]]
+}
+
+@test "claim status: not_seen_feeding, stale last_seen → reconnect copy" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":7,"owner_present":false,"claimable":false,"claim_unavailable_reason":"not_seen_feeding","last_seen_at":"2026-04-01T10:00:00Z","last_seen_age_seconds":3000000}'
+    run claim_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not seen feeding recently"* ]]
+    [[ "$output" != *"waiting for first data"* ]]
+}
+
+@test "claim status: reset_locked reason → admin-reset copy with expiry" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":7,"owner_present":false,"claimable":false,"claim_unavailable_reason":"reset_locked","reset_until":"2026-06-13T10:00:00Z"}'
+    run claim_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"administrator reset is in progress"* ]]
+    [[ "$output" == *"2026-06-13T10:00:00Z"* ]]
+    [[ "$output" != *"waiting for first data"* ]]
+}
+
+@test "claim status: claimable:false with non-liveness reason → generic copy, no data hint" {
+    setup_claim_state 1
+    stub_post_json 200 '{"registered":true,"version":7,"owner_present":false,"claimable":false,"claim_unavailable_reason":"claim_blocked"}'
+    run claim_status --json
+    [ "$status" -eq 0 ]
+    [ "$(jqr "$output" '.claim_unavailable_reason')" = 'claim_blocked' ]
+    run claim_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not currently claimable"* ]]
+    [[ "$output" != *"waiting for first data"* ]]
+    [[ "$output" != *"Claim it at:"* ]]
+}
+
 @test "claim status: 200 registered:true, no version (minimal) → secret_mismatch" {
     setup_claim_state 1
     stub_post_json 200 '{"registered":true}'

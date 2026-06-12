@@ -619,6 +619,8 @@ _claim_status_emit() {
             --arg registered "${CLAIM_PROBE_REGISTERED:-}" \
             --arg owner_present "${CLAIM_PROBE_OWNER_PRESENT:-}" \
             --arg version "${CLAIM_PROBE_VERSION:-}" \
+            --arg claimable "${CLAIM_PROBE_CLAIMABLE:-}" \
+            --arg claim_unavailable_reason "${CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON:-}" \
             --arg reset_until "${CLAIM_PROBE_RESET_UNTIL:-}" \
             --arg last_seen_at "${CLAIM_PROBE_LAST_SEEN_AT:-}" \
             --arg last_seen_age "${CLAIM_PROBE_LAST_SEEN_AGE:-}" \
@@ -634,6 +636,8 @@ _claim_status_emit() {
               registered: ($registered | boolish),
               owner_present: ($owner_present | boolish),
               version: ($version | numberish),
+              claimable: ($claimable | boolish),
+              claim_unavailable_reason: ($claim_unavailable_reason | nullempty),
               reset_until: ($reset_until | nullempty),
               last_seen_at: ($last_seen_at | nullempty),
               last_seen_age_seconds: ($last_seen_age | numberish),
@@ -652,8 +656,28 @@ _claim_status_human() {
         claimed)
             echo "Claimed: yes — this feeder is linked to an airplanes.live account." ;;
         unclaimed)
-            echo "Claimed: no — registered, but not yet linked to an account."
-            echo "Claim it at: $(claim_page_url)" ;;
+            # The claimability pair refines the unclaimed copy; result
+            # token stays "unclaimed" so downstream consumers (webconfig)
+            # never see a new token.
+            if [[ "${CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON:-}" == "not_seen_feeding" ]]; then
+                if [[ -n "${CLAIM_PROBE_LAST_SEEN_AT:-}" && "${CLAIM_PROBE_LAST_SEEN_AT:-}" != "null" ]]; then
+                    echo "Claimed: no — registered, but not seen feeding recently."
+                    echo "Claiming unlocks a few minutes after the feeder reconnects and data flows."
+                else
+                    echo "Claimed: no — registered, waiting for first data before it can be claimed."
+                    echo "Claiming unlocks a few minutes after data starts flowing."
+                fi
+            elif [[ "${CLAIM_PROBE_CLAIM_UNAVAILABLE_REASON:-}" == "reset_locked" ]]; then
+                echo "Claimed: no — an administrator reset is in progress; claiming is locked."
+                if [[ -n "${CLAIM_PROBE_RESET_UNTIL:-}" && "${CLAIM_PROBE_RESET_UNTIL:-}" != "null" ]]; then
+                    echo "Locked until: $CLAIM_PROBE_RESET_UNTIL"
+                fi
+            elif [[ "${CLAIM_PROBE_CLAIMABLE:-}" == "false" ]]; then
+                echo "Claimed: no — registered, but not currently claimable."
+            else
+                echo "Claimed: no — registered, but not yet linked to an account."
+                echo "Claim it at: $(claim_page_url)"
+            fi ;;
         secret_mismatch)
             echo "The claim secret on this feeder did not authenticate with airplanes.live."
             echo "Re-register: sudo apl-feed claim register" ;;
