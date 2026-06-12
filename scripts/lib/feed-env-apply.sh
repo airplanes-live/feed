@@ -432,10 +432,14 @@ _apl_feed_apply_restart_set() {
 # feed scripts or the image runtime overlay ExecStarts a wrapper under
 # /usr/local/share/airplanes/.
 _apl_feed_apply_unit_is_ours() {
-    local unit="$1"
+    local unit="$1" unit_def
     # `systemctl cat` returns 0 iff the unit (or a generator-emitted
-    # instance) is known to systemd; output includes drop-ins.
-    systemctl cat "$unit" 2>/dev/null | grep -q '/usr/local/share/airplanes/'
+    # instance) is known to systemd; output includes drop-ins. Capture
+    # instead of piping into `grep -q`: under a pipefail caller, grep
+    # exiting at first match can SIGPIPE systemctl and fail the whole
+    # pipeline — skipping the restart of a unit we do own.
+    unit_def="$(systemctl cat "$unit" 2>/dev/null)" || return 1
+    [[ "$unit_def" == *'/usr/local/share/airplanes/'* ]]
 }
 
 _apl_feed_apply_restart_services() {
