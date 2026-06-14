@@ -738,3 +738,18 @@ EOF
     grep -q 'MLAT_ENABLED="false"' "$ROOT_DIR/etc/airplanes/feed.env"
     [ "$(grep -c 'MLAT_ENABLED=' "$ROOT_DIR/etc/airplanes/feed.env")" -eq 1 ]
 }
+
+@test "configure.sh emits the shared documented header" {
+    # The header + per-key comments come from feed-env-keys.sh, the same
+    # source the apl-feed apply writer uses, so setup and webconfig saves
+    # produce the same self-documented file.
+    run_configure $'ci-feeder\n52.52000\n13.40500\n35m'
+
+    [ "$status" -eq 0 ]
+    local fe="$ROOT_DIR/etc/airplanes/feed.env"
+    grep -q 'operator-supplied configuration for the' "$fe"
+    grep -q "Format contract: one KEY=value" "$fe"
+    grep -q "Don't hand-edit REPORT_STATUS below" "$fe"
+    grep -q '^#REPORT_STATUS=true$' "$fe"
+    grep -q 'Hide the feed name on the public MLAT map' "$fe"
+}

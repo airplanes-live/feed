@@ -477,7 +477,11 @@ EOF
     [ -n "${APL_APPLY_ERRORS[BOGUS]}" ]
 }
 
-@test "comments and blank lines in feed.env preserved across rewrite" {
+@test "arbitrary comments dropped on rewrite; standard documented header emitted" {
+    # The writer is map-based: it re-emits keys plus the shared documented
+    # header/per-key comments, and does NOT preserve operator-added comment
+    # lines. (This test was historically mis-named "comments preserved" but
+    # only ever asserted the key lines survived.)
     cat > "$FEED_ENV" <<EOF
 # A user comment
 LATITUDE="10"
@@ -488,6 +492,10 @@ EOF
     [ "$APL_APPLY_RC" -eq 0 ]
     grep -q '^LATITUDE="11"$' "$FEED_ENV"
     grep -q '^LONGITUDE="20"$' "$FEED_ENV"
+    # Arbitrary operator comment is gone.
+    ! grep -q 'A user comment' "$FEED_ENV"
+    # Standard header is present.
+    grep -q 'operator-supplied configuration for the' "$FEED_ENV"
 }
 
 @test "APL_FEED_WEBSITE_URL is preserved through config-sync rewrite" {
@@ -909,4 +917,155 @@ EOF
     [ "$(jq -r '.fields.MLAT_USER.edited_by' "$ROOT_DIR/etc/airplanes/feed.meta.json")" = "website" ]
     APL_APPLY_INCOMING_META_EDITED_AT=()
     APL_APPLY_INCOMING_META_EDITED_BY=()
+}
+
+## Shared documented header / per-key comments (feed-env-keys.sh renderers)
+
+@test "apply save emits the documented header and per-key doc comments" {
+    seed_feed_env
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "applied" ]
+    # Header block (incl. the REPORT_STATUS hand-edit warning that a save
+    # used to strip — this is the regression observed live on feeder3).
+    grep -q 'operator-supplied configuration for the' "$FEED_ENV"
+    grep -q "Format contract: one KEY=value" "$FEED_ENV"
+    grep -q "Don't hand-edit REPORT_STATUS below" "$FEED_ENV"
+    grep -q '^#REPORT_STATUS=true$' "$FEED_ENV"
+    # Per-key doc comments for the documented keys.
+    grep -q 'Display name shown on the MLAT map' "$FEED_ENV"
+    grep -q 'Hide the feed name on the public MLAT map' "$FEED_ENV"
+    grep -q 'user has provided real coordinates' "$FEED_ENV"
+    # Value still written.
+    grep -q '^MLAT_PRIVATE="true"$' "$FEED_ENV"
+}
+
+@test "apply header is byte-identical to the shared renderer (single source)" {
+    seed_feed_env
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    local exp n got
+    exp="$(_apl_feed_render_header)"
+    n="$(printf '%s\n' "$exp" | wc -l)"
+    got="$(head -n "$n" "$FEED_ENV")"
+    [ "$exp" = "$got" ]
+}
+
+@test "non-default INPUT renders its decoder doc comment" {
+    cat > "$FEED_ENV" <<EOF
+LATITUDE="52.5"
+LONGITUDE="13.4"
+ALTITUDE="120"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+INPUT="127.0.0.1:10003"
+INPUT_TYPE=radarcape_gps
+EOF
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q 'Non-default receiver decoder' "$FEED_ENV"
+    grep -q '^INPUT="127.0.0.1:10003"$' "$FEED_ENV"
+    grep -q '^INPUT_TYPE="radarcape_gps"$' "$FEED_ENV"
+    # The shared note is emitted once (only for INPUT, not INPUT_TYPE).
+    [ "$(grep -c 'Non-default receiver decoder' "$FEED_ENV")" -eq 1 ]
+}
+
+@test "malformed REPORT_STATUS line is dropped on an unrelated save (guard intact)" {
+    # The realistic webconfig-save path: an operator hand-edited a bad
+    # REPORT_STATUS line, then changed something else in the UI. The strict
+    # reader refuses the malformed line, so it must not be re-emitted —
+    # otherwise the feed#137 diagnostics fail-closed guard would keep firing.
+    cat > "$FEED_ENV" <<EOF
+LATITUDE="52.5"
+LONGITUDE="13.4"
+ALTITUDE="120"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+REPORT_STATUS=false # opted out
+EOF
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q '^MLAT_PRIVATE="true"$' "$FEED_ENV"
+    ! grep -q 'opted out' "$FEED_ENV"
+    # No active REPORT_STATUS key line survives (the commented header
+    # example #REPORT_STATUS=true does not count).
+    ! grep -q '^[[:space:]]*REPORT_STATUS=' "$FEED_ENV"
+}
+
+@test "unowned key preserved with header and no set -u crash" {
+    cat > "$FEED_ENV" <<EOF
+APL_FEED_WEBSITE_URL="https://web.dev.airplanes.live"
+LATITUDE="52.5"
+LONGITUDE="13.4"
+GEO_CONFIGURED=true
+MLAT_USER="alice"
+MLAT_ENABLED=false
+MLAT_PRIVATE=false
+EOF
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q '^APL_FEED_WEBSITE_URL="https://web.dev.airplanes.live"$' "$FEED_ENV"
+    grep -q 'operator-supplied configuration for the' "$FEED_ENV"
+}
+
+@test "no-op save leaves a stripped file stripped (lazy header healing)" {
+    # A file already stripped by a pre-fix save is only re-documented on the
+    # next value-changing write; a no_change save must not rewrite it (no
+    # mtime churn, no daemon config-watch re-trigger).
+    cat > "$FEED_ENV" <<EOF
+LATITUDE="52.5"
+LONGITUDE="13.4"
+ALTITUDE="120"
+GEO_CONFIGURED="true"
+MLAT_USER="alice"
+MLAT_ENABLED="false"
+MLAT_PRIVATE="false"
+EOF
+    cp "$FEED_ENV" "$FEED_ENV.before"
+    do_apply --no-restart MLAT_PRIVATE=false
+    [ "$APL_APPLY_RC" -eq 0 ]
+    [ "$APL_APPLY_STATUS" = "no_change" ]
+    diff -u "$FEED_ENV.before" "$FEED_ENV"
+    ! grep -q 'operator-supplied configuration for the' "$FEED_ENV"
+}
+
+@test "documented output round-trips through the strict reader unchanged" {
+    seed_feed_env
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    # Read the now-documented file back: the header + per-key comments must
+    # not leak into the parsed map, and values must be exactly what we wrote.
+    declare -A back=()
+    APL_APPLY_KEY_ORDER=()
+    _apl_feed_apply_read "$FEED_ENV" back
+    [ "${back[LATITUDE]}" = "52.52" ]
+    [ "${back[MLAT_USER]}" = "alice" ]
+    [ "${back[MLAT_PRIVATE]}" = "true" ]
+    [ "${back[GAIN]}" = "auto" ]
+    [ "${back[INPUT]}" = "127.0.0.1:30005" ]
+    # No comment/header artifact became a key.
+    [ -z "${back['#']+set}" ]
+    [ -z "${back[REPORT_STATUS]+set}" ]
+}
+
+@test "INPUT_TYPE before INPUT in source still documents the pair once" {
+    # Pathological hand-written order. The decoder doc attaches to INPUT
+    # wherever it appears (accepted cosmetic-ordering caveat); it must still
+    # appear exactly once and both values must survive.
+    cat > "$FEED_ENV" <<EOF
+LATITUDE="52.5"
+LONGITUDE="13.4"
+MLAT_ENABLED=false
+INPUT_TYPE=radarcape_gps
+INPUT="127.0.0.1:10003"
+EOF
+    do_apply --no-restart MLAT_PRIVATE=true
+    [ "$APL_APPLY_RC" -eq 0 ]
+    grep -q '^INPUT="127.0.0.1:10003"$' "$FEED_ENV"
+    grep -q '^INPUT_TYPE="radarcape_gps"$' "$FEED_ENV"
+    [ "$(grep -c 'Non-default receiver decoder' "$FEED_ENV")" -eq 1 ]
 }

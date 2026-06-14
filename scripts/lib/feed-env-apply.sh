@@ -353,17 +353,38 @@ _apl_feed_apply_write() {
     local feed_env="$1"
     local -n merged_ref="$2"
 
+    # The doc renderers live in feed-env-keys.sh (same lib that defines
+    # APL_FEED_WRITABLE_KEYS, which this function already needs). Fail loudly
+    # on a skewed install rather than silently writing a header-less file:
+    # the redirected `{ … } > tmp` group below is on the left of `||`, so
+    # errexit is suppressed inside it and a missing renderer would otherwise
+    # print "command not found" and still return success.
+    if ! declare -F _apl_feed_render_header >/dev/null 2>&1 \
+        || ! declare -F _apl_feed_render_key_doc >/dev/null 2>&1; then
+        echo "_apl_feed_apply_write: feed-env-keys.sh not in scope; reinstall feed" >&2
+        return 1
+    fi
+
     local dir tmp
     dir="$(dirname "$feed_env")"
     mkdir -p "$dir" || return 1
     tmp="$(mktemp "${feed_env}.XXXXXX")" || return 1
 
     {
-        local key escaped
-        # Emit in source order first.
+        local key escaped doc
+        # Documented header first (shared with configure.sh via
+        # feed-env-keys.sh) so a webconfig/CLI save reproduces the
+        # self-documented file instead of stripping it to bare keys.
+        _apl_feed_render_header
+        printf '\n'
+        # Emit in source order first. Each key is preceded by its shared
+        # doc comment (blank-line separated); unowned keys render no doc
+        # (`case` returns 0 — safe under set -u) and print bare.
         local -A emitted=()
         for key in "${APL_APPLY_KEY_ORDER[@]}"; do
             if [[ -n "${merged_ref[$key]+set}" ]]; then
+                doc="$(_apl_feed_render_key_doc "$key")"
+                [[ -n "$doc" ]] && printf '\n%s\n' "$doc"
                 escaped="${merged_ref[$key]//\\/\\\\}"
                 escaped="${escaped//\$/\\\$}"
                 escaped="${escaped//\`/\\\`}"
@@ -376,6 +397,8 @@ _apl_feed_apply_write() {
         for key in "${APL_FEED_WRITABLE_KEYS[@]}"; do
             [[ -n "${emitted[$key]+x}" ]] && continue
             [[ -z "${merged_ref[$key]+set}" ]] && continue
+            doc="$(_apl_feed_render_key_doc "$key")"
+            [[ -n "$doc" ]] && printf '\n%s\n' "$doc"
             escaped="${merged_ref[$key]//\\/\\\\}"
             escaped="${escaped//\$/\\\$}"
             escaped="${escaped//\`/\\\`}"
