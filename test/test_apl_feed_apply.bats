@@ -80,6 +80,17 @@ run_apply() {
     grep -q '^MLAT_PRIVATE="true"$' "$FEED_ENV"
 }
 
+@test "apply through the CLI binary writes the documented header" {
+    # End-to-end via apl-feed.sh (runs under set -euo pipefail), proving the
+    # shared renderer is in scope on the real dispatch path — a webconfig
+    # save reproduces the self-documented file instead of stripping it.
+    run_apply '{"updates":{"MLAT_PRIVATE":"true"}}' --no-restart
+    [ "$APPLY_RC" -eq 0 ]
+    grep -q 'operator-supplied configuration for the' "$FEED_ENV"
+    grep -q "Don't hand-edit REPORT_STATUS below" "$FEED_ENV"
+    grep -q 'Hide the feed name on the public MLAT map' "$FEED_ENV"
+}
+
 @test "apply with invalid LATITUDE returns rejected + per-key errors" {
     run_apply '{"updates":{"LATITUDE":"200"}}' --no-restart
     [ "$APPLY_RC" -eq 2 ]

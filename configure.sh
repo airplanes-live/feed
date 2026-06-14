@@ -294,65 +294,40 @@ write_feed_env() {
     # must never observe a truncated half-written file.
     local _tmp
     _tmp="$(mktemp "${FEED_ENV}.XXXXXX")"
-    cat > "$_tmp" <<EOF
-# /etc/airplanes/feed.env — operator-supplied configuration for the
-# airplanes.live feeder daemons. Product-side defaults (brand endpoints,
-# readsb tuning, the local RESULTS output bundle, REDUCE_INTERVAL) live
-# in the daemon scripts; add overrides here only if you run a custom
-# airplanes.live backend or non-default decoder hardware.
-#
-# Format contract: one KEY=value or KEY="value" per line, plain scalar
-# values only — no shell expansion or escapes, no 'export' prefix, no
-# comment on a value's line, no line continuations. This file has
-# several consumers (shell, systemd, the apl-feed CLI); other shapes
-# parse differently between them and may be dropped on rewrite. Read
-# values with 'apl-feed config show' instead of parsing this file.
-
-LATITUDE="$RECEIVERLATITUDE"
-LONGITUDE="$RECEIVERLONGITUDE"
-ALTITUDE="$RECEIVERALTITUDE"
-# Explicit "user has provided real coordinates" flag. The daemon refuses
-# to start MLAT until this is true; the legacy "LATITUDE=0 means unset"
-# sentinel is retired. Image freeze writes false; configure.sh writes
-# true when both coords are non-zero (Atlantic 0,0 placeholders stay
-# false). The webconfig UI writes this explicitly when the user saves.
-GEO_CONFIGURED=$GEO_CONFIGURED
-
-# Display name shown on the MLAT map. Used as mlat-client's --user.
-MLAT_USER="$MLAT_USER"
-# Explicit on/off toggle. When false, airplanes-mlat exits early.
-MLAT_ENABLED="$MLAT_ENABLED"
-# Hide the feed name on the public MLAT map. true|false. Position is
-# never shown accurately no matter the setting. Toggle with:
-#   sudo apl-feed mlat private enable
-#   sudo apl-feed mlat private disable
-MLAT_PRIVATE=$MLAT_PRIVATE
-
-# Diagnostics push: every 10 minutes the feeder reports anonymized CPU,
-# temperature, disk, memory, uptime, service health, and version info to
-# airplanes.live. Visible only on your own logged-in dashboard. The
-# schema excludes hostname, MAC, LAN IP, SSID, and Pi serial number.
-#
-# Default: enabled. Toggle via the CLI (the canonical writer, which also
-# runs through validation + the apply lock):
-#   sudo apl-feed diagnostics enable
-#   sudo apl-feed diagnostics disable
-# Don't hand-edit REPORT_STATUS below — direct edits bypass validation
-# and the lock that webconfig holds during concurrent writes.
-#REPORT_STATUS=true
-EOF
+    {
+        # Shared documented header (operator preamble, format contract,
+        # diagnostics/REPORT_STATUS warning) and per-key comments come from
+        # feed-env-keys.sh — the same source the apl-feed apply writer uses,
+        # so a later webconfig/CLI save reproduces this documented file
+        # rather than stripping it to bare keys.
+        _apl_feed_render_header
+        printf '\n'
+        printf 'LATITUDE="%s"\n' "$RECEIVERLATITUDE"
+        printf 'LONGITUDE="%s"\n' "$RECEIVERLONGITUDE"
+        printf 'ALTITUDE="%s"\n' "$RECEIVERALTITUDE"
+        printf '\n'
+        _apl_feed_render_key_doc GEO_CONFIGURED
+        printf 'GEO_CONFIGURED=%s\n' "$GEO_CONFIGURED"
+        printf '\n'
+        _apl_feed_render_key_doc MLAT_USER
+        printf 'MLAT_USER="%s"\n' "$MLAT_USER"
+        _apl_feed_render_key_doc MLAT_ENABLED
+        printf 'MLAT_ENABLED="%s"\n' "$MLAT_ENABLED"
+        _apl_feed_render_key_doc MLAT_PRIVATE
+        printf 'MLAT_PRIVATE=%s\n' "$MLAT_PRIVATE"
+    } > "$_tmp"
 
     # Write INPUT + INPUT_TYPE only when they differ from the daemon
     # defaults (127.0.0.1:30005 / dump1090). detect_receiver_input sets
     # both together (Radarcape uses 127.0.0.1:10003 / radarcape_gps),
     # so emit them as a pair to keep the override consistent.
     if [[ "$INPUT" != "127.0.0.1:30005" ]] || [[ "$INPUT_TYPE" != "dump1090" ]]; then
-        cat >> "$_tmp" <<EOF
-
-# Non-default receiver decoder. Defaults are 127.0.0.1:30005 / dump1090.
-INPUT="$INPUT"
-INPUT_TYPE="$INPUT_TYPE"
-EOF
+        {
+            printf '\n'
+            _apl_feed_render_key_doc INPUT
+            printf 'INPUT="%s"\n' "$INPUT"
+            printf 'INPUT_TYPE="%s"\n' "$INPUT_TYPE"
+        } >> "$_tmp"
     fi
 
     if (( ${#CARRIED_FEED_ENV_LINES[@]} > 0 )); then
