@@ -11,6 +11,7 @@ setup() {
     STUB_DIR="$ROOT_DIR/bin"
     COMMAND_LOG="$ROOT_DIR/cmd.log"
     BODY_LOG="$ROOT_DIR/body.log"
+    RECEPTION_BODY_LOG="$ROOT_DIR/reception-body.log"
     HEADER_LOG="$ROOT_DIR/header.log"
     mkdir -p "$STUB_DIR" "$ROOT_DIR/var/lib"
 
@@ -32,8 +33,19 @@ for arg in "$@"; do
     fi
     prev="$arg"
 done
-# Drain stdin (the JSON body) so callers can inspect what was sent.
-cat > "$BODY_LOG"
+# Drain stdin (the JSON body) so callers can inspect what was sent. Route by
+# endpoint so the diagnostics and reception POST bodies stay separable.
+_recv_target=''
+for arg in "$@"; do
+    case "$arg" in
+        */api/feeders/reception) _recv_target="${RECEPTION_BODY_LOG:-}" ;;
+    esac
+done
+if [[ -n "$_recv_target" ]]; then
+    cat > "$_recv_target"
+else
+    cat > "$BODY_LOG"
+fi
 if [[ -n "$output_file" ]]; then
     printf '%s' "${CURL_RESPONSE:-{\"ok\":true\}}" > "$output_file"
 fi
@@ -177,6 +189,7 @@ run_script() {
         APL_FEED_WEBSITE_URL="${APL_FEED_WEBSITE_URL:-http://127.0.0.1:0}" \
         COMMAND_LOG="$COMMAND_LOG" \
         BODY_LOG="$BODY_LOG" \
+        RECEPTION_BODY_LOG="$RECEPTION_BODY_LOG" \
         HEADER_LOG="$HEADER_LOG" \
         CURL_STATUS="${CURL_STATUS:-200}" \
         CURL_RC="${CURL_RC:-0}" \
@@ -1049,4 +1062,158 @@ SH
     [[ "$output" == *"status=bad_config"* ]]
     [[ "$output" == *"REPORT_STATUS"* ]]
     [ ! -f "$COMMAND_LOG" ]
+}
+
+# ---- reception stats (forwarder readsb JSON) ----
+
+# Seed the forwarder's readsb JSON outputs under the rooted /run dir. Kept
+# rssi after the no-signal floor filter is {-10,-20,-6} → avg -12, max -6.
+_seed_forwarder_json() {
+    local now_val="$1"
+    local dir="$ROOT_DIR/run/airplanes-feed"
+    mkdir -p "$dir"
+    cat > "$dir/aircraft.json" <<EOF
+{"now": $now_val, "messages": 99, "aircraft": [
+  {"hex":"a1","rssi":-10.0,"lat":1.0,"lon":2.0},
+  {"hex":"a2","rssi":-20.0},
+  {"hex":"mlat","rssi":-49.5},
+  {"hex":"a3","rssi":-6.0,"lat":3.0,"lon":4.0}
+]}
+EOF
+    cat > "$dir/stats.json" <<EOF
+{"now": $now_val, "aircraft_with_pos": 7, "aircraft_without_pos": 3, "total": {"max_distance": 185200}}
+EOF
+}
+
+@test "reception: fresh forwarder JSON + geo → separate POST to /api/feeders/reception" {
+    printf 'REPORT_STATUS=true\nLATITUDE=52.52\nLONGITUDE=13.405\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_forwarder_json "$(date +%s)"
+    run_script
+    [ "$status" -eq 0 ]
+    # Both endpoints hit; reception travels in its own POST, not diagnostics.
+    grep -q -- '/api/feeders/diagnostics' "$COMMAND_LOG"
+    grep -q -- '/api/feeders/reception' "$COMMAND_LOG"
+    # Reception body is the envelope with scalars flattened to top level.
+    run jq -e '.schema_version == 1' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e '.aircraft_total == 10' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e '.aircraft_with_pos == 7' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    # 185200 m / 1852 = 100 nmi
+    run jq -e '.max_range_nmi == 100' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e '.rssi_max_dbfs == -6' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    # avg over kept rssi {-10,-20,-6} = -12; the -49.5 floor is excluded
+    run jq -e '.rssi_avg_dbfs == -12' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    # Diagnostics payload no longer carries reception.
+    run jq -e 'has("reception") | not' "$BODY_LOG"
+    [ "$status" -eq 0 ]
+}
+
+@test "reception: stale forwarder JSON (old now) → no reception POST" {
+    printf 'REPORT_STATUS=true\nLATITUDE=52.52\nLONGITUDE=13.405\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_forwarder_json "$(( $(date +%s) - 9999 ))"
+    run_script
+    [ "$status" -eq 0 ]
+    grep -q -- '/api/feeders/diagnostics' "$COMMAND_LOG"
+    if grep -q -- '/api/feeders/reception' "$COMMAND_LOG"; then return 1; fi
+}
+
+@test "reception: absent forwarder JSON → no reception POST (diagnostics still sent)" {
+    # No _seed_forwarder_json — /run/airplanes-feed has no JSON files yet.
+    run_script
+    [ "$status" -eq 0 ]
+    grep -q -- '/api/feeders/diagnostics' "$COMMAND_LOG"
+    if grep -q -- '/api/feeders/reception' "$COMMAND_LOG"; then return 1; fi
+}
+
+@test "reception: 0/0 geo → reception POST omits max_range_nmi" {
+    printf 'REPORT_STATUS=true\nLATITUDE=0\nLONGITUDE=0\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_forwarder_json "$(date +%s)"
+    run_script
+    [ "$status" -eq 0 ]
+    grep -q -- '/api/feeders/reception' "$COMMAND_LOG"
+    run jq -e '.aircraft_total == 10' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e '.rssi_max_dbfs == -6' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e 'has("max_range_nmi") | not' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+}
+
+@test "reception: malformed forwarder JSON → no reception POST (diagnostics still sent)" {
+    printf 'REPORT_STATUS=true\nLATITUDE=52.52\nLONGITUDE=13.405\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    local dir="$ROOT_DIR/run/airplanes-feed"
+    mkdir -p "$dir"
+    printf '{ this is not json' > "$dir/aircraft.json"
+    printf '{"now": %s, "aircraft_with_pos": 1, "aircraft_without_pos": 0, "total": {"max_distance": 0}}\n' \
+        "$(date +%s)" > "$dir/stats.json"
+    run_script
+    [ "$status" -eq 0 ]
+    grep -q -- '/api/feeders/diagnostics' "$COMMAND_LOG"
+    if grep -q -- '/api/feeders/reception' "$COMMAND_LOG"; then return 1; fi
+}
+
+@test "reception: all RSSI at the no-signal floor → reception POST omits signal fields" {
+    printf 'REPORT_STATUS=true\nLATITUDE=52.52\nLONGITUDE=13.405\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    local dir="$ROOT_DIR/run/airplanes-feed"
+    mkdir -p "$dir"
+    cat > "$dir/aircraft.json" <<EOF
+{"now": $(date +%s), "aircraft": [{"hex":"x","rssi":-49.5},{"hex":"y","rssi":-50.0}]}
+EOF
+    printf '{"now": %s, "aircraft_with_pos": 0, "aircraft_without_pos": 2, "total": {"max_distance": 0}}\n' \
+        "$(date +%s)" > "$dir/stats.json"
+    run_script
+    [ "$status" -eq 0 ]
+    grep -q -- '/api/feeders/reception' "$COMMAND_LOG"
+    run jq -e '.aircraft_total == 2' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e 'has("rssi_avg_dbfs") | not' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e 'has("rssi_max_dbfs") | not' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+}
+
+@test "reception: missing stats count omits total; max_range rounds to 1 dp" {
+    printf 'REPORT_STATUS=true\nLATITUDE=52.52\nLONGITUDE=13.405\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    local dir="$ROOT_DIR/run/airplanes-feed"
+    mkdir -p "$dir"
+    cat > "$dir/aircraft.json" <<EOF
+{"now": $(date +%s), "aircraft": [{"hex":"x","rssi":-8.0}]}
+EOF
+    # No aircraft_without_pos → total can't be computed (omitted). Non-number
+    # types must not concatenate. 186000 m / 1852 = 100.43… → rounds to 100.4.
+    printf '{"now": %s, "aircraft_with_pos": 5, "total": {"max_distance": 186000}}\n' \
+        "$(date +%s)" > "$dir/stats.json"
+    run_script
+    [ "$status" -eq 0 ]
+    grep -q -- '/api/feeders/reception' "$COMMAND_LOG"
+    run jq -e '.aircraft_with_pos == 5' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e 'has("aircraft_total") | not' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+    run jq -e '.max_range_nmi == 100.4' "$RECEPTION_BODY_LOG"
+    [ "$status" -eq 0 ]
+}
+
+@test "reception: REPORT_STATUS=false → no reception POST (rides diagnostics consent)" {
+    printf 'REPORT_STATUS=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_forwarder_json "$(date +%s)"
+    run_script
+    [ "$status" -eq 0 ]
+    # Opted out of telemetry → reception is not sent even with fresh data.
+    if grep -q -- '/api/feeders/reception' "$COMMAND_LOG"; then return 1; fi
+}
+
+@test "reception: skipped when the diagnostics POST has a transport error" {
+    printf 'REPORT_STATUS=true\nLATITUDE=52.52\nLONGITUDE=13.405\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    _seed_forwarder_json "$(date +%s)"
+    # curl exits non-zero (e.g. couldn't connect) → don't stall another POST
+    # against the same dead network.
+    CURL_RC=7 run_script
+    [ "$status" -eq 0 ]
+    if grep -q -- '/api/feeders/reception' "$COMMAND_LOG"; then return 1; fi
 }
