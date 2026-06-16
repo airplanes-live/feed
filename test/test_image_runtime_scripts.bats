@@ -130,11 +130,14 @@ SH
     if grep -q -- '--forward-mlat' "$arg_log"; then
         return 1
     fi
-    # --write-json was the output sink for the bundled tar1090 installer; nothing
-    # consumes /run/airplanes-feed anymore. Match the bare flag only — guard
-    # against accidental reintroduction without flagging --write-json-every or
-    # --write-json-globe-index, which are unrelated readsb tuning flags.
-    if grep -Eq -- '(^|[[:space:]])--write-json([[:space:]]|$)' "$arg_log"; then
+    # --write-json now feeds the reception-stats uploader. It must target the
+    # forwarder's own RuntimeDirectory, never the image decoder's /run/readsb,
+    # and must not pull in globe-index shards.
+    grep -q -- "--write-json $root/run/airplanes-feed" "$arg_log"
+    if grep -q -- '/run/readsb' "$arg_log"; then
+        return 1
+    fi
+    if grep -q -- '--write-json-globe-index' "$arg_log"; then
         return 1
     fi
     if grep -q -- '--decoder-option-that-must-not-feed' "$arg_log"; then
@@ -143,6 +146,64 @@ SH
     if grep -q -- '--net-bi-port 30004,30104' "$arg_log"; then
         return 1
     fi
+}
+
+@test "airplanes-feed.sh writes reception JSON on a manual (non-image) install" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/args-manual.log"
+    # No image feed binary and no image-install marker → IMAGE_INSTALL=0, the
+    # forwarder sources /etc/airplanes/feed.env and uses the built feed-airplanes
+    # binary. The reception JSON contract must be identical to the image branch.
+    mkdir -p "$root/etc/airplanes" "$root/usr/local/share/airplanes"
+    cat > "$root/etc/airplanes/feed.env" <<'EOF'
+LATITUDE="52.52"
+LONGITUDE="13.40"
+ALTITUDE="35"
+MLAT_USER="manual-feeder"
+MLAT_ENABLED=true
+MLAT_PRIVATE=false
+EOF
+    cat > "$root/usr/local/share/airplanes/feed-airplanes" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/local/share/airplanes/feed-airplanes"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -q -- "--write-json $root/run/airplanes-feed" "$arg_log"
+    if grep -q -- '/run/readsb' "$arg_log"; then
+        return 1
+    fi
+}
+
+@test "airplanes-feed.sh: managed --write-json wins over a hostile JSON_OPTIONS (last-wins)" {
+    local root="$ROOT_DIR/root"
+    local arg_log="$ROOT_DIR/args-hostile.log"
+    write_image_config "$root"
+    # Legacy/operator JSON_OPTIONS tries to redirect readsb's JSON output into
+    # the image decoder's dir. The managed --write-json is appended last, so
+    # readsb's last-wins argp must still resolve output to the forwarder dir.
+    cat > "$root/boot/airplanes-env" <<'EOF'
+INPUT="127.0.0.1:30005"
+MLATSERVER="feed.airplanes.live:31090"
+JSON_OPTIONS="--write-json /run/readsb --write-json=/run/readsb --json-location-accuracy 2"
+EOF
+    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ARG_LOG"
+exit 0
+SH
+    chmod +x "$root/usr/bin/airplanes-feeder"
+
+    run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
+    [ "$status" -eq 0 ]
+    # The final argument must be our managed flag pointing at the forwarder dir,
+    # regardless of any earlier --write-json injected via JSON_OPTIONS.
+    local args
+    args="$(cat "$arg_log")"
+    [[ "$args" == *"--write-json $root/run/airplanes-feed" ]]
 }
 
 @test "airplanes-mlat.sh: image-side MLAT_PRIVATE=true → mlat-client gets --privacy" {
