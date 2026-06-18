@@ -266,6 +266,37 @@ claim_rotate_abort() {
     return 1
 }
 
+# _claim_rotate_emit_json <result> <version|""> <error|""> <detail|"">
+# Renders one terminal rotation outcome as a stable schema-v1 object on
+# stdout (the on-device webconfig parses this). result is "rotated" or
+# "error"; version is the accepted secret version on success; error is a
+# machine code and detail a human string on failure. The retry loop's
+# INFO progress lines stay on stderr and are never emitted here.
+#
+# Contract for consumers: JSON is emitted for outcomes reached once the
+# rotation request is under way. A precondition or local-IO failure
+# (no active secret, corrupt pending file, write failure) still exits
+# non-zero via die() with the reason on stderr and no JSON on stdout, so
+# a consumer must treat "non-zero exit with unparseable stdout" as a
+# generic rotation failure rather than assuming a result object.
+_claim_rotate_emit_json() {
+    jq -nc \
+        --arg result "$1" \
+        --arg version "${2:-}" \
+        --arg error "${3:-}" \
+        --arg detail "${4:-}" \
+        '
+        def nullempty: if . == "" then null else . end;
+        def numberish: if . == "" then null else (tonumber? // null) end;
+        {
+          schema_version: 1,
+          result: $result,
+          version: ($version | numberish),
+          error: ($error | nullempty),
+          detail: ($detail | nullempty),
+        }'
+}
+
 claim_rotate() {
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
         usage_claim_rotate
@@ -277,9 +308,12 @@ claim_rotate() {
         return $?
     fi
 
-    local opt_rc
+    local opt_rc json=0
     while [[ $# -gt 0 ]]; do
-        case "$1" in -h|--help) usage_claim_rotate; exit 0 ;; esac
+        case "$1" in
+            -h|--help) usage_claim_rotate; exit 0 ;;
+            --json) json=1; shift; continue ;;
+        esac
         if parse_common_option "$@"; then opt_rc=0; else opt_rc=$?; fi
         case "$opt_rc" in
             1) shift ;;
@@ -300,7 +334,7 @@ claim_rotate() {
 
     if [[ -f "$pending" ]]; then
         next="$(read_secret_file "$pending")"
-        echo "Resuming pending rotation."
+        echo "Resuming pending rotation." >&2
     else
         next="$(generate_secret)"
         validate_secret "$next" || die "generated invalid secret"
@@ -330,11 +364,19 @@ claim_rotate() {
         case "$curl_rc" in
             0) ;;
             6|7|28)
-                echo "ERROR: curl rc=$curl_rc (DNS/connect/timeout) - pending rotation left in place" >&2
+                if (( json )); then
+                    _claim_rotate_emit_json error "" network "curl rc=$curl_rc (DNS/connect/timeout); pending rotation left in place"
+                else
+                    echo "ERROR: curl rc=$curl_rc (DNS/connect/timeout) - pending rotation left in place" >&2
+                fi
                 return 2
                 ;;
             *)
-                echo "ERROR: curl rc=$curl_rc - pending rotation left in place" >&2
+                if (( json )); then
+                    _claim_rotate_emit_json error "" network "curl rc=$curl_rc; pending rotation left in place"
+                else
+                    echo "ERROR: curl rc=$curl_rc - pending rotation left in place" >&2
+                fi
                 return 2
                 ;;
         esac
@@ -350,7 +392,11 @@ claim_rotate() {
                 chmod 640 "$pending"
                 mv "$pending" "$final"
                 write_version_file "$version"
-                echo "Rotation complete (v$version)."
+                if (( json )); then
+                    _claim_rotate_emit_json rotated "$version" "" ""
+                else
+                    echo "Rotation complete (v$version)."
+                fi
                 return 0
                 ;;
             409)
@@ -359,10 +405,18 @@ claim_rotate() {
                     chmod 640 "$pending"
                     mv "$pending" "$final"
                     write_version_file "$accepted_version"
-                    echo "Rotation finalized (v$accepted_version) after a previous transient failure."
+                    if (( json )); then
+                        _claim_rotate_emit_json rotated "$accepted_version" "" "finalized after a previous transient failure"
+                    else
+                        echo "Rotation finalized (v$accepted_version) after a previous transient failure."
+                    fi
                     return 0
                 fi
-                echo "ERROR: 409 ${error:-rotation_rejected} - pending rotation left in place. Run 'apl-feed status' or 'apl-feed claim rotate --abort'." >&2
+                if (( json )); then
+                    _claim_rotate_emit_json error "" "${error:-rotation_rejected}" "pending rotation left in place; run 'apl-feed claim rotate --abort' to cancel it"
+                else
+                    echo "ERROR: 409 ${error:-rotation_rejected} - pending rotation left in place. Run 'apl-feed status' or 'apl-feed claim rotate --abort'." >&2
+                fi
                 return 1
                 ;;
             423)
@@ -374,7 +428,11 @@ claim_rotate() {
                         echo "INFO: 423 reset_locked until $reset_until; sleeping ${sleep_for}s" >&2
                         ;;
                     *)
-                        echo "ERROR: 423 ${error:-blocked} - pending rotation left in place ($preview)" >&2
+                        if (( json )); then
+                            _claim_rotate_emit_json error "" "${error:-blocked}" "pending rotation left in place ($preview)"
+                        else
+                            echo "ERROR: 423 ${error:-blocked} - pending rotation left in place ($preview)" >&2
+                        fi
                         return 1
                         ;;
                 esac
@@ -391,14 +449,22 @@ claim_rotate() {
                 echo "INFO: $status server error; backing off ${sleep_for}s" >&2
                 ;;
             *)
-                echo "ERROR: unexpected status $status - pending rotation left in place ($preview)" >&2
+                if (( json )); then
+                    _claim_rotate_emit_json error "" unexpected_status "status $status; pending rotation left in place ($preview)"
+                else
+                    echo "ERROR: unexpected status $status - pending rotation left in place ($preview)" >&2
+                fi
                 return 1
                 ;;
         esac
 
         now="$(date +%s)"
         if (( now + sleep_for > deadline )); then
-            echo "ERROR: exceeded --max-retry-time=${MAX_RETRY_TIME}s on status $status; pending rotation left in place" >&2
+            if (( json )); then
+                _claim_rotate_emit_json error "" deadline_exceeded "exceeded --max-retry-time=${MAX_RETRY_TIME}s on status $status; pending rotation left in place"
+            else
+                echo "ERROR: exceeded --max-retry-time=${MAX_RETRY_TIME}s on status $status; pending rotation left in place" >&2
+            fi
             return 3
         fi
         sleep "$sleep_for"
@@ -750,12 +816,13 @@ USAGE
 usage_claim_rotate() {
     cat <<'USAGE'
 Usage:
-  apl-feed claim rotate
+  apl-feed claim rotate [--json]
   apl-feed claim rotate --abort
 
 Rotates the claim secret with airplanes.live, replacing the local secret
-on success. --abort cancels a pending (interrupted) rotation, keeping the
-current secret as long as the server still accepts it.
+on success. --json emits a single machine-readable result object on stdout
+instead of the human summary. --abort cancels a pending (interrupted)
+rotation, keeping the current secret as long as the server still accepts it.
 USAGE
 }
 

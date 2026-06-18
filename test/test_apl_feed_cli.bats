@@ -388,6 +388,40 @@ EOF
     [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
 }
 
+@test "claim rotate --json emits a rotated result object on 200" {
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    start_fixed_server 200 '{"version": 2}'
+
+    run "$SCRIPT" claim rotate --json --root "$ROOT_DIR" --website-url "$(mock_url)"
+
+    [ "$status" -eq 0 ]
+    # stdout is a single machine-readable object the webconfig can parse.
+    [ "$(jq -r '.schema_version' <<< "$output")" = "1" ]
+    [ "$(jq -r '.result' <<< "$output")" = "rotated" ]
+    [ "$(jq -r '.version' <<< "$output")" = "2" ]
+    [ "$(jq -r '.error' <<< "$output")" = "null" ]
+    # No human summary leaked onto stdout.
+    [[ ! "$output" =~ "Rotation complete" ]]
+    [ ! -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
+}
+
+@test "claim rotate --json emits an error object and leaves pending on a terminal 409" {
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    # 409 for both /secret and the /status finalize-probe → terminal reject.
+    start_fixed_server 409 '{"error": "rotation_rejected"}'
+
+    run "$SCRIPT" claim rotate --json --root "$ROOT_DIR" --website-url "$(mock_url)"
+
+    [ "$status" -eq 1 ]
+    [ "$(jq -r '.schema_version' <<< "$output")" = "1" ]
+    [ "$(jq -r '.result' <<< "$output")" = "error" ]
+    [ "$(jq -r '.error' <<< "$output")" = "rotation_rejected" ]
+    # The interrupted rotation is preserved so a retry can resume it.
+    [ -f "$ROOT_DIR/etc/airplanes/feeder-claim-secret.pending" ]
+}
+
 @test "backup writes mode 0600 JSON and restore reads it" {
     local backup_file="$ROOT_DIR/backup.json"
     echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
