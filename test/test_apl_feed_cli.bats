@@ -413,6 +413,49 @@ EOF
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "4" ]
 }
 
+@test "restore reads a backup piped on /dev/stdin (webconfig identity-import path)" {
+    # The webconfig identity-import wrapper runs `apl-feed restore
+    # /dev/stdin --force` with the backup JSON on a pipe. read_backup_file
+    # reopens its argument once per field, so the stream must be
+    # materialised first — otherwise the first jq drains the pipe and the
+    # rest see EOF.
+    local backup_file="$ROOT_DIR/backup.json"
+    echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
+    echo "4" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
+    chmod 600 "$ROOT_DIR/etc/airplanes/feeder-claim-secret" "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
+    run "$SCRIPT" backup "$backup_file" --root "$ROOT_DIR"
+    [ "$status" -eq 0 ]
+    rm "$ROOT_DIR/etc/airplanes/feeder-id"
+    rm "$ROOT_DIR/etc/airplanes/feeder-claim-secret" "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version"
+
+    run bash -c "cat '$backup_file' | '$SCRIPT' restore /dev/stdin --force --root '$ROOT_DIR'"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "11111111-2222-3333-4444-555555555555" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret")" = "ABCDEFGHIJKLMNOP" ]
+    [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-claim-secret.version")" = "4" ]
+}
+
+@test "restore /dev/stdin with an empty pipe fails on schema, not existence" {
+    # A relaxed source check must still surface a real validation error
+    # (empty input → missing schema_version), not the misleading
+    # "does not exist" that the old `[[ -f /dev/stdin ]]` test produced.
+    run bash -c ": | '$SCRIPT' restore /dev/stdin --force --root '$ROOT_DIR'"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "schema_version" ]]
+    [[ "$output" != *"does not exist"* ]]
+}
+
+@test "restore of a missing file path still reports does not exist" {
+    # The regular-file path keeps its existence error; relaxing the check
+    # for /dev/stdin must not turn a genuine typo into a jq error.
+    run "$SCRIPT" restore "$ROOT_DIR/no-such-backup.json" --force --root "$ROOT_DIR"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "does not exist" ]]
+}
+
 @test "backup rejects --force instead of overwriting" {
     local backup_file="$ROOT_DIR/backup.json"
     echo "ABCDEFGHIJKLMNOP" > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"

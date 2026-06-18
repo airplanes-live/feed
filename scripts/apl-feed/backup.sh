@@ -26,6 +26,10 @@ USAGE
 }
 
 read_backup_file() {
+    # Expects a seekable file path: jq reopens "$infile" once per field
+    # below, so a single-read stream (a pipe / FIFO such as /dev/stdin)
+    # would drain on the first call and present EOF to the rest. The
+    # caller is responsible for materialising non-seekable input first.
     local infile="$1"
     BACKUP_SCHEMA="$(jq -r '.schema_version // empty' < "$infile")"
     [[ "$BACKUP_SCHEMA" == "1" ]] || die "unsupported backup schema_version: ${BACKUP_SCHEMA:-<missing>}"
@@ -205,7 +209,27 @@ config_restore() {
     fi
 
     if [[ -n "$infile" ]]; then
-        [[ -f "$infile" ]] || die "$infile does not exist"
+        if [[ -f "$infile" ]]; then
+            : # regular file (incl. /dev/stdin backed by a redirected
+              # file): seekable, read_backup_file can reopen it directly.
+        elif [[ "$infile" == /dev/stdin || "$infile" == /dev/fd/0 \
+                || "$infile" == /proc/self/fd/0 || -p "$infile" ]]; then
+            # Non-seekable source — the webconfig identity-import path
+            # pipes the backup JSON in on /dev/stdin. read_backup_file
+            # reopens its argument once per field, so materialise the
+            # single-read stream into a temp file first. Cap the copy:
+            # backup envelopes are well under 1 MiB, and this runs under
+            # a privileged sudoers entry, so an unbounded stdin drain
+            # would be a trivial disk-fill lever.
+            local tmp
+            tmp="$(new_tmp_file)"
+            head -c "$((1024 * 1024 + 1))" "$infile" > "$tmp" \
+                || die "failed to read backup from $infile"
+            (( $(wc -c < "$tmp") > 1024 * 1024 )) && die "backup input too large"
+            infile="$tmp"
+        else
+            die "$infile does not exist"
+        fi
         require_jq
         read_backup_file "$infile"
     else
