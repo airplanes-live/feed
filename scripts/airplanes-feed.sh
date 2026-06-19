@@ -150,12 +150,12 @@ airplanes_write_state "$STATE_FILE" \
     "target_is_default=$TARGET_IS_DEFAULT" \
     "feed_bin=$FEED_BIN" || true
 
-# Reception JSON (aircraft.json / stats.json / outline.json) for the diagnostics
-# stats uploader. Written into the forwarder's own RuntimeDirectory, NOT
-# /run/readsb (the image decoder's output dir — a second writer there is what
+# Stats JSON (aircraft.json / stats.json / outline.json) for the airplanes-stats
+# uploader (airplanes-stats.sh). Written into the forwarder's own RuntimeDirectory,
+# NOT /run/readsb (the image decoder's output dir — a second writer there is what
 # test_image_runtime_scripts.bats guards against). The unit sets
 # RuntimeDirectoryPreserve=yes, so clear a previous run's outputs before exec to
-# avoid serving stale reception after a crash; the `state` file has no .json
+# avoid serving stale stats after a crash; the `state` file has no .json
 # suffix and is left intact. The managed --write-json is appended LAST so a
 # legacy/operator JSON_OPTIONS can't redirect output elsewhere (readsb argp is
 # last-wins).

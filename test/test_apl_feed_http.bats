@@ -57,7 +57,11 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         with open(req_log, "a") as f:
-            f.write(f"POST {self.path} ct={self.headers.get('Content-Type','')}\n")
+            f.write(
+                f"POST {self.path} ct={self.headers.get('Content-Type','')} "
+                f"ce={self.headers.get('Content-Encoding','')} "
+                f"auth={self.headers.get('Authorization','')}\n"
+            )
         with open(req_body_file, "wb") as f:
             f.write(raw)
         self.send_response(status)
@@ -103,6 +107,45 @@ mock_url() {
     post_json '/api/feeders/status' "$body" "$response_file" >/dev/null
     [ "$(cat "$MOCK_REQUEST_BODY")" = "$body" ]
     grep -q 'POST /api/feeders/status ct=application/json' "$MOCK_REQUEST_LOG"
+}
+
+# --- post_gzip_bearer ---
+
+@test "post_gzip_bearer: Content-Encoding gzip, body gunzips back to the input" {
+    start_mock_server 200 '{"ok":true}'
+    WEBSITE_URL="$(mock_url)"
+    response_file="$TMPDIR/resp"
+    gz="$TMPDIR/body.gz"
+    body='{"schema_version":1,"stats":{"aircraft_with_pos":7}}'
+    printf '%s' "$body" | gzip -c > "$gz"
+    run post_gzip_bearer 'alv1.11111111-2222-3333-4444-555555555555.ABCDEFGHIJKLMNOP' \
+        '/api/feeders/stats' "$gz" "$response_file"
+    [ "$status" -eq 0 ]
+    [ "$output" = '200' ]
+    grep -q 'POST /api/feeders/stats ct=application/json ce=gzip' "$MOCK_REQUEST_LOG"
+    # The server received the gzip bytes verbatim; they expand to the input.
+    [ "$(gunzip -c "$MOCK_REQUEST_BODY")" = "$body" ]
+}
+
+@test "post_gzip_bearer: bearer travels in the Authorization header (curl --config)" {
+    start_mock_server 200 '{"ok":true}'
+    WEBSITE_URL="$(mock_url)"
+    gz="$TMPDIR/body.gz"
+    printf '{}' | gzip -c > "$gz"
+    post_gzip_bearer 'alv1.11111111-2222-3333-4444-555555555555.ABCDEFGHIJKLMNOP' \
+        '/api/feeders/stats' "$gz" "$TMPDIR/resp" >/dev/null
+    grep -q 'auth=Bearer alv1.11111111-2222-3333-4444-555555555555.ABCDEFGHIJKLMNOP' \
+        "$MOCK_REQUEST_LOG"
+}
+
+@test "post_gzip_bearer: removes its curl-config tempfile" {
+    start_mock_server 200 '{}'
+    WEBSITE_URL="$(mock_url)"
+    gz="$TMPDIR/body.gz"
+    printf '{}' | gzip -c > "$gz"
+    post_gzip_bearer 'alv1.11111111-2222-3333-4444-555555555555.ABCDEFGHIJKLMNOP' \
+        '/api/feeders/stats' "$gz" "$TMPDIR/resp" >/dev/null || true
+    [ -z "$(find "$TMPDIR" -name 'apl-feed-curlcfg.*' 2>/dev/null)" ]
 }
 
 # --- body_preview ---

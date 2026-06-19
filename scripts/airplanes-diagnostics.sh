@@ -77,27 +77,6 @@ log() {
     printf '%s level=%s %s host=%s\n' "$SCRIPT_NAME" "$level" "$*" "$WEBSITE_HOST" >&2
 }
 
-# parse_report_status RAW
-#   echoes one of: enabled, disabled, invalid, empty
-#   "empty" means the key was not set in feed.env (treated as enabled).
-parse_report_status() {
-    local raw="$1"
-    if [[ -z "$raw" ]]; then
-        printf '%s' 'empty'
-        return
-    fi
-    local lower
-    lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
-    # strip leading/trailing whitespace
-    lower="${lower#"${lower%%[![:space:]]*}"}"
-    lower="${lower%"${lower##*[![:space:]]}"}"
-    case "$lower" in
-        true|yes|1|on) printf '%s' 'enabled' ;;
-        false|no|0|off) printf '%s' 'disabled' ;;
-        *) printf '%s' 'invalid' ;;
-    esac
-}
-
 # airplanes_diagnostics_read_intent_ack
 #   echoes one of: "true", "false", or empty.
 #   The ack file records the last diagnostics_enabled state the server
@@ -502,83 +481,6 @@ build_pi_throttle_json() {
     printf 'null'
 }
 
-# Build the feeder-attested reception block from the forwarder's readsb JSON
-# (aircraft.json + stats.json under /run/airplanes-feed, written by
-# airplanes-feed.sh's --write-json). Prints "null" — pruned from the payload —
-# when those files are absent/unreadable, jq is missing, or the data is stale.
-# aircraft.json is rewritten continuously, so a stale `now` means the forwarder
-# is down; we don't report its last gasp. max_range_nmi is gated on a real,
-# non-zero lat/lon (range from null island is meaningless); counts and signal
-# are reported regardless of location.
-build_reception_json() {
-    local json_dir aircraft_file stats_file now_epoch lat lon have_geo out
-    json_dir="$(root_path /run/airplanes-feed)"
-    aircraft_file="$json_dir/aircraft.json"
-    stats_file="$json_dir/stats.json"
-    [[ -r "$aircraft_file" && -r "$stats_file" ]] || { printf 'null'; return; }
-    command -v jq >/dev/null 2>&1 || { printf 'null'; return; }
-
-    now_epoch="$(date +%s 2>/dev/null)"
-    [[ "$now_epoch" =~ ^[0-9]+$ ]] || { printf 'null'; return; }
-
-    lat="$(feed_env_get LATITUDE 2>/dev/null || true)"
-    lon="$(feed_env_get LONGITUDE 2>/dev/null || true)"
-    # Geo gate: report range only with a valid, non-zero lat/lon. Both
-    # coordinates zero (0, +0, -0, 0.0, …) is the unconfigured "null island"
-    # default; a single zero is legitimate (equator / prime meridian). A value
-    # that isn't a plain decimal number is treated as no-geo — we won't trust
-    # range derived from a coordinate we can't parse.
-    have_geo=false
-    if [[ "$lat" =~ ^[+-]?[0-9]+(\.[0-9]+)?$ && "$lon" =~ ^[+-]?[0-9]+(\.[0-9]+)?$ ]]; then
-        if [[ "$lat" =~ ^[+-]?0+(\.0*)?$ && "$lon" =~ ^[+-]?0+(\.0*)?$ ]]; then
-            have_geo=false
-        else
-            have_geo=true
-        fi
-    fi
-
-    # timeout: a pathological aircraft.json must never hang the diagnostics
-    # run. An empty file slurps to [] → $a is null → null result; a malformed
-    # file makes jq exit nonzero, caught by the `if` and reported as null.
-    # `num` coerces non-number fields to null so a wrong-typed value can't
-    # produce string concatenation or a phantom zero. rssi: drop readsb's
-    # ~-49.5 dBFS no-signal floor before averaging.
-    if out="$(timeout 3s jq -nc \
-        --argjson now_epoch "$now_epoch" \
-        --argjson have_geo "$have_geo" \
-        --slurpfile ac "$aircraft_file" \
-        --slurpfile st "$stats_file" \
-        '
-        def num: if type == "number" then . else null end;
-        ($ac[0]) as $a | ($st[0]) as $s
-        | if ($a | type) != "object" or ($s | type) != "object" then null
-          elif ($a.now | num) == null
-               or (($now_epoch - $a.now) > 120) or (($a.now - $now_epoch) > 120) then null
-          else
-            ([ $a.aircraft[]? | .rssi? | select(type == "number" and . > -49.4) ]) as $rssi
-            | ($s.aircraft_with_pos | num) as $wp
-            | ($s.aircraft_without_pos | num) as $wo
-            | ($s.total.max_distance | num) as $md
-            | {
-                aircraft_total: (if $wp != null and $wo != null then $wp + $wo else null end),
-                aircraft_with_pos: $wp,
-                max_range_nmi: (if $have_geo and $md != null
-                    then (($md / 1852.0) | (. * 10 | round) / 10)
-                    else null end),
-                rssi_avg_dbfs: (if ($rssi | length) > 0
-                    then (($rssi | add) / ($rssi | length) | (. * 10 | round) / 10)
-                    else null end),
-                rssi_max_dbfs: (if ($rssi | length) > 0 then ($rssi | max) else null end)
-              }
-            | with_entries(select(.value != null))
-          end
-        ' 2>/dev/null)" && [[ -n "$out" ]]; then
-        printf '%s' "$out"
-    else
-        printf 'null'
-    fi
-}
-
 # nullable_num VALUE — echoes the value if non-empty, otherwise "null".
 # Used with `jq --argjson` so missing numerics become JSON null and the
 # `del(.. | nulls?)` pass strips them from the payload.
@@ -646,27 +548,18 @@ main() {
     # between enabled/disabled gets a one-shot POST (full payload or
     # minimal goodbye) on the next tick, retrying naturally on the
     # timer cadence until the server acks.
-    local report_status_raw
+    local report_status_raw toggle
     report_status_raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
-    # A REPORT_STATUS line the strict reader refuses (same-line comment,
-    # broken quoting) must not fail open to the enabled default: a key
-    # that is present but unreadable gets the same bad-config exit as a
-    # parseable-but-invalid value. Privacy toggles fail closed.
-    if [[ -z "$report_status_raw" ]]; then
-        local _rs_path
-        while IFS= read -r _rs_path; do
-            [[ -f "$_rs_path" ]] || continue
-            if grep -q '^[[:space:]]*REPORT_STATUS=.' "$_rs_path"; then
-                log error "status=bad_config key=REPORT_STATUS value=unreadable"
-                exit "$EXIT_BAD_CONFIG"
-            fi
-        done < <(feed_env_paths)
-    fi
-    local toggle
-    toggle="$(parse_report_status "$report_status_raw")"
+    # Privacy toggles fail closed: report_status_consent (common.sh) returns
+    # "invalid" both for a parseable-but-invalid value AND for a REPORT_STATUS
+    # line present but refused by the strict reader, so an unreadable toggle
+    # gets the same bad-config exit as a bad value rather than failing open to
+    # enabled. ${report_status_raw:-unreadable} reproduces the two historical
+    # log values (an empty raw means the present-but-unreadable case).
+    toggle="$(report_status_consent)"
     case "$toggle" in
         invalid)
-            log error "status=bad_config key=REPORT_STATUS value=${report_status_raw}"
+            log error "status=bad_config key=REPORT_STATUS value=${report_status_raw:-unreadable}"
             exit "$EXIT_BAD_CONFIG"
             ;;
     esac
@@ -789,15 +682,6 @@ main() {
         # `system.ntp_synchronized`. Server stamps `system.clock_skew_seconds`
         # separately at ingest.
         ntp_sync_json="$(collect_ntp_sync 2>/dev/null || printf 'null')"
-
-        # Feeder-attested reception stats from the forwarder's readsb JSON,
-        # POSTed separately to /api/feeders/reception below (its own lane, not
-        # folded into the diagnostics payload). "null" — and the reception POST
-        # is skipped — until the forwarder writes JSON, or when the data is
-        # stale / jq is unavailable.
-        local reception_json
-        reception_json="$(build_reception_json 2>/dev/null || true)"
-        [[ -n "$reception_json" ]] || reception_json='null'
 
         local feed_scripts_version os_pretty_name os_id os_version_id kernel architecture image_release
         feed_scripts_version="$(get_feed_scripts_version || true)"
@@ -946,36 +830,6 @@ main() {
     status="$(post_json_bearer "$token" '/api/feeders/diagnostics' "$payload" "$response_file")"
     curl_rc=$?
     set -e
-
-    # Feeder-attested reception stats go to their own endpoint — a separate
-    # lane from device-health diagnostics. Best-effort and independent: a
-    # failure here is logged but never changes the diagnostics result. Rides
-    # the same REPORT_STATUS consent (full mode only) and is sent only when the
-    # forwarder produced fresh data (reception_json != null). Flattened onto the
-    # envelope so the server's reception sanitizer reads scalars top-level.
-    # Skipped when the diagnostics POST hit a transport error — the same dead
-    # network would just stall another curl timeout for nothing.
-    if (( curl_rc == 0 )) \
-        && [[ "$mode" == "full" && "${reception_json:-null}" != "null" ]]; then
-        local reception_payload reception_response reception_status
-        reception_payload="$(jq -nc \
-            --arg ts "$ts" \
-            --arg uuid "$uuid" \
-            --argjson reception "$reception_json" \
-            '{schema_version: 1, ts: $ts, uuid: $uuid} + $reception')" \
-            || reception_payload=''
-        if [[ -n "$reception_payload" ]]; then
-            reception_response="$(new_tmp_file)"
-            set +e
-            reception_status="$(post_json_bearer "$token" '/api/feeders/reception' "$reception_payload" "$reception_response")"
-            set -e
-            if [[ "$reception_status" == 2* ]]; then
-                log info "status=reception_ok http=$reception_status"
-            else
-                log warn "status=reception_failed http=${reception_status:-none}"
-            fi
-        fi
-    fi
 
     # Wipe the token before any further work — it's no longer needed.
     token=''

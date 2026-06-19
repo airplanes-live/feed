@@ -410,6 +410,55 @@ feed_env_get() {
     printf '%s\n' "$value"
 }
 
+# parse_report_status RAW
+#   echoes one of: enabled, disabled, invalid, empty
+#   "empty" means the raw value was empty (key unset on the line read).
+#   Treated as enabled by report_status_consent.
+parse_report_status() {
+    local raw="$1"
+    if [[ -z "$raw" ]]; then
+        printf '%s' 'empty'
+        return
+    fi
+    local lower
+    lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+    # strip leading/trailing whitespace
+    lower="${lower#"${lower%%[![:space:]]*}"}"
+    lower="${lower%"${lower##*[![:space:]]}"}"
+    case "$lower" in
+        true|yes|1|on) printf '%s' 'enabled' ;;
+        false|no|0|off) printf '%s' 'disabled' ;;
+        *) printf '%s' 'invalid' ;;
+    esac
+}
+
+# report_status_consent
+#   Resolve the REPORT_STATUS privacy toggle across the effective feed.env
+#   files. Echoes one of: enabled | disabled | invalid.
+#     - unset/absent              → enabled (the opt-out default)
+#     - present but the strict reader refuses it (same-line comment, broken
+#       quoting) → invalid: privacy toggles fail CLOSED, never to enabled
+#     - parseable value           → enabled/disabled/invalid via parse_report_status
+#   Single-sourced here so airplanes-diagnostics.sh and airplanes-stats.sh
+#   apply the identical fail-closed rule — a drift between them is a privacy bug.
+report_status_consent() {
+    local raw
+    raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
+    if [[ -z "$raw" ]]; then
+        local _rs_path
+        while IFS= read -r _rs_path; do
+            [[ -f "$_rs_path" ]] || continue
+            if grep -q '^[[:space:]]*REPORT_STATUS=.' "$_rs_path"; then
+                printf '%s' 'invalid'
+                return
+            fi
+        done < <(feed_env_paths)
+        printf '%s' 'enabled'
+        return
+    fi
+    parse_report_status "$raw"
+}
+
 apl_auth_token() {
     # Build the v1 Authorization: Bearer token shape `alv1.<uuid>.<secret>`
     # from a raw uuid + secret pair. Canonicalizes both internally so call

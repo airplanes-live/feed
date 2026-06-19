@@ -57,3 +57,13 @@ setup() {
     # key. We match the JSON-key shape `"current_secret":` only.)
     [ "$(grep -cE '"current_secret":' "$REPO_ROOT/scripts/apl-feed/claim.sh")" -eq 0 ]
 }
+
+@test "stats uploader posts to /api/feeders/stats" {
+    grep -q -- "/api/feeders/stats" "$REPO_ROOT/scripts/airplanes-stats.sh"
+}
+
+@test "no script posts to the retired /api/feeders/reception endpoint" {
+    # The scalar reception lane was replaced by the raw-snapshot /stats lane.
+    # A stray /reception literal would silently 404/410 on every feeder tick.
+    [ "$(grep -rlF -- '/api/feeders/reception' "$REPO_ROOT/scripts" | wc -l)" -eq 0 ]
+}
