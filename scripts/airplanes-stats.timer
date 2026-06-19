@@ -1,0 +1,12 @@
+[Unit]
+Description=Push feeder stats to airplanes.live every 2 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+RandomizedDelaySec=45s
+Unit=airplanes-stats.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -512,6 +512,10 @@ SH
     [ -f "$root/etc/airplanes/image-install" ]
     grep -q 'systemctl enable airplanes-feed' "$ROOT_DIR/commands.log"
     grep -q 'systemctl enable airplanes-mlat' "$ROOT_DIR/commands.log"
+    # Stats uploader unit is copied and its timer enabled (build-mode record).
+    [ -f "$root/etc/systemd/system/airplanes-stats.service" ]
+    [ -f "$root/etc/systemd/system/airplanes-stats.timer" ]
+    grep -q 'systemctl enable airplanes-stats.timer' "$ROOT_DIR/commands.log"
     ! grep -q 'systemctl restart' "$ROOT_DIR/commands.log"
     ! grep -q 'systemctl stop' "$ROOT_DIR/commands.log"
     ! grep -q 'systemctl is-active' "$ROOT_DIR/commands.log"

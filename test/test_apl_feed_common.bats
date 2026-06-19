@@ -854,3 +854,61 @@ STUB
     _set_website_host
     [ "$WEBSITE_HOST" = "invalid" ]
 }
+
+# --- parse_report_status ---
+
+@test "parse_report_status: truthy spellings → enabled" {
+    for v in true TRUE yes Yes 1 on ON; do
+        run parse_report_status "$v"
+        [ "$output" = enabled ] || { echo "got '$output' for '$v'"; return 1; }
+    done
+}
+
+@test "parse_report_status: falsey spellings → disabled" {
+    for v in false FALSE no No 0 off OFF; do
+        run parse_report_status "$v"
+        [ "$output" = disabled ] || { echo "got '$output' for '$v'"; return 1; }
+    done
+}
+
+@test "parse_report_status: empty → empty, junk → invalid" {
+    run parse_report_status ""
+    [ "$output" = empty ]
+    run parse_report_status "maybe"
+    [ "$output" = invalid ]
+}
+
+# --- report_status_consent (shared by diagnostics + stats) ---
+
+@test "report_status_consent: REPORT_STATUS unset → enabled (opt-out default)" {
+    printf 'LATITUDE=1\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    run report_status_consent
+    [ "$output" = enabled ]
+}
+
+@test "report_status_consent: REPORT_STATUS=true → enabled" {
+    printf 'REPORT_STATUS=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    run report_status_consent
+    [ "$output" = enabled ]
+}
+
+@test "report_status_consent: REPORT_STATUS=false → disabled" {
+    printf 'REPORT_STATUS=false\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    run report_status_consent
+    [ "$output" = disabled ]
+}
+
+@test "report_status_consent: garbage value → invalid" {
+    printf 'REPORT_STATUS=perhaps\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    run report_status_consent
+    [ "$output" = invalid ]
+}
+
+@test "report_status_consent: present but strict-reader-refused → invalid (fail closed)" {
+    # A same-line comment makes the strict reader drop the key (feed_env_get
+    # returns empty), but the key IS present on the line → must fail CLOSED to
+    # invalid, never to the enabled default.
+    printf 'REPORT_STATUS=true # inline comment\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+    run report_status_consent
+    [ "$output" = invalid ]
+}

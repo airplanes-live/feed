@@ -57,30 +57,31 @@ SH
     [ -f "$SYSTEMCTL_LOG" ]
 }
 
-@test "uninstall.sh disables services in mlat -> mlat2 -> feed -> diagnostics -> config-sync order, then daemon-reloads, exactly eight calls" {
+@test "uninstall.sh disables services in mlat -> mlat2 -> feed -> diagnostics -> stats -> config-sync order, then daemon-reloads, exactly ten calls" {
     run_uninstall
 
     [ "$status" -eq 0 ]
 
-    local first second third fourth fifth sixth seventh eighth count
-    first="$(sed -n '1p' "$SYSTEMCTL_LOG")"
-    second="$(sed -n '2p' "$SYSTEMCTL_LOG")"
-    third="$(sed -n '3p' "$SYSTEMCTL_LOG")"
-    fourth="$(sed -n '4p' "$SYSTEMCTL_LOG")"
-    fifth="$(sed -n '5p' "$SYSTEMCTL_LOG")"
-    sixth="$(sed -n '6p' "$SYSTEMCTL_LOG")"
-    seventh="$(sed -n '7p' "$SYSTEMCTL_LOG")"
-    eighth="$(sed -n '8p' "$SYSTEMCTL_LOG")"
+    local expected=(
+        "disable --now airplanes-mlat"
+        "disable --now airplanes-mlat2"
+        "disable --now airplanes-feed"
+        "disable --now airplanes-diagnostics.timer"
+        "disable --now airplanes-diagnostics.service"
+        "disable --now airplanes-stats.timer"
+        "disable --now airplanes-stats.service"
+        "disable --now airplanes-config-sync.timer"
+        "disable --now airplanes-config-sync.service"
+        "daemon-reload"
+    )
+    local i line
+    for i in "${!expected[@]}"; do
+        line="$(sed -n "$((i + 1))p" "$SYSTEMCTL_LOG")"
+        [ "$line" = "${expected[$i]}" ] || { echo "line $((i+1)): '$line' != '${expected[$i]}'"; return 1; }
+    done
+    local count
     count="$(wc -l < "$SYSTEMCTL_LOG" | tr -d '[:space:]')"
-    [ "$first" = "disable --now airplanes-mlat" ]
-    [ "$second" = "disable --now airplanes-mlat2" ]
-    [ "$third" = "disable --now airplanes-feed" ]
-    [ "$fourth" = "disable --now airplanes-diagnostics.timer" ]
-    [ "$fifth" = "disable --now airplanes-diagnostics.service" ]
-    [ "$sixth" = "disable --now airplanes-config-sync.timer" ]
-    [ "$seventh" = "disable --now airplanes-config-sync.service" ]
-    [ "$eighth" = "daemon-reload" ]
-    [ "$count" = "8" ]
+    [ "$count" = "${#expected[@]}" ]
 }
 
 @test "uninstall.sh removes the airplanes systemd unit files and leaves others alone" {

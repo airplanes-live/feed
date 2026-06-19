@@ -563,6 +563,7 @@ historical_top_level_scripts=(
     airplanes-feed.sh
     airplanes-mlat.sh
     airplanes-diagnostics.sh
+    airplanes-stats.sh
     apl-feed.sh
     second-mlat.sh
 )
@@ -652,6 +653,8 @@ cp "$GIT"/scripts/airplanes-mlat.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-feed.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-diagnostics.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-diagnostics.timer "$SYSTEMD_DIR"
+cp "$GIT"/scripts/airplanes-stats.service "$SYSTEMD_DIR"
+cp "$GIT"/scripts/airplanes-stats.timer "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-config-sync.service "$SYSTEMD_DIR"
 cp "$GIT"/scripts/airplanes-config-sync.timer "$SYSTEMD_DIR"
 
@@ -778,6 +781,22 @@ elif is_unit_masked airplanes-diagnostics.timer; then
 else
     systemctl enable --now airplanes-diagnostics.timer >> "$LOGFILE" 2>&1 || \
         echo "airplanes-diagnostics.timer could not be enabled; diagnostics push will not run until 'systemctl enable --now airplanes-diagnostics.timer'."
+fi
+
+# Stats push: enable the timer so airplanes-stats.sh forwards the forwarder's
+# readsb JSON every ~120s once a claim secret is present. Independent of the
+# diagnostics timer (different cadence, separate lane). The uploader self-gates
+# on REPORT_STATUS and exits silently when unclaimed or when the forwarder JSON
+# isn't ready, so wiring the timer here is safe on a fresh box.
+if airplanes_is_build_mode; then
+    # In build mode there's no live systemd; just record the enable so the
+    # baked rootfs comes up with the timer wired into timers.target.
+    systemctl enable airplanes-stats.timer >> "$LOGFILE" || true
+elif is_unit_masked airplanes-stats.timer; then
+    echo "airplanes-stats.timer is masked; skipping enable."
+else
+    systemctl enable --now airplanes-stats.timer >> "$LOGFILE" 2>&1 || \
+        echo "airplanes-stats.timer could not be enabled; stats push will not run until 'systemctl enable --now airplanes-stats.timer'."
 fi
 
 # Remote-config sync: enable the timer so apl-feed config sync fires every

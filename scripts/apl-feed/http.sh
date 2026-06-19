@@ -77,6 +77,52 @@ post_json_bearer() {
     return "$rc"
 }
 
+# post_gzip_bearer <token> <path> <gzip_file> <response_file>
+#
+# Like post_json_bearer, but uploads a PRE-gzipped request body read from a file
+# and sets Content-Encoding: gzip so the server gunzips it. Compression and the
+# size check stay in the caller (airplanes-stats.sh needs the compressed size
+# for its outline-drop fallback), so this helper owns only transport. The bearer
+# goes into a 0600 curl --config file (not argv), same as post_json_bearer.
+# --max-time is larger than the JSON helpers' because the raw-snapshot upload is
+# bigger than the sub-KiB control bodies. Response capped at 128 KiB.
+#
+# Returns curl's exit code; echoes the HTTP status to stdout (empty on transport
+# failure).
+post_gzip_bearer() {
+    local token="$1"
+    local path="$2"
+    local gzip_file="$3"
+    local response_file="$4"
+
+    local cfg rc
+    cfg="$(mktemp -t apl-feed-curlcfg.XXXXXX)" || return 1
+    chmod 0600 "$cfg" || { rm -f "$cfg"; return 1; }
+    # Same cleanup contract as post_json_bearer: explicit rm at return, with
+    # TMP_FILES as the EXIT-trap safety net for direct (non-$()) callers.
+    TMP_FILES+=("$cfg")
+    local escaped="${token//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    if ! printf 'header = "Authorization: Bearer %s"\n' "$escaped" > "$cfg"; then
+        rm -f "$cfg"
+        return 1
+    fi
+
+    curl --silent --show-error \
+        --connect-timeout 10 --max-time 60 --max-filesize 131072 \
+        --request POST \
+        --header 'Content-Type: application/json' \
+        --header 'Content-Encoding: gzip' \
+        --config "$cfg" \
+        --data-binary @"$gzip_file" \
+        --output "$response_file" \
+        --write-out '%{http_code}' \
+        "$WEBSITE_URL$path"
+    rc=$?
+    rm -f "$cfg"
+    return "$rc"
+}
+
 body_preview() {
     local file="$1"
     head -c 200 "$file" || true

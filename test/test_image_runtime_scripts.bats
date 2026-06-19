@@ -130,8 +130,8 @@ SH
     if grep -q -- '--forward-mlat' "$arg_log"; then
         return 1
     fi
-    # --write-json now feeds the reception-stats uploader. It must target the
-    # forwarder's own RuntimeDirectory, never the image decoder's /run/readsb,
+    # --write-json feeds the stats uploader (airplanes-stats.sh). It must target
+    # the forwarder's own RuntimeDirectory, never the image decoder's /run/readsb,
     # and must not pull in globe-index shards.
     grep -q -- "--write-json $root/run/airplanes-feed" "$arg_log"
     if grep -q -- '/run/readsb' "$arg_log"; then
@@ -148,12 +148,12 @@ SH
     fi
 }
 
-@test "airplanes-feed.sh writes reception JSON on a manual (non-image) install" {
+@test "airplanes-feed.sh writes stats JSON on a manual (non-image) install" {
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/args-manual.log"
     # No image feed binary and no image-install marker → IMAGE_INSTALL=0, the
     # forwarder sources /etc/airplanes/feed.env and uses the built feed-airplanes
-    # binary. The reception JSON contract must be identical to the image branch.
+    # binary. The stats JSON contract must be identical to the image branch.
     mkdir -p "$root/etc/airplanes" "$root/usr/local/share/airplanes"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 LATITUDE="52.52"

@@ -121,6 +121,8 @@ stage_install_footprint() {
         : > "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
         : > "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.service"
         : > "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.timer"
+        : > "$ROOT_DIR/etc/systemd/system/airplanes-stats.service"
+        : > "$ROOT_DIR/etc/systemd/system/airplanes-stats.timer"
         : > "$ROOT_DIR/etc/airplanes/image-install"
     else
         mkdir -p "$ROOT_DIR/lib/systemd/system"
@@ -128,6 +130,8 @@ stage_install_footprint() {
         : > "$ROOT_DIR/lib/systemd/system/airplanes-mlat.service"
         : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.service"
         : > "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer"
+        : > "$ROOT_DIR/lib/systemd/system/airplanes-stats.service"
+        : > "$ROOT_DIR/lib/systemd/system/airplanes-stats.timer"
     fi
 
     # Diagnostics state directory — systemd's StateDirectory=airplanes-diagnostics
@@ -172,6 +176,8 @@ run_uninstall() {
     [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-mlat.service" ]
     [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.service" ]
     [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-diagnostics.timer" ]
+    [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-stats.service" ]
+    [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-stats.timer" ]
 }
 
 @test "after install footprint, uninstall removes /var/lib/airplanes-diagnostics state dir" {
@@ -300,6 +306,8 @@ run_uninstall() {
     [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service" ]
     [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.service" ]
     [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-diagnostics.timer" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-stats.service" ]
+    [ ! -e "$ROOT_DIR/etc/systemd/system/airplanes-stats.timer" ]
     [ ! -e "$ROOT_DIR/etc/airplanes/image-install" ]
 }
 
