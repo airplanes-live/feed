@@ -6,12 +6,12 @@ After=network-online.target airplanes-feed.service
 [Service]
 Type=oneshot
 # Runs as the forwarder's user so it can read the 0640 airplanes-feed:airplanes-feed
-# claim secret and the forwarder's readsb JSON under /run/airplanes-feed. It needs
-# no directory of its own: it only READS /run/airplanes-feed (owned by
+# claim secret and the forwarder's readsb JSON under /run/airplanes/feed. It needs
+# no directory of its own: it only READS /run/airplanes/feed (owned by
 # airplanes-feed.service) and writes scratch files to its private /tmp. Declaring
-# RuntimeDirectory=airplanes-feed would clobber the forwarder's dir, so none is set.
+# RuntimeDirectory=airplanes/feed would clobber the forwarder's dir, so none is set.
 User=airplanes-feed
-ExecStart=/usr/local/share/airplanes/airplanes-stats.sh
+ExecStart=/opt/airplanes/current/share/airplanes/airplanes-stats.sh
 TimeoutStartSec=60s
 SyslogIdentifier=airplanes-stats
 NoNewPrivileges=yes

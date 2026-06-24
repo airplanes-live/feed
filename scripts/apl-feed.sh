@@ -9,7 +9,7 @@ resolve_lib_dir() {
     if [[ -d "$script_dir/apl-feed" ]]; then
         printf '%s\n' "$script_dir/apl-feed"
     else
-        printf '%s\n' '/usr/local/share/airplanes/apl-feed'
+        printf '%s\n' '/opt/airplanes/current/share/airplanes/apl-feed'
     fi
 }
 
@@ -24,7 +24,7 @@ resolve_daemon_lib_dir() {
     if [[ -d "$script_dir/lib" ]]; then
         printf '%s\n' "$script_dir/lib"
     else
-        printf '%s\n' '/usr/local/share/airplanes/lib'
+        printf '%s\n' '/opt/airplanes/current/share/airplanes/lib'
     fi
 }
 APL_FEED_DAEMON_LIB_DIR="${APL_FEED_DAEMON_LIB_DIR:-$(resolve_daemon_lib_dir)}"

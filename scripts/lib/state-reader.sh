@@ -11,7 +11,7 @@
 # contain shell metacharacters. Parse line-by-line.
 #
 # Usage:
-#   if reason="$(airplanes_read_state /run/airplanes-mlat/state reason)"; then
+#   if reason="$(airplanes_read_state /run/airplanes/mlat/state reason)"; then
 #       printf 'reason=%s\n' "$reason"
 #   else
 #       printf 'state file unavailable or unparseable\n'

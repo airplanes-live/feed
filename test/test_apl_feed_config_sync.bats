@@ -69,10 +69,10 @@ STUB
         > "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     chmod 0640 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
 
-    AIRPLANES_CONFIG_SYNC_LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes-config-sync/config-sync-last-success"
+    AIRPLANES_CONFIG_SYNC_LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes/config-sync/config-sync-last-success"
     export AIRPLANES_CONFIG_SYNC_LAST_SUCCESS
 
-    AIRPLANES_CONFIG_SYNC_STATE="$ROOT_DIR/var/lib/airplanes-config-sync/state"
+    AIRPLANES_CONFIG_SYNC_STATE="$ROOT_DIR/var/lib/airplanes/config-sync/state"
     export AIRPLANES_CONFIG_SYNC_STATE
 }
 
@@ -728,7 +728,7 @@ EOF
     # ReadWritePaths= bind to a not-yet-existent /var/lib/airplanes fails
     # namespace setup (status=226/NAMESPACE) when config-sync.timer fires first.
     local unit="$REPO_ROOT/scripts/airplanes-config-sync.service"
-    run grep -qE '^StateDirectory=airplanes-config-sync$' "$unit"
+    run grep -qE '^StateDirectory=airplanes/config-sync$' "$unit"
     [ "$status" -eq 0 ]
     run grep -E '^ReadWritePaths=' "$unit"
     [ "$status" -eq 0 ]

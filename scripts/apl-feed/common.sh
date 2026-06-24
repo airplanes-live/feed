@@ -160,7 +160,7 @@ uuid_file_primary() {
 }
 
 uuid_file_legacy() {
-    root_path '/usr/local/share/airplanes/airplanes-uuid'
+    root_path '/var/lib/airplanes/runtime/airplanes-uuid'
 }
 
 uuid_file_boot() {
@@ -184,7 +184,7 @@ feed_env_path() {
         root_path '/etc/airplanes/feed.env'
         return
     fi
-    if [[ -x "$(root_path '/usr/bin/airplanes-feeder')" && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
+    if [[ -f "$(root_path '/etc/airplanes/image-install')" && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
         root_path '/boot/airplanes-config.txt'
         return
     fi
@@ -205,8 +205,8 @@ feed_env_write_path() {
 
 # Bootstrap the canonical feed.env from a bridged-legacy boot config when
 # canonical is missing. Idempotent: no-op when canonical already exists.
-# Detection mirrors feed_env_path()'s legacy fallback: airplanes-feeder
-# binary installed (bridge ran) + /boot/airplanes-config.txt present.
+# Detection mirrors feed_env_path()'s legacy fallback: the image-install
+# marker is present + /boot/airplanes-config.txt present.
 #
 # Without this, every apl-feed writer (mlat, uat, eventually configure
 # wrappers) would error out with "feed.env not found" on a bridged-legacy
@@ -226,10 +226,10 @@ feed_env_ensure_canonical_for_write() {
     canonical="$(feed_env_write_path)"
     [[ -f "$canonical" ]] && return 0
 
-    local boot_config feeder_binary
+    local boot_config image_marker
     boot_config="$(root_path '/boot/airplanes-config.txt')"
-    feeder_binary="$(root_path '/usr/bin/airplanes-feeder')"
-    if [[ ! -x "$feeder_binary" || ! -f "$boot_config" ]]; then
+    image_marker="$(root_path '/etc/airplanes/image-install')"
+    if [[ ! -f "$image_marker" || ! -f "$boot_config" ]]; then
         return 0
     fi
 
@@ -253,7 +253,7 @@ feed_env_paths() {
         printf '\n'
         return
     fi
-    if [[ -x "$(root_path '/usr/bin/airplanes-feeder')" && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
+    if [[ -f "$(root_path '/etc/airplanes/image-install')" && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
         root_path '/boot/airplanes-config.txt'
         printf '\n'
         root_path '/boot/airplanes-env'

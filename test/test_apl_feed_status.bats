@@ -14,7 +14,7 @@ setup() {
     STUB_DIR="$ROOT_DIR/bin"
     mkdir -p "$TMPDIR" "$STUB_DIR" \
         "$ROOT_DIR/etc/airplanes" \
-        "$ROOT_DIR/usr/local/share/airplanes"
+        "$ROOT_DIR/opt/airplanes/current/share/airplanes"
     export TMPDIR
     APL_FEED_SECRET_OWNER="$(id -un)"
     APL_FEED_SECRET_GROUP="$(id -gn)"
@@ -233,7 +233,7 @@ write_mlat_state() {
     local decision="$1"
     local reason="$2"
     local mlat_private="${3:-}"
-    mkdir -p "$ROOT_DIR/run/airplanes-mlat"
+    mkdir -p "$ROOT_DIR/run/airplanes/mlat"
     {
         printf 'schema_version=1\n'
         printf 'service=airplanes-mlat\n'
@@ -242,7 +242,7 @@ write_mlat_state() {
         if [[ -n "$mlat_private" ]]; then
             printf 'mlat_private=%s\n' "$mlat_private"
         fi
-    } > "$ROOT_DIR/run/airplanes-mlat/state"
+    } > "$ROOT_DIR/run/airplanes/mlat/state"
 }
 
 # Helper: stub systemctl to return a chosen ActiveState / ExecMainStatus /
@@ -373,7 +373,7 @@ STUB
 }
 
 @test "mlat_status_line: ActiveState=failed + exit 64 + no state file → generic 'check feed.env MLAT config'" {
-    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    rm -rf "$ROOT_DIR/run/airplanes/mlat"
     stub_systemctl_active_state failed 64
     status_init
     STATUS_OUTPUT_JSON=0
@@ -383,7 +383,7 @@ STUB
 }
 
 @test "mlat_status_line: ActiveState=failed + exit other → 'failed (exit X)'" {
-    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    rm -rf "$ROOT_DIR/run/airplanes/mlat"
     stub_systemctl_active_state failed 1
     status_init
     STATUS_OUTPUT_JSON=0
@@ -393,7 +393,7 @@ STUB
 }
 
 @test "mlat_status_line: ActiveState=inactive + is-enabled=enabled → 'not running'" {
-    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    rm -rf "$ROOT_DIR/run/airplanes/mlat"
     stub_systemctl_active_state inactive 0 enabled
     status_init
     STATUS_OUTPUT_JSON=0
@@ -403,7 +403,7 @@ STUB
 }
 
 @test "mlat_status_line: ActiveState=inactive + is-enabled=masked → 'masked'" {
-    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    rm -rf "$ROOT_DIR/run/airplanes/mlat"
     stub_systemctl_active_state inactive 0 masked
     status_init
     STATUS_OUTPUT_JSON=0
@@ -413,7 +413,7 @@ STUB
 }
 
 @test "mlat_status_line: ActiveState=deactivating → 'not running'" {
-    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    rm -rf "$ROOT_DIR/run/airplanes/mlat"
     stub_systemctl_active_state deactivating
     status_init
     STATUS_OUTPUT_JSON=0
@@ -423,7 +423,7 @@ STUB
 }
 
 @test "mlat_status_line: ActiveState=active + no state file → degraded 'running' fallback" {
-    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    rm -rf "$ROOT_DIR/run/airplanes/mlat"
     stub_systemctl_active_state active
     status_init
     STATUS_OUTPUT_JSON=0
@@ -433,7 +433,7 @@ STUB
 }
 
 @test "mlat_status_line: ActiveState=activating + no state file → 'starting up'" {
-    rm -rf "$ROOT_DIR/run/airplanes-mlat"
+    rm -rf "$ROOT_DIR/run/airplanes/mlat"
     stub_systemctl_active_state activating
     status_init
     STATUS_OUTPUT_JSON=0
@@ -1222,7 +1222,7 @@ stop_python_mock() {
 
 _seed_config_sync_sentinel() {
     # $1 (optional): a `touch -d` time spec for the mtime (default: now).
-    local f="$ROOT_DIR/var/lib/airplanes-config-sync/config-sync-last-success"
+    local f="$ROOT_DIR/var/lib/airplanes/config-sync/config-sync-last-success"
     mkdir -p "$(dirname "$f")"
     if [[ -n "${1:-}" ]]; then
         touch -d "$1" "$f"
@@ -1317,7 +1317,7 @@ _seed_config_sync_sentinel() {
 # Helper: write a feed daemon state file carrying the published
 # effective-endpoint keys. write_feed_daemon_state <host> <port> <is_default>
 write_feed_daemon_state() {
-    mkdir -p "$ROOT_DIR/run/airplanes-feed"
+    mkdir -p "$ROOT_DIR/run/airplanes/feed"
     {
         printf 'schema_version=1\n'
         printf 'service=airplanes-feed\n'
@@ -1326,13 +1326,13 @@ write_feed_daemon_state() {
         printf 'target_host=%s\n' "$1"
         printf 'target_port=%s\n' "$2"
         printf 'target_is_default=%s\n' "$3"
-    } > "$ROOT_DIR/run/airplanes-feed/state"
+    } > "$ROOT_DIR/run/airplanes/feed/state"
 }
 
 # Helper: like write_mlat_state but with the endpoint keys.
 # write_mlat_state_with_server <decision> <reason> <server> <is_default>
 write_mlat_state_with_server() {
-    mkdir -p "$ROOT_DIR/run/airplanes-mlat"
+    mkdir -p "$ROOT_DIR/run/airplanes/mlat"
     {
         printf 'schema_version=1\n'
         printf 'service=airplanes-mlat\n'
@@ -1340,7 +1340,7 @@ write_mlat_state_with_server() {
         printf 'reason=%s\n' "$2"
         printf 'mlat_server=%s\n' "$3"
         printf 'mlat_server_is_default=%s\n' "$4"
-    } > "$ROOT_DIR/run/airplanes-mlat/state"
+    } > "$ROOT_DIR/run/airplanes/mlat/state"
 }
 
 @test "feed target suffix: non-default host renders bracket" {

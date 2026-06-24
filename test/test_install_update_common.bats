@@ -54,7 +54,17 @@ write_archive_fallback_stubs() {
     [ "$(airplanes_path /etc/airplanes/feed.env)" = "$ROOT_DIR/etc/airplanes/feed.env" ]
 }
 
-@test "image install detection supports canonical feed.env without boot config" {
+@test "image install detection accepts marker file with boot config (no feed.env)" {
+    mkdir -p "$ROOT_DIR/etc/airplanes" "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
+    printf 'USER="image"\n' > "$ROOT_DIR/boot/airplanes-config.txt"
+
+    run airplanes_is_image_install
+
+    [ "$status" -eq 0 ]
+}
+
+@test "image install detection ignores the legacy feeder binary (signal dropped)" {
     mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/etc/airplanes"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
     chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
@@ -62,7 +72,7 @@ write_archive_fallback_stubs() {
 
     run airplanes_is_image_install
 
-    [ "$status" -eq 0 ]
+    [ "$status" -ne 0 ]
 }
 
 @test "image install detection accepts marker file with feed.env (new contract)" {
@@ -93,7 +103,14 @@ write_archive_fallback_stubs() {
     [ "$status" -ne 0 ]
 }
 
-@test "feed-bin resolver picks legacy /usr/bin/airplanes-feeder when present" {
+@test "feed-bin resolver returns the unified /opt prefix binary" {
+    run airplanes_image_feed_bin_default
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$ROOT_DIR/opt/airplanes/current/bin/feed-airplanes" ]
+}
+
+@test "feed-bin resolver ignores the legacy feeder binary (unified path)" {
     mkdir -p "$ROOT_DIR/usr/bin"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
     chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
@@ -101,14 +118,7 @@ write_archive_fallback_stubs() {
     run airplanes_image_feed_bin_default
 
     [ "$status" -eq 0 ]
-    [ "$output" = "$ROOT_DIR/usr/bin/airplanes-feeder" ]
-}
-
-@test "feed-bin resolver falls back to /usr/local/share/airplanes/feed-airplanes when legacy missing" {
-    run airplanes_image_feed_bin_default
-
-    [ "$status" -eq 0 ]
-    [ "$output" = "$ROOT_DIR/usr/local/share/airplanes/feed-airplanes" ]
+    [ "$output" = "$ROOT_DIR/opt/airplanes/current/bin/feed-airplanes" ]
 }
 
 @test "getGIT clones the configured branch from a local repository" {

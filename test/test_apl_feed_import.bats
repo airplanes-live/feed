@@ -234,16 +234,16 @@ EOF
 }
 
 @test "bridged-legacy box: writes canonical /etc/airplanes/feed.env, not boot config" {
-    # Reproduce the production shape that broke before: airplanes-feeder
-    # binary is present (bridge installed it), /etc/airplanes/feed.env
-    # does NOT exist yet, /boot/airplanes-config.txt does. feed_env_path()
+    # Reproduce the production shape that broke before: the
+    # /etc/airplanes/image-install marker is present (bridge laid it),
+    # /etc/airplanes/feed.env does NOT exist yet, /boot/airplanes-config.txt
+    # does. feed_env_path()
     # in this shape returns /boot/airplanes-config.txt as a status-reader
     # fallback — but the import writer must always target the canonical
     # path so the new daemons get a real feed.env to source.
     rm -rf "$ROOT_DIR/etc/airplanes"
-    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
-    : > "$ROOT_DIR/usr/bin/airplanes-feeder"
-    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    mkdir -p "$ROOT_DIR/etc/airplanes" "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
 
     cat > "$ROOT_DIR/boot/airplanes-config.txt" <<EOF
 LATITUDE=52.5

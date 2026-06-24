@@ -126,37 +126,42 @@ prepare_skip_build_state() {
     local feed_repo="$2"
     local mlat_repo="$3"
     local readsb_repo="$4"
-    local ipath="$root/usr/local/share/airplanes"
-    mkdir -p "$ipath/venv/bin"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
+    local bin="$root/opt/airplanes/current/bin"
+    local state="$root/var/lib/airplanes/runtime"
+    mkdir -p "$ipath/venv/bin" "$bin" "$state"
     cp "$feed_repo/update.sh" "$ipath/update.sh"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$ipath/venv/bin/mlat-client"
     chmod +x "$ipath/venv/bin/mlat-client"
-    git -C "$mlat_repo" rev-parse HEAD > "$ipath/mlat_version"
-    git -C "$readsb_repo" rev-parse HEAD > "$ipath/readsb_version"
-    cat > "$ipath/feed-airplanes" <<'SH'
+    git -C "$mlat_repo" rev-parse HEAD > "$state/mlat_version"
+    git -C "$readsb_repo" rev-parse HEAD > "$state/readsb_version"
+    cat > "$bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 [[ "${1:-}" == "-V" ]] && exit 0
 exit 0
 SH
-    chmod +x "$ipath/feed-airplanes"
+    chmod +x "$bin/feed-airplanes"
 }
 
 prepare_image_skip_build_state() {
     local root="$1"
     local feed_repo="$2"
     local mlat_repo="$3"
-    local ipath="$root/usr/local/share/airplanes"
-    mkdir -p "$ipath/venv/bin" "$root/usr/bin"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
+    local bin="$root/opt/airplanes/current/bin"
+    local state="$root/var/lib/airplanes/runtime"
+    mkdir -p "$ipath/venv/bin" "$bin" "$state" "$root/etc/airplanes"
     cp "$feed_repo/update.sh" "$ipath/update.sh"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$ipath/venv/bin/mlat-client"
     chmod +x "$ipath/venv/bin/mlat-client"
-    git -C "$mlat_repo" rev-parse HEAD > "$ipath/mlat_version"
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    git -C "$mlat_repo" rev-parse HEAD > "$state/mlat_version"
+    : > "$root/etc/airplanes/image-install"
+    cat > "$bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 [[ "${1:-}" == "-V" ]] && exit 0
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$bin/feed-airplanes"
 }
 
 prepare_marker_image_skip_build_state() {
@@ -164,19 +169,21 @@ prepare_marker_image_skip_build_state() {
     local feed_repo="$2"
     local mlat_repo="$3"
     local readsb_repo="$4"
-    local ipath="$root/usr/local/share/airplanes"
-    mkdir -p "$ipath/venv/bin"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
+    local bin="$root/opt/airplanes/current/bin"
+    local state="$root/var/lib/airplanes/runtime"
+    mkdir -p "$ipath/venv/bin" "$bin" "$state"
     cp "$feed_repo/update.sh" "$ipath/update.sh"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$ipath/venv/bin/mlat-client"
     chmod +x "$ipath/venv/bin/mlat-client"
-    git -C "$mlat_repo" rev-parse HEAD > "$ipath/mlat_version"
-    git -C "$readsb_repo" rev-parse HEAD > "$ipath/readsb_version"
-    cat > "$ipath/feed-airplanes" <<'SH'
+    git -C "$mlat_repo" rev-parse HEAD > "$state/mlat_version"
+    git -C "$readsb_repo" rev-parse HEAD > "$state/readsb_version"
+    cat > "$bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 [[ "${1:-}" == "-V" ]] && exit 0
 exit 0
 SH
-    chmod +x "$ipath/feed-airplanes"
+    chmod +x "$bin/feed-airplanes"
     mkdir -p "$root/etc/airplanes"
     : > "$root/etc/airplanes/image-install"
 }
@@ -184,7 +191,7 @@ SH
 @test "update.sh replaces a missing or stale installed updater before continuing" {
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
     mkdir -p "$feed_repo" "$ipath" "$root/etc"
     echo 'VERSION_ID="13"' > "$root/etc/os-release"
     cat > "$feed_repo/update.sh" <<'SH'
@@ -214,7 +221,7 @@ SH
 @test "update.sh self-replace tolerates a 0644 destination from older feed" {
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
     mkdir -p "$feed_repo" "$ipath" "$root/etc"
     echo 'VERSION_ID="13"' > "$root/etc/os-release"
     cat > "$feed_repo/update.sh" <<'SH'
@@ -243,7 +250,7 @@ SH
 @test "update.sh runs setup when no feed env exists" {
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
     mkdir -p "$ipath" "$root/etc"
     echo 'VERSION_ID="13"' > "$root/etc/os-release"
     copy_feed_fixture_repo "$feed_repo"
@@ -275,7 +282,7 @@ SH
     # Anonymous fallback this state is valid and setup.sh must NOT run.
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
     mkdir -p "$ipath" "$root/etc/airplanes"
     echo 'VERSION_ID="13"' > "$root/etc/os-release"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
@@ -322,7 +329,7 @@ SH
     local mlat_repo="$ROOT_DIR/mlat-source"
     local readsb_repo="$ROOT_DIR/readsb-source"
     local claim_bin="$ROOT_DIR/apl-feed-stub"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
 
     copy_feed_fixture_repo "$feed_repo"
     make_component_repo "$mlat_repo" master
@@ -357,11 +364,11 @@ SH
     [ "$status" -eq 0 ]
     [ -x "$root/usr/local/bin/apl-feed" ]
     [ -f "$ipath/apl-feed/common.sh" ]
-    [ -f "$root/lib/systemd/system/airplanes-feed.service" ]
-    [ -f "$root/lib/systemd/system/airplanes-mlat.service" ]
+    [ -f "$root/etc/systemd/system/airplanes-feed.service" ]
+    [ -f "$root/etc/systemd/system/airplanes-mlat.service" ]
     [ -f "$root/etc/airplanes/feeder-id" ]
-    [ -L "$ipath/airplanes-uuid" ]
-    [ "$(readlink "$ipath/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
+    [ -L "$root/var/lib/airplanes/runtime/airplanes-uuid" ]
+    [ "$(readlink "$root/var/lib/airplanes/runtime/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
     # Canonicalisers rewrote the legacy fixture: TARGET bumped to feed2
     # failover, NET_OPTIONS lost its --uuid-file arg. Brand endpoints are
     # also available as daemon defaults in the installed wrappers — `[ ...
@@ -507,7 +514,7 @@ SH
     [ ! -e "$root/lib/systemd/system/airplanes-feed.service" ]
     grep -qE '^After=.*airplanes-first-run.service' "$root/etc/systemd/system/airplanes-feed.service"
     grep -qE '^After=.*airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
-    [ -x "$root/usr/local/share/airplanes/feed-airplanes" ]
+    [ -x "$root/opt/airplanes/current/bin/feed-airplanes" ]
     [ ! -x "$root/usr/bin/airplanes-feeder" ]
     [ -f "$root/etc/airplanes/image-install" ]
     grep -q 'systemctl enable airplanes-feed' "$ROOT_DIR/commands.log"
@@ -522,7 +529,7 @@ SH
     ! grep -q 'systemctl daemon-reload' "$ROOT_DIR/commands.log"
     ! grep -q '^pgrep ' "$ROOT_DIR/commands.log"
     [ ! -e "$root/etc/airplanes/feeder-id" ]
-    [ ! -e "$root/usr/local/share/airplanes/airplanes-uuid" ]
+    [ ! -e "$root/var/lib/airplanes/runtime/airplanes-uuid" ]
     [ ! -e "$ROOT_DIR/claim.log" ]
     [[ "$output" =~ "Build mode setup complete" ]]
 }
@@ -533,7 +540,7 @@ SH
     local mlat_repo="$ROOT_DIR/mlat-source"
     local readsb_repo="$ROOT_DIR/readsb-source"
     local claim_bin="$ROOT_DIR/apl-feed-stub"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
 
     copy_feed_fixture_repo "$feed_repo"
     make_component_repo "$mlat_repo" master
@@ -566,10 +573,10 @@ SH
         bash "$UPDATE"
 
     [ "$status" -eq 0 ]
-    [ -x "$ipath/feed-airplanes" ]
+    [ -x "$root/opt/airplanes/current/bin/feed-airplanes" ]
     [ -L "$root/etc/default/airplanes" ]
-    [ -f "$root/lib/systemd/system/airplanes-feed.service" ]
-    [ ! -e "$root/etc/systemd/system/airplanes-feed.service" ]
+    [ -f "$root/etc/systemd/system/airplanes-feed.service" ]
+    [ ! -e "$root/lib/systemd/system/airplanes-feed.service" ]
     [ ! -x "$root/usr/bin/airplanes-feeder" ]
     grep -q 'systemctl restart airplanes-feed' "$ROOT_DIR/commands.log"
     [ "$(grep -c 'systemctl daemon-reload' "$ROOT_DIR/commands.log")" = "1" ]
@@ -581,7 +588,7 @@ SH
     local mlat_repo="$ROOT_DIR/mlat-source"
     local readsb_repo="$ROOT_DIR/readsb-source"
     local claim_bin="$ROOT_DIR/apl-feed-stub"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
 
     copy_feed_fixture_repo "$feed_repo"
     make_component_repo "$mlat_repo" master
@@ -614,8 +621,8 @@ SH
     [ "$status" -eq 0 ]
     # Marker-only path must not exit with "Image feed binary missing".
     ! [[ "$output" =~ "Image feed binary missing" ]]
-    grep -q "Using image-provided feed client: $ipath/feed-airplanes" <<< "$output"
-    [ -x "$ipath/feed-airplanes" ]
+    grep -q "Using image-provided feed client: $root/opt/airplanes/current/bin/feed-airplanes" <<< "$output"
+    [ -x "$root/opt/airplanes/current/bin/feed-airplanes" ]
     [ ! -e "$root/usr/bin/airplanes-feeder" ]
     [ -f "$root/etc/airplanes/image-install" ]
     [ -f "$root/etc/systemd/system/airplanes-feed.service" ]
@@ -627,7 +634,7 @@ SH
     local feed_repo="$ROOT_DIR/feed-source"
     local mlat_repo="$ROOT_DIR/mlat-source"
     local claim_bin="$ROOT_DIR/apl-feed-stub"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
 
     copy_feed_fixture_repo "$feed_repo"
     make_component_repo "$mlat_repo" master
@@ -659,15 +666,15 @@ SH
     [ -f "$ipath/apl-feed/common.sh" ]
     [ -f "$root/etc/systemd/system/airplanes-feed.service" ]
     [ -f "$root/etc/systemd/system/airplanes-mlat.service" ]
-    grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh' "$root/etc/systemd/system/airplanes-feed.service"
-    grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh' "$root/etc/systemd/system/airplanes-mlat.service"
+    grep -q 'ExecStart=/opt/airplanes/current/share/airplanes/airplanes-feed.sh' "$root/etc/systemd/system/airplanes-feed.service"
+    grep -q 'ExecStart=/opt/airplanes/current/share/airplanes/airplanes-mlat.sh' "$root/etc/systemd/system/airplanes-mlat.service"
     grep -qE '^After=.*airplanes-first-run.service' "$root/etc/systemd/system/airplanes-feed.service"
     grep -qE '^After=.*airplanes-first-run.service' "$root/etc/systemd/system/airplanes-mlat.service"
     [ ! -e "$root/lib/systemd/system/airplanes-feed.service" ]
     [ ! -e "$root/lib/systemd/system/airplanes-mlat.service" ]
     [ "$(cat "$root/etc/airplanes/feeder-id")" = "22222222-3333-4444-5555-666666666666" ]
-    [ -L "$ipath/airplanes-uuid" ]
-    [ -x "$root/usr/bin/airplanes-feeder" ]
+    [ -L "$root/var/lib/airplanes/runtime/airplanes-uuid" ]
+    [ -x "$root/opt/airplanes/current/bin/feed-airplanes" ]
     [ ! -e "$ipath/feed-airplanes" ]
     [ ! -e "$root/etc/airplanes/feed.env" ]
     [ -L "$root/etc/default/airplanes" ]
@@ -684,7 +691,7 @@ SH
 @test "update.sh sweeps orphan airplanes-mlat2 unit before falling back to setup" {
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
     mkdir -p "$ipath" "$root/etc" \
         "$root/lib/systemd/system" \
         "$root/etc/systemd/system/default.target.wants" \
@@ -741,7 +748,7 @@ SH
 @test "update.sh sweep is no-op when no orphan airplanes-mlat2 unit exists" {
     local root="$ROOT_DIR/root"
     local feed_repo="$ROOT_DIR/feed-source"
-    local ipath="$root/usr/local/share/airplanes"
+    local ipath="$root/opt/airplanes/current/share/airplanes"
     mkdir -p "$ipath" "$root/etc"
     echo 'VERSION_ID="13"' > "$root/etc/os-release"
 

@@ -59,16 +59,18 @@ teardown() {
 
 # Stage a maximally-realistic post-install state at AIRPLANES_ROOT. The
 # optional first argument selects the systemd unit layout:
-#   - "manual" (default) — units in /lib/systemd/system, no marker.
+#   - "manual" (default) — units staged in /lib/systemd/system to model a
+#     pre-FHS install whose stale units uninstall must still sweep.
 #   - "image" — units in /etc/systemd/system, /etc/airplanes/image-install
-#     marker present. Mirrors what update.sh produces when IMAGE_SERVICE_LAYOUT
-#     is set (either IMAGE_INSTALL=1 or AIRPLANES_BUILD_MODE=1).
+#     marker present.
+# update.sh now installs all units to /etc/systemd/system (SYSTEMD_DIR);
+# uninstall.sh sweeps both dirs, which this symmetry test exercises.
 #
 # Path enumeration sourced from update.sh's install steps:
-#   - $IPATH contents: update.sh:474-497, 545, 569-589, 644-651, 716
-#   - systemd units: /lib/systemd/system (manual, update.sh:594-596) or
-#     /etc/systemd/system (image, update.sh:336 + 594-596)
-#   - /usr/local/bin/apl-feed: update.sh:545
+#   - $IPATH (payload) under /opt/airplanes/current/share/airplanes
+#   - $STATE (mutable) under /var/lib/airplanes/runtime
+#   - systemd units: /etc/systemd/system (uninstall also cleans /lib/systemd/system)
+#   - /usr/local/bin/apl-feed symlink shim
 #   - /etc/airplanes/ artifacts: update.sh:428,472,569,704; create-uuid.sh;
 #     claim-registration.sh:register_claim_secret
 #   - /etc/default/airplanes symlink: update-migrations.sh:finalize_legacy_feed_env_migration
@@ -83,8 +85,8 @@ stage_install_footprint() {
         *) echo "stage_install_footprint: invalid systemd_layout '$systemd_layout'" >&2; return 2 ;;
     esac
 
-    # $IPATH (= /usr/local/share/airplanes) — wiped wholesale by uninstall.
-    local ipath="$ROOT_DIR/usr/local/share/airplanes"
+    # $IPATH (= /opt/airplanes/current/share/airplanes) — wiped wholesale by uninstall.
+    local ipath="$ROOT_DIR/opt/airplanes/current/share/airplanes"
     mkdir -p "$ipath/git"
     mkdir -p "$ipath/apl-feed"
     mkdir -p "$ipath/lib"
@@ -134,17 +136,17 @@ stage_install_footprint() {
         : > "$ROOT_DIR/lib/systemd/system/airplanes-stats.timer"
     fi
 
-    # Diagnostics state directory — systemd's StateDirectory=airplanes-diagnostics
-    # creates /var/lib/airplanes-diagnostics owned by the diagnostics user on
+    # Diagnostics state directory — systemd's StateDirectory=airplanes/diagnostics
+    # creates /var/lib/airplanes/diagnostics owned by the diagnostics user on
     # first timer fire. uninstall.sh wipes the whole directory.
-    mkdir -p "$ROOT_DIR/var/lib/airplanes-diagnostics"
-    : > "$ROOT_DIR/var/lib/airplanes-diagnostics/diagnostics-last-success"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/diagnostics"
+    : > "$ROOT_DIR/var/lib/airplanes/diagnostics/diagnostics-last-success"
 
-    # Config-sync state directory — its own StateDirectory=airplanes-config-sync
+    # Config-sync state directory — its own StateDirectory=airplanes/config-sync
     # (separate from diagnostics so the two oneshots never re-chown a shared
     # dir). uninstall.sh wipes it too.
-    mkdir -p "$ROOT_DIR/var/lib/airplanes-config-sync"
-    : > "$ROOT_DIR/var/lib/airplanes-config-sync/config-sync-last-success"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/config-sync"
+    : > "$ROOT_DIR/var/lib/airplanes/config-sync/config-sync-last-success"
 
     # CLI wrapper at /usr/local/bin — installed by update.sh:545.
     mkdir -p "$ROOT_DIR/usr/local/bin"
@@ -180,35 +182,39 @@ run_uninstall() {
     [ ! -e "$ROOT_DIR/lib/systemd/system/airplanes-stats.timer" ]
 }
 
-@test "after install footprint, uninstall removes /var/lib/airplanes-diagnostics state dir" {
+@test "after install footprint, uninstall removes /var/lib/airplanes/diagnostics state dir" {
     stage_install_footprint
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ ! -e "$ROOT_DIR/var/lib/airplanes-diagnostics" ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes/diagnostics" ]
 }
 
-@test "after install footprint, uninstall removes /var/lib/airplanes-config-sync state dir" {
+@test "after install footprint, uninstall removes /var/lib/airplanes/config-sync state dir" {
     stage_install_footprint
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ ! -e "$ROOT_DIR/var/lib/airplanes-config-sync" ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes/config-sync" ]
 }
 
-@test "after install footprint, uninstall wipes IPATH and leaves only the legacy UUID symlink" {
+@test "after install footprint, uninstall wipes IPATH and re-materializes the legacy UUID symlink under STATE" {
     stage_install_footprint
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ -d "$ROOT_DIR/usr/local/share/airplanes" ]
-    # IPATH is recreated empty (uninstall.sh:59-60) then the legacy
-    # airplanes-uuid symlink is re-materialized when canonical feeder-id
-    # exists (uninstall.sh:70-72). Nothing else should remain.
+    # IPATH is recreated empty; the legacy airplanes-uuid symlink now lives
+    # under $STATE (/var/lib/airplanes/runtime), not inside IPATH.
+    [ -d "$ROOT_DIR/opt/airplanes/current/share/airplanes" ]
+    [ -z "$(ls -A "$ROOT_DIR/opt/airplanes/current/share/airplanes")" ]
+
+    # $STATE is recreated empty (uninstall.sh) then the legacy airplanes-uuid
+    # symlink is re-materialized when canonical feeder-id exists. Nothing else
+    # should remain there.
     local remaining
-    remaining="$(ls -A "$ROOT_DIR/usr/local/share/airplanes")"
+    remaining="$(ls -A "$ROOT_DIR/var/lib/airplanes/runtime")"
     [ "$remaining" = "airplanes-uuid" ]
-    [ -L "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid" ]
+    [ -L "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid" ]
 }
 
 @test "after install footprint, uninstall preserves /etc/airplanes/feeder-id" {

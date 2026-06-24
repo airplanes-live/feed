@@ -54,7 +54,7 @@ _resolve_install_dir() {
 
 _INSTALL_DIR="$(_resolve_install_dir)"
 
-# Source helpers from apl-feed/ (production /usr/local/share/airplanes/apl-feed/,
+# Source helpers from apl-feed/ (production /opt/airplanes/current/share/airplanes/apl-feed/,
 # source tree feed/scripts/apl-feed/). feed-env-apply.sh sits in the sibling lib/
 # dir and is required: common.sh's feed_env_get delegates to its strict reader.
 # Mirrors airplanes-diagnostics.sh's bootstrap.
@@ -182,7 +182,7 @@ main() {
     # envelope); outline is optional (omitted if absent/invalid, e.g. a quiet
     # receiver with no range ring).
     local json_dir aircraft_file stats_file outline_file
-    json_dir="$(root_path /run/airplanes-feed)"
+    json_dir="$(root_path /run/airplanes/feed)"
     aircraft_file="$json_dir/aircraft.json"
     stats_file="$json_dir/stats.json"
     outline_file="$json_dir/outline.json"

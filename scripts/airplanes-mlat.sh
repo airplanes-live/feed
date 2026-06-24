@@ -31,7 +31,7 @@ unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER GEO_CONFIGURE
 if [[ -f "$FEED_ENV" ]]; then
     source "$FEED_ENV"
     _mlat_config_sources=("$FEED_ENV")
-elif [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && -f "$BOOT_CONFIG" ]]; then
+elif [[ -f "$(airplanes_path /etc/airplanes/image-install)" && -f "$BOOT_CONFIG" ]]; then
     source "$BOOT_CONFIG"
     [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
     _mlat_config_sources=("$FEED_ENV" "$BOOT_CONFIG" "$BOOT_ENV")
@@ -90,7 +90,7 @@ fi
 # state-writer source below). Unrecognised values leave MLAT_PRIVATE
 # unset so MLAT_MARKER can fall through, and ultimately the default
 # false applies.
-LEGACY_MLAT_TR="$(airplanes_path /usr/local/share/airplanes/lib/legacy-mlat-translation.sh)"
+LEGACY_MLAT_TR="$(airplanes_path /opt/airplanes/current/share/airplanes/lib/legacy-mlat-translation.sh)"
 if [[ -r "$LEGACY_MLAT_TR" ]]; then
     # shellcheck source=lib/legacy-mlat-translation.sh
     source "$LEGACY_MLAT_TR"
@@ -181,7 +181,7 @@ UUID_FILE="--uuid-file $FEEDER_ID_FILE"
 
 # State writer (defensive: a partial install where this script is in
 # place but the lib isn't yet must not take down the daemon).
-STATE_WRITER="$(airplanes_path /usr/local/share/airplanes/lib/state-writer.sh)"
+STATE_WRITER="$(airplanes_path /opt/airplanes/current/share/airplanes/lib/state-writer.sh)"
 if [[ -r "$STATE_WRITER" ]]; then
     # shellcheck source=lib/state-writer.sh
     source "$STATE_WRITER"
@@ -248,7 +248,7 @@ _mlat_config_fingerprint() {
 }
 
 read -r STATE REASON < <(_mlat_classify)
-STATE_FILE="$(airplanes_path /run/airplanes-mlat/state)"
+STATE_FILE="$(airplanes_path /run/airplanes/mlat/state)"
 mkdir -p "$(dirname "$STATE_FILE")"
 airplanes_write_state "$STATE_FILE" \
     "service=airplanes-mlat" \
@@ -326,7 +326,7 @@ while command -v nc &>/dev/null && ! nc -z "$INPUT_IP" "$INPUT_PORT"; do
     sleep 10
 done
 
-exec "$(airplanes_path /usr/local/share/airplanes/venv/bin/mlat-client)" \
+exec "$(airplanes_path /opt/airplanes/current/share/airplanes/venv/bin/mlat-client)" \
     --input-type "$INPUT_TYPE" --no-udp \
     --input-connect "$INPUT" \
     --server "$MLATSERVER" \

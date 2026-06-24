@@ -119,34 +119,30 @@ airplanes_path() {
 }
 
 airplanes_init_paths() {
-    IPATH="$(airplanes_path /usr/local/share/airplanes)"
-    GIT="$IPATH/git"
-    LOGFILE="$IPATH/lastlog"
+    PREFIX="$(airplanes_path /opt/airplanes/current)"
+    IPATH="$PREFIX/share/airplanes"
+    BIN="$PREFIX/bin"
+    STATE="$(airplanes_path /var/lib/airplanes/runtime)"
+    GIT="$STATE/git"
+    LOGFILE="$STATE/lastlog"
     BOOT_CONFIG="$(airplanes_path /boot/airplanes-config.txt)"
     BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
     ETC_AIRPLANES="$(airplanes_path /etc/airplanes)"
     FEED_ENV="$ETC_AIRPLANES/feed.env"
     FEEDER_ID_FILE="$ETC_AIRPLANES/feeder-id"
-    LEGACY_UUID_FILE="$IPATH/airplanes-uuid"
+    LEGACY_UUID_FILE="$STATE/airplanes-uuid"
     BOOT_UUID_FILE="$(airplanes_path /boot/airplanes-uuid)"
     LEGACY_FEED_ENV="$(airplanes_path /etc/default/airplanes)"
     LOCAL_BIN="$(airplanes_path /usr/local/bin)"
-    SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
+    SYSTEMD_DIR="$(airplanes_path /etc/systemd/system)"
 }
 
 airplanes_is_image_install() {
-    [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]] \
-        || [[ -f "$(airplanes_path /etc/airplanes/image-install)" && -f "$FEED_ENV" ]]
+    [[ -f "$(airplanes_path /etc/airplanes/image-install)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
 }
 
 airplanes_image_feed_bin_default() {
-    local legacy
-    legacy="$(airplanes_path /usr/bin/airplanes-feeder)"
-    if [[ -x "$legacy" ]]; then
-        printf '%s' "$legacy"
-    else
-        printf '%s' "$(airplanes_path /usr/local/share/airplanes/feed-airplanes)"
-    fi
+    printf '%s' "$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
 }
 
 airplanes_image_target_default() {

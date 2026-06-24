@@ -80,13 +80,13 @@ _config_sync_parse_opt_in() {
 # which systemd exports as $STATE_DIRECTORY at runtime so the path tracks the
 # unit without drift; the literal fallback covers manual / chroot invocations
 # where the unit env isn't present.
-CONFIG_SYNC_LAST_SUCCESS_FILE="${AIRPLANES_CONFIG_SYNC_LAST_SUCCESS:-${STATE_DIRECTORY:-/var/lib/airplanes-config-sync}/config-sync-last-success}"
+CONFIG_SYNC_LAST_SUCCESS_FILE="${AIRPLANES_CONFIG_SYNC_LAST_SUCCESS:-${STATE_DIRECTORY:-/var/lib/airplanes/config-sync}/config-sync-last-success}"
 
 # Owned-state file (same StateDirectory, same override discipline as the
 # sentinel). Holds the server's last ownership verdict so the unowned→owned
 # claim edge can be detected across ticks. Persistent (not /run) so the edge
 # fires only on an actual claim, not on every reboot.
-CONFIG_SYNC_STATE_FILE="${AIRPLANES_CONFIG_SYNC_STATE:-${STATE_DIRECTORY:-/var/lib/airplanes-config-sync}/state}"
+CONFIG_SYNC_STATE_FILE="${AIRPLANES_CONFIG_SYNC_STATE:-${STATE_DIRECTORY:-/var/lib/airplanes/config-sync}/state}"
 
 # Structured logger. Mirrors airplanes-diagnostics.sh's `log` so the two
 # timers produce a uniform journal stream.

@@ -51,8 +51,8 @@ SH
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ -d "$ROOT_DIR/usr/local/share/airplanes" ]
-    [ -z "$(ls -A "$ROOT_DIR/usr/local/share/airplanes")" ]
+    [ -d "$ROOT_DIR/opt/airplanes/current/share/airplanes" ]
+    [ -z "$(ls -A "$ROOT_DIR/opt/airplanes/current/share/airplanes")" ]
     [ ! -e "$ROOT_DIR/etc/airplanes/feeder-id" ]
     [ -f "$SYSTEMCTL_LOG" ]
 }
@@ -127,36 +127,36 @@ SH
 }
 
 @test "uninstall.sh wipes IPATH contents and recreates the directory" {
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes/git/sub"
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes/.cache"
-    : > "$ROOT_DIR/usr/local/share/airplanes/marker"
-    : > "$ROOT_DIR/usr/local/share/airplanes/git/sub/file"
+    mkdir -p "$ROOT_DIR/opt/airplanes/current/share/airplanes/sub"
+    mkdir -p "$ROOT_DIR/opt/airplanes/current/share/airplanes/.cache"
+    : > "$ROOT_DIR/opt/airplanes/current/share/airplanes/marker"
+    : > "$ROOT_DIR/opt/airplanes/current/share/airplanes/sub/file"
 
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ -d "$ROOT_DIR/usr/local/share/airplanes" ]
-    [ -z "$(ls -A "$ROOT_DIR/usr/local/share/airplanes")" ]
+    [ -d "$ROOT_DIR/opt/airplanes/current/share/airplanes" ]
+    [ -z "$(ls -A "$ROOT_DIR/opt/airplanes/current/share/airplanes")" ]
 }
 
 @test "canonical feeder-id is preserved across wipe and the legacy symlink is recreated" {
     mkdir -p "$ROOT_DIR/etc/airplanes"
     printf 'canonical-uuid-content\n' > "$ROOT_DIR/etc/airplanes/feeder-id"
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes/git"
-    : > "$ROOT_DIR/usr/local/share/airplanes/git/marker"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime/git"
+    : > "$ROOT_DIR/var/lib/airplanes/runtime/git/marker"
 
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ ! -e "$ROOT_DIR/usr/local/share/airplanes/git/marker" ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes/runtime/git/marker" ]
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "canonical-uuid-content" ]
-    [ -L "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid" ]
-    [ "$(readlink "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
+    [ -L "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid" ]
+    [ "$(readlink "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
 }
 
 @test "legacy fallback is materialized to canonical when canonical is absent" {
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
-    printf 'legacy-uuid-content\n' > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime"
+    printf 'legacy-uuid-content\n' > "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
 
     run_uninstall
 
@@ -171,13 +171,13 @@ SH
     # Materialized canonical must be 0644.
     [ "$(stat -c '%a' "$ROOT_DIR/etc/airplanes/feeder-id")" = "644" ]
 
-    [ -L "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid" ]
-    [ "$(readlink "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
+    [ -L "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid" ]
+    [ "$(readlink "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
 }
 
 @test "legacy without a trailing newline is normalized to one trailing newline (UUID-format contract)" {
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
-    printf 'legacy-no-newline' > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime"
+    printf 'legacy-no-newline' > "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
 
     run_uninstall
 
@@ -190,8 +190,8 @@ SH
 }
 
 @test "empty legacy file still triggers materialization and symlink restoration" {
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
-    : > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime"
+    : > "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
 
     run_uninstall
 
@@ -201,14 +201,14 @@ SH
     local expected="$ROOT_DIR/expected.bin"
     printf '\n' > "$expected"
     cmp "$expected" "$ROOT_DIR/etc/airplanes/feeder-id"
-    # Legacy symlink restored on top of the wiped IPATH.
-    [ -L "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid" ]
+    # Legacy symlink restored on top of the wiped state dir.
+    [ -L "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid" ]
 }
 
 @test "legacy UUID content is not leaked into trace output by set -x" {
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime"
     local secret_marker="LEGACY-LEAK-CANARY-9F3B7A"
-    printf '%s\n' "$secret_marker" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    printf '%s\n' "$secret_marker" > "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
 
     run_uninstall
 
@@ -224,16 +224,16 @@ SH
 
 @test "canonical wins over legacy when both exist with different values" {
     mkdir -p "$ROOT_DIR/etc/airplanes"
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime"
     printf 'CANONICAL-UUID\n' > "$ROOT_DIR/etc/airplanes/feeder-id"
-    printf 'legacy-different\n' > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    printf 'legacy-different\n' > "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
 
     run_uninstall
 
     [ "$status" -eq 0 ]
     [ "$(cat "$ROOT_DIR/etc/airplanes/feeder-id")" = "CANONICAL-UUID" ]
-    [ -L "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid" ]
-    [ "$(readlink "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
+    [ -L "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid" ]
+    [ "$(readlink "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id" ]
 }
 
 @test "no feeder-id is created when neither canonical nor legacy existed" {
@@ -241,7 +241,7 @@ SH
 
     [ "$status" -eq 0 ]
     [ ! -e "$ROOT_DIR/etc/airplanes/feeder-id" ]
-    [ ! -e "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid" ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid" ]
 }
 
 @test "tar1090 uninstall hook fires when html-airplanes/ exists, with sandboxed gate AND invocation" {
@@ -270,13 +270,13 @@ SH
     # The script must keep going (it has no set -e) and still wipe IPATH +
     # daemon-reload + report success.
     mkdir -p "$ROOT_DIR/usr/local/share/tar1090/html-airplanes"
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes/git"
-    : > "$ROOT_DIR/usr/local/share/airplanes/git/marker"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime/git"
+    : > "$ROOT_DIR/var/lib/airplanes/runtime/git/marker"
 
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ ! -e "$ROOT_DIR/usr/local/share/airplanes/git/marker" ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes/runtime/git/marker" ]
     grep -q "daemon-reload" "$SYSTEMCTL_LOG"
 }
 
@@ -288,13 +288,13 @@ exit 7
 SH
     chmod +x "$ROOT_DIR/usr/local/share/tar1090/uninstall.sh"
 
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes/git"
-    : > "$ROOT_DIR/usr/local/share/airplanes/git/marker"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime/git"
+    : > "$ROOT_DIR/var/lib/airplanes/runtime/git/marker"
 
     run_uninstall
 
     [ "$status" -eq 0 ]
-    [ ! -e "$ROOT_DIR/usr/local/share/airplanes/git/marker" ]
+    [ ! -e "$ROOT_DIR/var/lib/airplanes/runtime/git/marker" ]
     grep -q "daemon-reload" "$SYSTEMCTL_LOG"
 }
 
@@ -302,7 +302,7 @@ SH
     mkdir -p "$ROOT_DIR/usr/local/share/tar1090/html-airplanes"
     cat > "$ROOT_DIR/usr/local/share/tar1090/uninstall.sh" <<'SH'
 #!/usr/bin/env bash
-if [[ -f "$AIRPLANES_ROOT/usr/local/share/airplanes/marker-during-hook" ]]; then
+if [[ -f "$AIRPLANES_ROOT/opt/airplanes/current/share/airplanes/marker-during-hook" ]]; then
     printf 'IPATH-INTACT\n' >> "$TAR1090_LOG"
 else
     printf 'IPATH-WIPED\n' >> "$TAR1090_LOG"
@@ -311,8 +311,8 @@ exit 0
 SH
     chmod +x "$ROOT_DIR/usr/local/share/tar1090/uninstall.sh"
 
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
-    : > "$ROOT_DIR/usr/local/share/airplanes/marker-during-hook"
+    mkdir -p "$ROOT_DIR/opt/airplanes/current/share/airplanes"
+    : > "$ROOT_DIR/opt/airplanes/current/share/airplanes/marker-during-hook"
 
     run_uninstall
 

@@ -310,9 +310,8 @@ EOF
 
 @test "config show falls back to the legacy boot config like the daemons do" {
     rm -f "$ROOT_DIR/etc/airplanes/feed.env"
-    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
-    printf '#!/bin/true\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
-    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    mkdir -p "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="50.00"
 MLAT_ENABLED="true"
@@ -388,9 +387,8 @@ EOF
 
 @test "config show legacy fallback works when airplanes-env is absent" {
     rm -f "$ROOT_DIR/etc/airplanes/feed.env"
-    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
-    printf '#!/bin/true\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
-    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    mkdir -p "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="50.00"
 EOF

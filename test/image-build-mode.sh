@@ -56,7 +56,7 @@ printf '%s\n' "mlat fixture" > "$MLAT_REPO/README"
 make_repo "$MLAT_REPO" master
 
 cp -a "$UPDATE_DIR/skeleton/." "$ROOT_DIR/"
-mkdir -p "$ROOT_DIR/boot" "$ROOT_DIR/etc/default" "$ROOT_DIR/etc/airplanes" "$ROOT_DIR/usr/bin"
+mkdir -p "$ROOT_DIR/boot" "$ROOT_DIR/etc/default" "$ROOT_DIR/etc/airplanes"
 cp "$UPDATE_DIR/boot-configs/airplanes-config.txt" "$ROOT_DIR/boot/airplanes-config.txt"
 cp "$UPDATE_DIR/boot-configs/airplanes-env" "$ROOT_DIR/boot/airplanes-env"
 if [[ -f "$UPDATE_DIR/boot-configs/airplanes-978env" ]]; then
@@ -83,7 +83,13 @@ sed -i \
 printf '%s\n' 'VERSION_ID="13"' > "$ROOT_DIR/etc/os-release"
 ln -sfn /boot/airplanes-config.txt "$ROOT_DIR/etc/default/airplanes"
 
-cat > "$ROOT_DIR/usr/bin/airplanes-feeder" <<'SH'
+# Image detection is via the /etc/airplanes/image-install marker; the baked
+# feed binary lives at /opt/airplanes/current/bin/feed-airplanes. update.sh's
+# build-mode image branch checks the marker for detection and requires the
+# binary to be executable before wiring the daemon.
+: > "$ROOT_DIR/etc/airplanes/image-install"
+mkdir -p "$ROOT_DIR/opt/airplanes/current/bin"
+cat > "$ROOT_DIR/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "-V" ]]; then
     exit 0
@@ -91,7 +97,7 @@ fi
 printf '%s\n' "$*" > "${AIRPLANES_RUNTIME_ARG_LOG:?}"
 exit 0
 SH
-chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+chmod +x "$ROOT_DIR/opt/airplanes/current/bin/feed-airplanes"
 
 # Simulate an upgraded install where the legacy second-mlat.sh helper
 # (deleted in PR #30) has left an enabled airplanes-mlat2.service unit
@@ -110,8 +116,9 @@ SH
 ln -s ../../airplanes-mlat2.service \
     "$ROOT_DIR/etc/systemd/system/default.target.wants/airplanes-mlat2.service"
 
-IPATH="$ROOT_DIR/usr/local/share/airplanes"
-mkdir -p "$IPATH/venv/bin"
+IPATH="$ROOT_DIR/opt/airplanes/current/share/airplanes"
+STATE="$ROOT_DIR/var/lib/airplanes/runtime"
+mkdir -p "$IPATH/venv/bin" "$STATE"
 cp "$FEED_REPO/update.sh" "$IPATH/update.sh"
 # Simulate an upgraded install that still has the legacy second-mlat.sh
 # helper left over from an older feed release; update.sh must sweep it
@@ -129,7 +136,10 @@ cat > "$IPATH/venv/bin/mlat-client" <<'SH'
 exit 0
 SH
 chmod +x "$IPATH/venv/bin/mlat-client"
-git -C "$MLAT_REPO" rev-parse HEAD > "$IPATH/mlat_version"
+# The mlat_version stamp lives under mutable STATE (/var/lib/airplanes/runtime),
+# which is the ipath argument update.sh passes to install_mlat_client; the venv
+# itself stays under $IPATH. Seeding both lets the skip path short-circuit.
+git -C "$MLAT_REPO" rev-parse HEAD > "$STATE/mlat_version"
 
 cat > "$STUB_DIR/apt-get" <<'SH'
 #!/usr/bin/env bash
@@ -210,9 +220,9 @@ test -f "$ROOT_DIR/boot/airplanes-config.txt"
 test -f "$ROOT_DIR/boot/airplanes-env"
 test -f "$ROOT_DIR/etc/airplanes/feeder-id"
 grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$ROOT_DIR/etc/airplanes/feeder-id"
-test -L "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
-test "$(readlink "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id"
-test -x "$ROOT_DIR/usr/bin/airplanes-feeder"
+test -L "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
+test "$(readlink "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid")" = "../../../../etc/airplanes/feeder-id"
+test -x "$ROOT_DIR/opt/airplanes/current/bin/feed-airplanes"
 test -x "$ROOT_DIR/usr/local/bin/apl-feed"
 test -f "$IPATH/apl-feed/common.sh"
 test -f "$IPATH/airplanes-feed.sh"
@@ -231,8 +241,8 @@ test ! -e "$ROOT_DIR/etc/airplanes/feed.env"
 test -L "$ROOT_DIR/etc/default/airplanes"
 test "$(readlink "$ROOT_DIR/etc/default/airplanes")" = "/boot/airplanes-config.txt"
 
-grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh' "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
-grep -q 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh' "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
+grep -q 'ExecStart=/opt/airplanes/current/share/airplanes/airplanes-feed.sh' "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
+grep -q 'ExecStart=/opt/airplanes/current/share/airplanes/airplanes-mlat.sh' "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
 grep -qE '^After=.*airplanes-first-run.service' "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"
 grep -qE '^After=.*airplanes-first-run.service' "$ROOT_DIR/etc/systemd/system/airplanes-mlat.service"
 grep -qE '^User=airplanes-feed$' "$ROOT_DIR/etc/systemd/system/airplanes-feed.service"

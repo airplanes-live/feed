@@ -209,7 +209,7 @@ apl_feed_apply_cli() {
     done <<< "$meta_blob"
 
     # Auto-bootstrap canonical feed.env from /boot/airplanes-config.txt
-    # when running on a bridged-legacy box (airplanes-feeder installed,
+    # when running on a bridged-legacy box (image-install marker present,
     # no canonical feed.env yet). The new Go webconfig is the only
     # consumer of this CLI in production today and ships only on the new
     # image (which has feed.env at build time), so this is defensive

@@ -14,11 +14,13 @@ BOOT_CONFIG="$(airplanes_path /boot/airplanes-config.txt)"
 BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
 FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
 FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
-IMAGE_FEED_BIN="$(airplanes_path /usr/bin/airplanes-feeder)"
 IMAGE_INSTALL_MARKER="$(airplanes_path /etc/airplanes/image-install)"
 
+# The feed binary now lands at the same consolidated path for both image
+# and standalone installs, so it no longer discriminates install type;
+# the /etc/airplanes/image-install marker is the sole signal.
 IMAGE_INSTALL=0
-if [[ -x "$IMAGE_FEED_BIN" || -f "$IMAGE_INSTALL_MARKER" ]]; then
+if [[ -f "$IMAGE_INSTALL_MARKER" ]]; then
     IMAGE_INSTALL=1
 fi
 
@@ -60,11 +62,7 @@ if [[ "${MODEAC:-}" == "yes" ]]; then
     MODEAC_OPTION="--modeac"
 fi
 
-if [[ -x "$IMAGE_FEED_BIN" ]]; then
-    DEFAULT_FEED_BIN="$IMAGE_FEED_BIN"
-else
-    DEFAULT_FEED_BIN="$(airplanes_path /usr/local/share/airplanes/feed-airplanes)"
-fi
+DEFAULT_FEED_BIN="$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
 FEED_BIN="${AIRPLANES_FEED_BIN:-$DEFAULT_FEED_BIN}"
 
 # Brand endpoint + readsb tuning defaults. Apply outside the image
@@ -122,7 +120,7 @@ unset _target_rest
 
 # State writer (defensive: a partial install where this script is in
 # place but the lib isn't yet must not take down the daemon).
-STATE_WRITER="$(airplanes_path /usr/local/share/airplanes/lib/state-writer.sh)"
+STATE_WRITER="$(airplanes_path /opt/airplanes/current/share/airplanes/lib/state-writer.sh)"
 if [[ -r "$STATE_WRITER" ]]; then
     # shellcheck source=lib/state-writer.sh
     source "$STATE_WRITER"
@@ -135,7 +133,7 @@ fi
 # (effective config + binary path) for consumers. Forward-compatible
 # with future signals (e.g. an explicit FEED_ENABLED=false toggle
 # would add a reason token without bumping schema_version).
-STATE_FILE="$(airplanes_path /run/airplanes-feed/state)"
+STATE_FILE="$(airplanes_path /run/airplanes/feed/state)"
 mkdir -p "$(dirname "$STATE_FILE")"
 airplanes_write_state "$STATE_FILE" \
     "service=airplanes-feed" \

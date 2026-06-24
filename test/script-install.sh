@@ -142,18 +142,18 @@ else
 fi
 
 # Post-install assertions (catch install-only regressions before update repairs them).
-test -d /usr/local/share/airplanes/git
+test -d /var/lib/airplanes/runtime/git
 test -x /usr/local/bin/apl-feed
 test -f /etc/airplanes/feed.env
 
-bash /usr/local/share/airplanes/git/update.sh
+bash /var/lib/airplanes/runtime/git/update.sh
 
 # Post-update assertions.
 test -f /etc/airplanes/feeder-id
-test -L /usr/local/share/airplanes/airplanes-uuid
-test -f /usr/local/share/airplanes/apl-feed/common.sh
-test -f /lib/systemd/system/airplanes-feed.service
-test -f /lib/systemd/system/airplanes-mlat.service
+test -L /var/lib/airplanes/runtime/airplanes-uuid
+test -f /opt/airplanes/current/share/airplanes/apl-feed/common.sh
+test -f /etc/systemd/system/airplanes-feed.service
+test -f /etc/systemd/system/airplanes-mlat.service
 test -f /etc/airplanes/feeder-claim-secret
 test "$(readlink /etc/default/airplanes)" = "/etc/airplanes/feed.env"
 grep -q 'systemctl restart airplanes-feed' /tmp/systemctl.log
@@ -162,4 +162,4 @@ grep -q 'systemctl restart airplanes-feed' /tmp/systemctl.log
 # opt in via `apl-feed 978 enable` (CLI) or webconfig (image), and a fresh
 # install leaves the connector unwired.
 ! grep -q 'UAT_INPUT="127.0.0.1:30978"' /etc/airplanes/feed.env
-! grep -q 'UAT_INPUT="127.0.0.1:30978"' /usr/local/share/airplanes/airplanes-feed.sh
+! grep -q 'UAT_INPUT="127.0.0.1:30978"' /opt/airplanes/current/share/airplanes/airplanes-feed.sh

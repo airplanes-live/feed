@@ -453,7 +453,7 @@ _apl_feed_apply_restart_set() {
 # and a foreign unit doesn't read feed.env, so the restart could never
 # apply the change anyway. Ownership test: every unit installed by the
 # feed scripts or the image runtime overlay ExecStarts a wrapper under
-# /usr/local/share/airplanes/.
+# /opt/airplanes/current/share/airplanes/.
 _apl_feed_apply_unit_is_ours() {
     local unit="$1" unit_def
     # `systemctl cat` returns 0 iff the unit (or a generator-emitted
@@ -462,7 +462,7 @@ _apl_feed_apply_unit_is_ours() {
     # exiting at first match can SIGPIPE systemctl and fail the whole
     # pipeline — skipping the restart of a unit we do own.
     unit_def="$(systemctl cat "$unit" 2>/dev/null)" || return 1
-    [[ "$unit_def" == *'/usr/local/share/airplanes/'* ]]
+    [[ "$unit_def" == *'/opt/airplanes/current/share/airplanes/'* ]]
 }
 
 _apl_feed_apply_restart_services() {

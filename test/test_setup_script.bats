@@ -6,7 +6,7 @@ setup() {
     STUB_DIR="$ROOT_DIR/bin"
     EVENTS_LOG="$ROOT_DIR/events.log"
     ID_LOG="$ROOT_DIR/id.log"
-    GIT_DIR="$ROOT_DIR/usr/local/share/airplanes/git"
+    GIT_DIR="$ROOT_DIR/var/lib/airplanes/runtime/git"
     mkdir -p "$STUB_DIR" "$GIT_DIR"
     : > "$EVENTS_LOG"
     : > "$ID_LOG"
@@ -76,9 +76,8 @@ EOF
 }
 
 make_image_install_fixture() {
-    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/etc/airplanes"
-    : > "$ROOT_DIR/usr/bin/airplanes-feeder"
-    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    mkdir -p "$ROOT_DIR/etc/airplanes"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     : > "$ROOT_DIR/etc/airplanes/feed.env"
 }
 

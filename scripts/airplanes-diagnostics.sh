@@ -18,8 +18,8 @@ SCRIPT_NAME="airplanes-diagnostics"
 EXIT_OK=0
 EXIT_BAD_CONFIG=64
 
-LAST_SUCCESS_FILE="${AIRPLANES_DIAGNOSTICS_LAST_SUCCESS:-${STATE_DIRECTORY:-/var/lib/airplanes-diagnostics}/diagnostics-last-success}"
-INTENT_ACK_FILE="${AIRPLANES_DIAGNOSTICS_INTENT_ACK_FILE:-${STATE_DIRECTORY:-/var/lib/airplanes-diagnostics}/diagnostics-intent-acked}"
+LAST_SUCCESS_FILE="${AIRPLANES_DIAGNOSTICS_LAST_SUCCESS:-${STATE_DIRECTORY:-/var/lib/airplanes/diagnostics}/diagnostics-last-success}"
+INTENT_ACK_FILE="${AIRPLANES_DIAGNOSTICS_INTENT_ACK_FILE:-${STATE_DIRECTORY:-/var/lib/airplanes/diagnostics}/diagnostics-intent-acked}"
 INSTALL_DIR="${AIRPLANES_DIAGNOSTICS_INSTALL_DIR:-}"
 
 _resolve_install_dir() {
@@ -35,7 +35,7 @@ _resolve_install_dir() {
 _INSTALL_DIR="$(_resolve_install_dir)"
 
 # Source helpers from apl-feed/. In production these live at
-# /usr/local/share/airplanes/apl-feed/. In the source tree they're at
+# /opt/airplanes/current/share/airplanes/apl-feed/. In the source tree they're at
 # feed/scripts/apl-feed/. Both resolutions land at the same directory
 # relative to this script. feed-env-apply.sh sits next to them in the
 # sibling lib/ directory (production $_INSTALL_DIR/lib/, source tree
@@ -312,19 +312,21 @@ collect_ntp_sync() {
 }
 
 # Resolve a service's version. Priority:
-#   1. Install-time file at $IPATH/<file>_version (written by update-builds.sh)
+#   1. Install-time file at $STATE/<file>_version (written by update-builds.sh)
 #   2. Best-effort `<binary> --version | head -1` (3s timeout)
 # Returns empty on failure.
 get_service_version() {
     local service="$1"
-    local ipath
-    ipath="$(root_path /usr/local/share/airplanes)"
+    local state_dir
+    # Build-time version stamps live in the mutable runtime state dir
+    # (written by update-builds.sh as $STATE/{readsb,mlat}_version).
+    state_dir="$(root_path /var/lib/airplanes/runtime)"
     local version_file=''
     case "$service" in
         # airplanes-feed, readsb, and airplanes-978 all run a readsb-derived
         # binary; they share the same install-time version file.
-        airplanes-feed|readsb|airplanes-978) version_file="$ipath/readsb_version" ;;
-        airplanes-mlat) version_file="$ipath/mlat_version" ;;
+        airplanes-feed|readsb|airplanes-978) version_file="$state_dir/readsb_version" ;;
+        airplanes-mlat) version_file="$state_dir/mlat_version" ;;
     esac
     if [[ -n "$version_file" && -r "$version_file" ]]; then
         local v
@@ -512,7 +514,7 @@ get_os_release_field() {
 
 get_feed_scripts_version() {
     local file
-    file="$(root_path /usr/local/share/airplanes/.version)"
+    file="$(root_path /opt/airplanes/current/share/airplanes/.version)"
     [[ -r "$file" ]] || return 1
     local raw
     raw="$(head -n 1 "$file" 2>/dev/null | tr -d '[:cntrl:]' | cut -c1-128)"
@@ -658,7 +660,7 @@ main() {
         # file would always say enabled/ok — no value in plumbing it.
         # readsb has no state file at all.
         svc_feed="$(build_service_json airplanes-feed)"
-        svc_mlat="$(build_service_json airplanes-mlat "$(root_path /run/airplanes-mlat/state)")"
+        svc_mlat="$(build_service_json airplanes-mlat "$(root_path /run/airplanes/mlat/state)")"
         svc_readsb="$(build_service_json readsb)"
         # dump978-fa and airplanes-978 are both UAT-only — relevant only
         # when the user has actually configured UAT. Without this gate,
@@ -671,8 +673,8 @@ main() {
         svc_dump978='null'
         svc_978='null'
         if [[ -n "$uat_input" ]]; then
-            svc_dump978="$(build_service_json dump978-fa "$(root_path /run/dump978-fa/state)")"
-            svc_978="$(build_service_json airplanes-978 "$(root_path /run/airplanes-978/state)")"
+            svc_dump978="$(build_service_json dump978-fa "$(root_path /run/airplanes/dump978-fa/state)")"
+            svc_978="$(build_service_json airplanes-978 "$(root_path /run/airplanes/978/state)")"
         fi
 
         local pi_throttle_json ntp_sync_json
