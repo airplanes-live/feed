@@ -163,20 +163,23 @@ export AIRPLANES_PACKAGE_MANAGER=apt
 # the mount, then redirect the in-update.sh re-fetch at the same mount so
 # the pin holds end-to-end.
 echo "=== Phase 1: install source from $AIRPLANES_SOURCE_REPO ==="
-mkdir -p /var/lib/airplanes/runtime
-git clone --branch main "$AIRPLANES_SOURCE_REPO" /var/lib/airplanes/runtime/git
+# Phase 1 installs origin/main (the PRE-FHS layout), so it must use main's own
+# old paths: main's setup.sh/update.sh hardcode /usr/local/share/airplanes/git.
+# The candidate (Phase 3) installs the new /opt layout and migrates this away.
+mkdir -p /usr/local/share/airplanes
+git clone --branch main "$AIRPLANES_SOURCE_REPO" /usr/local/share/airplanes/git
 
 sed -i \
     -e 's|^REPO=".*airplanes-live/feed\.git"$|REPO="'"$AIRPLANES_SOURCE_REPO"'"|' \
-    /var/lib/airplanes/runtime/git/update.sh
+    /usr/local/share/airplanes/git/update.sh
 
-bash /var/lib/airplanes/runtime/git/setup.sh
+bash /usr/local/share/airplanes/git/setup.sh
 
 # Post-install sanity. Only assert artifacts the source install is guaranteed
 # to produce — apl-feed CLI, feed.env-only layout, etc. are dev-branch
 # additions that predate this test. Phase 2's detect_source_env picks the
 # right config file regardless of which shape the source produced.
-test -d /var/lib/airplanes/runtime/git
+test -d /usr/local/share/airplanes/git
 
 # ---- Phase 2: seed USER= state ----
 # Force the migration code path: drop any MLAT_* keys the source install may
