@@ -147,7 +147,8 @@ else
     }
 
     airplanes_is_image_install() {
-        [[ -f "$(airplanes_path /etc/airplanes/image-install)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
+        [[ -f "$(airplanes_path /etc/airplanes/image-install)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]] \
+            || [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
     }
 
     airplanes_image_feed_bin_default() {

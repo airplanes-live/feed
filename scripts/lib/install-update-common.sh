@@ -137,8 +137,15 @@ airplanes_init_paths() {
     SYSTEMD_DIR="$(airplanes_path /etc/systemd/system)"
 }
 
+# An image install is either the new overlay image (which lays the
+# /etc/airplanes/image-install marker) or a legacy image (which ships the baked
+# /usr/bin/airplanes-feeder binary but predates the marker). Detecting the
+# legacy binary is a READ of a file the legacy rootfs already carries — it does
+# not write into /usr/bin, so it does not conflict with the FHS de-squat. Both
+# require a config source so a bare rootfs isn't mistaken for a configured image.
 airplanes_is_image_install() {
-    [[ -f "$(airplanes_path /etc/airplanes/image-install)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
+    [[ -f "$(airplanes_path /etc/airplanes/image-install)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]] \
+        || [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
 }
 
 airplanes_image_feed_bin_default() {

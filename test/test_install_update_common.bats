@@ -64,11 +64,27 @@ write_archive_fallback_stubs() {
     [ "$status" -eq 0 ]
 }
 
-@test "image install detection ignores the legacy feeder binary (signal dropped)" {
+@test "image install detection accepts the legacy feeder binary with config (legacy upgrade path)" {
+    # A legacy image predates the /etc/airplanes/image-install marker but ships
+    # the baked /usr/bin/airplanes-feeder binary. It must still be detected as
+    # an image install so a legacy ROM updating to feed/dev takes the image
+    # branch instead of dropping into interactive setup.
     mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/etc/airplanes"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
     chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
     printf 'USER="image"\n' > "$ROOT_DIR/etc/airplanes/feed.env"
+
+    run airplanes_is_image_install
+
+    [ "$status" -eq 0 ]
+}
+
+@test "image install detection rejects the legacy feeder binary without any config" {
+    # The binary alone (bare rootfs, no feed.env and no boot config) is not a
+    # configured image — the config guard must keep it out of the image branch.
+    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/etc/airplanes"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
 
     run airplanes_is_image_install
 
