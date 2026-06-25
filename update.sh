@@ -152,7 +152,16 @@ else
     }
 
     airplanes_image_feed_bin_default() {
-        printf '%s' "$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
+        local opt_bin legacy_bin
+        opt_bin="$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
+        legacy_bin="$(airplanes_path /usr/bin/airplanes-feeder)"
+        if [[ -x "$opt_bin" ]]; then
+            printf '%s' "$opt_bin"
+        elif [[ -x "$legacy_bin" ]]; then
+            printf '%s' "$legacy_bin"
+        else
+            printf '%s' "$opt_bin"
+        fi
     }
 
     airplanes_image_target_default() {
@@ -599,7 +608,11 @@ fi
 mkdir -p "$BIN"
 install -m 0755 "$GIT/scripts/apl-feed.sh" "$BIN/apl-feed"
 mkdir -p "$LOCAL_BIN"
-ln -sfn "$BIN/apl-feed" "$LOCAL_BIN/apl-feed"
+# Relative symlink target (mirrors create-uuid.sh's compat symlink) so it
+# resolves both on-device (ROOT=/) and under AIRPLANES_ROOT (image build /
+# chroot). An absolute "$BIN/apl-feed" would bake the root-prefixed build path;
+# an absolute "/opt/..." would escape the rootfs during build.
+ln -sfn ../../../opt/airplanes/current/bin/apl-feed "$LOCAL_BIN/apl-feed"
 
 # Daemon user/group. Renamed from "airplanes" to avoid collision with what
 # users typically pick as their console/SSH login on a fresh image flash.

@@ -16,11 +16,12 @@ FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
 FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
 IMAGE_INSTALL_MARKER="$(airplanes_path /etc/airplanes/image-install)"
 
-# The feed binary now lands at the same consolidated path for both image
-# and standalone installs, so it no longer discriminates install type;
-# the /etc/airplanes/image-install marker is the sole signal.
+# An image install is signalled by the /etc/airplanes/image-install marker
+# (new overlay image) or the baked /usr/bin/airplanes-feeder binary (a legacy
+# image, which predates the marker). The flag lets the feeder fall back to its
+# /boot config when no feed.env is present and selects the image decoder tuning.
 IMAGE_INSTALL=0
-if [[ -f "$IMAGE_INSTALL_MARKER" ]]; then
+if [[ -f "$IMAGE_INSTALL_MARKER" || -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]; then
     IMAGE_INSTALL=1
 fi
 
@@ -62,7 +63,13 @@ if [[ "${MODEAC:-}" == "yes" ]]; then
     MODEAC_OPTION="--modeac"
 fi
 
+# Prefer the consolidated /opt feed binary; fall back to a legacy image's
+# baked /usr/bin/airplanes-feeder when /opt has no binary. AIRPLANES_FEED_BIN
+# overrides both. Mirrors airplanes_image_feed_bin_default in the installer.
 DEFAULT_FEED_BIN="$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
+if [[ ! -x "$DEFAULT_FEED_BIN" && -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]; then
+    DEFAULT_FEED_BIN="$(airplanes_path /usr/bin/airplanes-feeder)"
+fi
 FEED_BIN="${AIRPLANES_FEED_BIN:-$DEFAULT_FEED_BIN}"
 
 # Brand endpoint + readsb tuning defaults. Apply outside the image

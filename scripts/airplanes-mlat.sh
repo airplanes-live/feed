@@ -31,7 +31,7 @@ unset USER MLAT_USER MLAT_ENABLED MLAT_PRIVATE PRIVACY MLAT_MARKER GEO_CONFIGURE
 if [[ -f "$FEED_ENV" ]]; then
     source "$FEED_ENV"
     _mlat_config_sources=("$FEED_ENV")
-elif [[ -f "$(airplanes_path /etc/airplanes/image-install)" && -f "$BOOT_CONFIG" ]]; then
+elif [[ ( -f "$(airplanes_path /etc/airplanes/image-install)" || -x "$(airplanes_path /usr/bin/airplanes-feeder)" ) && -f "$BOOT_CONFIG" ]]; then
     source "$BOOT_CONFIG"
     [[ -f "$BOOT_ENV" ]] && source "$BOOT_ENV"
     _mlat_config_sources=("$FEED_ENV" "$BOOT_CONFIG" "$BOOT_ENV")

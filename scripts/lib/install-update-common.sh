@@ -149,7 +149,21 @@ airplanes_is_image_install() {
 }
 
 airplanes_image_feed_bin_default() {
-    printf '%s' "$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
+    # Prefer the consolidated /opt feed binary (new overlay image + standalone
+    # builds both land here). Fall back to a legacy image's baked
+    # /usr/bin/airplanes-feeder, which predates the /opt layout and cannot be
+    # rebuilt on an image. The /opt path is the canonical "missing" target so
+    # the caller's error message points at where the binary should be.
+    local opt_bin legacy_bin
+    opt_bin="$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
+    legacy_bin="$(airplanes_path /usr/bin/airplanes-feeder)"
+    if [[ -x "$opt_bin" ]]; then
+        printf '%s' "$opt_bin"
+    elif [[ -x "$legacy_bin" ]]; then
+        printf '%s' "$legacy_bin"
+    else
+        printf '%s' "$opt_bin"
+    fi
 }
 
 airplanes_image_target_default() {

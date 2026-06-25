@@ -119,18 +119,36 @@ write_archive_fallback_stubs() {
     [ "$status" -ne 0 ]
 }
 
-@test "feed-bin resolver returns the unified /opt prefix binary" {
+@test "feed-bin resolver prefers the /opt binary when present" {
+    mkdir -p "$ROOT_DIR/opt/airplanes/current/bin" "$ROOT_DIR/usr/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/opt/airplanes/current/bin/feed-airplanes"
+    chmod +x "$ROOT_DIR/opt/airplanes/current/bin/feed-airplanes"
+    # A legacy binary present alongside /opt must not win.
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
+    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+
     run airplanes_image_feed_bin_default
 
     [ "$status" -eq 0 ]
     [ "$output" = "$ROOT_DIR/opt/airplanes/current/bin/feed-airplanes" ]
 }
 
-@test "feed-bin resolver ignores the legacy feeder binary (unified path)" {
+@test "feed-bin resolver falls back to the legacy feeder binary (legacy image)" {
+    # No /opt binary (legacy ROM can't rebuild on an image); the baked
+    # /usr/bin/airplanes-feeder is the only feed binary available.
     mkdir -p "$ROOT_DIR/usr/bin"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT_DIR/usr/bin/airplanes-feeder"
     chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
 
+    run airplanes_image_feed_bin_default
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$ROOT_DIR/usr/bin/airplanes-feeder" ]
+}
+
+@test "feed-bin resolver returns the canonical /opt path when no binary exists" {
+    # With neither binary present the resolver returns the /opt path so the
+    # caller's "missing binary" error points at the canonical location.
     run airplanes_image_feed_bin_default
 
     [ "$status" -eq 0 ]

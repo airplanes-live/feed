@@ -564,17 +564,33 @@ remove_pre_fhs_layout() {
     local legacy_systemd="$2"
     local logfile="${3:-/dev/null}"
 
-    if [[ ! -e "$legacy_ipath" && ! -e "$legacy_systemd/airplanes-feed.service" ]]; then
-        return 0
+    local legacy_units=(
+        airplanes-feed.service airplanes-mlat.service
+        airplanes-diagnostics.service airplanes-diagnostics.timer
+        airplanes-stats.service airplanes-stats.timer
+        airplanes-config-sync.service airplanes-config-sync.timer
+    )
+
+    # Skip (and avoid the daemon-reload) only when there is genuinely nothing
+    # left to clean: no legacy IPATH and none of the legacy units. Checking the
+    # full unit list — not just airplanes-feed.service — so a partial earlier
+    # cleanup that left a stale mlat/diagnostics/stats/config-sync unit behind
+    # still gets finished.
+    local unit have_legacy=0
+    [[ -e "$legacy_ipath" ]] && have_legacy=1
+    if (( ! have_legacy )); then
+        for unit in "${legacy_units[@]}"; do
+            if [[ -e "$legacy_systemd/$unit" ]]; then
+                have_legacy=1
+                break
+            fi
+        done
     fi
+    (( have_legacy )) || return 0
 
     echo "Removing pre-FHS install layout ($legacy_ipath + $legacy_systemd units)" >> "$logfile" 2>&1
 
-    local unit
-    for unit in airplanes-feed.service airplanes-mlat.service \
-                airplanes-diagnostics.service airplanes-diagnostics.timer \
-                airplanes-stats.service airplanes-stats.timer \
-                airplanes-config-sync.service airplanes-config-sync.timer; do
+    for unit in "${legacy_units[@]}"; do
         rm -f "$legacy_systemd/$unit"
     done
 
