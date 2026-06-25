@@ -315,8 +315,9 @@ prepare_mounted_image() {
     # branch in main() that asserts feed/update.sh's overlay guard refuses
     # to run against a runtime-overlay-managed image; it does not need
     # any of the seeding below.
-    local ipath mlat_version
-    ipath="$ROOT_MNT/usr/local/share/airplanes"
+    local ipath state_dir mlat_version
+    ipath="$ROOT_MNT/opt/airplanes/current/share/airplanes"
+    state_dir="$ROOT_MNT/var/lib/airplanes/runtime"
 
     [[ -f "$ROOT_MNT/etc/systemd/system/airplanes-first-run.service" ]] \
         || fail "release image lacks airplanes-first-run.service"
@@ -341,8 +342,12 @@ prepare_mounted_image() {
 exit 0
 SH
     chmod +x "$ipath/venv/bin/mlat-client"
+    # The mlat_version stamp is mutable build state under $STATE, not alongside
+    # the read-only payload in the share/ prefix. Seed it there so update.sh's
+    # skip-build check matches and the chroot run doesn't rebuild the venv.
+    mkdir -p "$state_dir"
     mlat_version="$(git --git-dir="$MLAT_BARE" rev-parse refs/heads/master)"
-    printf '%s\n' "$mlat_version" > "$ipath/mlat_version"
+    printf '%s\n' "$mlat_version" > "$state_dir/mlat_version"
 }
 
 # Confirm the new image ships the runtime-overlay marker that feed's
@@ -416,7 +421,7 @@ run_runtime_probe() {
     AIRPLANES_ROOT="$ROOT_MNT" \
     AIRPLANES_FEED_BIN="$STUB_DIR/feed-bin-stub" \
     AIRPLANES_RUNTIME_ARG_LOG="$RUNTIME_ARG_LOG" \
-        bash "$ROOT_MNT/usr/local/share/airplanes/airplanes-feed.sh"
+        bash "$ROOT_MNT/opt/airplanes/current/share/airplanes/airplanes-feed.sh"
 }
 
 assert_contains() {
@@ -451,15 +456,18 @@ assert_updated_image_contracts() {
     # Legacy-contract post-update assertions only. New-contract bails on the
     # overlay guard before any update happens; there is no post-update state
     # to inspect there.
-    local ipath="$ROOT_MNT/usr/local/share/airplanes"
+    local ipath="$ROOT_MNT/opt/airplanes/current/share/airplanes"
 
     [[ -f "$FEED_BOOT_DIR/airplanes-config.txt" ]] || fail "missing boot config"
     [[ -f "$FEED_BOOT_DIR/airplanes-env" ]] || fail "missing boot env"
     assert_valid_uuid_file "$ROOT_MNT/etc/airplanes/feeder-id"
-    assert_symlink_target "$ipath/airplanes-uuid" '../../../../etc/airplanes/feeder-id'
+    # The legacy-UUID compat symlink lives under $STATE, not the payload prefix.
+    # The relative target still resolves to /etc/airplanes/feeder-id (both the
+    # old and new symlink locations sit four directories below /).
+    assert_symlink_target "$ROOT_MNT/var/lib/airplanes/runtime/airplanes-uuid" '../../../../etc/airplanes/feeder-id'
 
     [[ -x "$ROOT_MNT/usr/bin/airplanes-feeder" ]] || fail "missing image feed binary"
-    [[ ! -e "$ipath/feed-airplanes" ]] || fail "legacy image should use image feed binary"
+    [[ ! -e "$ROOT_MNT/opt/airplanes/current/bin/feed-airplanes" ]] || fail "legacy image should use image feed binary"
 
     [[ -x "$ROOT_MNT/usr/local/bin/apl-feed" ]] || fail "missing apl-feed command"
     [[ -f "$ipath/update.sh" ]] || fail "missing installed update.sh"
@@ -475,11 +483,11 @@ assert_updated_image_contracts() {
     [[ "$(readlink "$ROOT_MNT/etc/default/airplanes")" == "/boot/airplanes-config.txt" ]] \
         || fail "/etc/default/airplanes does not point at /boot/airplanes-config.txt"
 
-    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
+    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'ExecStart=/opt/airplanes/current/share/airplanes/airplanes-feed.sh'
     grep -qE '^After=.*airplanes-first-run.service' "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" \
         || fail "airplanes-feed.service missing After=airplanes-first-run.service"
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-feed.service" 'User=airplanes-feed'
-    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh'
+    assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'ExecStart=/opt/airplanes/current/share/airplanes/airplanes-mlat.sh'
     grep -qE '^After=.*airplanes-first-run.service' "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" \
         || fail "airplanes-mlat.service missing After=airplanes-first-run.service"
     assert_contains "$ROOT_MNT/etc/systemd/system/airplanes-mlat.service" 'User=airplanes-feed'
