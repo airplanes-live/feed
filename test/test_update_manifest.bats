@@ -78,8 +78,8 @@ extract_manifest() {
     local daemon_lib_names
     # Discover daemon-time libs by grepping the daemon scripts for source
     # statements that reference $IPATH/lib/<name>.sh (or its airplanes_path
-    # equivalent /usr/local/share/airplanes/lib/<name>.sh).
-    daemon_lib_names="$(grep -hoE '/usr/local/share/airplanes/lib/[A-Za-z0-9_-]+\.sh' \
+    # equivalent /opt/airplanes/current/share/airplanes/lib/<name>.sh).
+    daemon_lib_names="$(grep -hoE '/opt/airplanes/current/share/airplanes/lib/[A-Za-z0-9_-]+\.sh' \
         "$REPO_ROOT/scripts/airplanes-feed.sh" \
         "$REPO_ROOT/scripts/airplanes-mlat.sh" \
         2>/dev/null | sed 's|.*/||' | sort -u)"

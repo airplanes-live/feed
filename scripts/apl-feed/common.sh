@@ -160,7 +160,7 @@ uuid_file_primary() {
 }
 
 uuid_file_legacy() {
-    root_path '/usr/local/share/airplanes/airplanes-uuid'
+    root_path '/var/lib/airplanes/runtime/airplanes-uuid'
 }
 
 uuid_file_boot() {
@@ -184,7 +184,8 @@ feed_env_path() {
         root_path '/etc/airplanes/feed.env'
         return
     fi
-    if [[ -x "$(root_path '/usr/bin/airplanes-feeder')" && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
+    # Legacy images (baked /usr/bin/airplanes-feeder, no marker) read /boot too.
+    if [[ ( -f "$(root_path '/etc/airplanes/image-install')" || -x "$(root_path '/usr/bin/airplanes-feeder')" ) && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
         root_path '/boot/airplanes-config.txt'
         return
     fi
@@ -205,8 +206,15 @@ feed_env_write_path() {
 
 # Bootstrap the canonical feed.env from a bridged-legacy boot config when
 # canonical is missing. Idempotent: no-op when canonical already exists.
-# Detection mirrors feed_env_path()'s legacy fallback: airplanes-feeder
-# binary installed (bridge ran) + /boot/airplanes-config.txt present.
+#
+# Gating is image-install-marker-only ON PURPOSE — deliberately narrower than
+# feed_env_path()'s read fallback, which ALSO accepts a true legacy ROM's
+# baked /usr/bin/airplanes-feeder. A legacy ROM keeps its config in /boot,
+# owned by the legacy PHP webconfig that keeps writing there; bootstrapping a
+# canonical feed.env on such a box would make the daemons source feed.env and
+# silently ignore the operator's ongoing /boot edits. So writes only bootstrap
+# on a bridged feeder carrying the marker + a /boot config, never on a legacy
+# ROM (which has no marker).
 #
 # Without this, every apl-feed writer (mlat, uat, eventually configure
 # wrappers) would error out with "feed.env not found" on a bridged-legacy
@@ -226,10 +234,10 @@ feed_env_ensure_canonical_for_write() {
     canonical="$(feed_env_write_path)"
     [[ -f "$canonical" ]] && return 0
 
-    local boot_config feeder_binary
+    local boot_config image_marker
     boot_config="$(root_path '/boot/airplanes-config.txt')"
-    feeder_binary="$(root_path '/usr/bin/airplanes-feeder')"
-    if [[ ! -x "$feeder_binary" || ! -f "$boot_config" ]]; then
+    image_marker="$(root_path '/etc/airplanes/image-install')"
+    if [[ ! -f "$image_marker" || ! -f "$boot_config" ]]; then
         return 0
     fi
 
@@ -253,7 +261,7 @@ feed_env_paths() {
         printf '\n'
         return
     fi
-    if [[ -x "$(root_path '/usr/bin/airplanes-feeder')" && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
+    if [[ ( -f "$(root_path '/etc/airplanes/image-install')" || -x "$(root_path '/usr/bin/airplanes-feeder')" ) && -f "$(root_path '/boot/airplanes-config.txt')" ]]; then
         root_path '/boot/airplanes-config.txt'
         printf '\n'
         root_path '/boot/airplanes-env'

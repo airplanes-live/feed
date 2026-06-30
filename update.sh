@@ -128,33 +128,39 @@ else
     }
 
     airplanes_init_paths() {
-        IPATH="$(airplanes_path /usr/local/share/airplanes)"
-        GIT="$IPATH/git"
-        LOGFILE="$IPATH/lastlog"
+        PREFIX="$(airplanes_path /opt/airplanes/current)"
+        IPATH="$PREFIX/share/airplanes"
+        BIN="$PREFIX/bin"
+        STATE="$(airplanes_path /var/lib/airplanes/runtime)"
+        GIT="$STATE/git"
+        LOGFILE="$STATE/lastlog"
         BOOT_CONFIG="$(airplanes_path /boot/airplanes-config.txt)"
         BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
         ETC_AIRPLANES="$(airplanes_path /etc/airplanes)"
         FEED_ENV="$ETC_AIRPLANES/feed.env"
         FEEDER_ID_FILE="$ETC_AIRPLANES/feeder-id"
-        LEGACY_UUID_FILE="$IPATH/airplanes-uuid"
+        LEGACY_UUID_FILE="$STATE/airplanes-uuid"
         BOOT_UUID_FILE="$(airplanes_path /boot/airplanes-uuid)"
         LEGACY_FEED_ENV="$(airplanes_path /etc/default/airplanes)"
         LOCAL_BIN="$(airplanes_path /usr/local/bin)"
-        SYSTEMD_DIR="$(airplanes_path /lib/systemd/system)"
+        SYSTEMD_DIR="$(airplanes_path /etc/systemd/system)"
     }
 
     airplanes_is_image_install() {
-        [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]] \
-            || [[ -f "$(airplanes_path /etc/airplanes/image-install)" && -f "$FEED_ENV" ]]
+        [[ -f "$(airplanes_path /etc/airplanes/image-install)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]] \
+            || [[ -x "$(airplanes_path /usr/bin/airplanes-feeder)" && ( -f "$FEED_ENV" || -f "$BOOT_CONFIG" ) ]]
     }
 
     airplanes_image_feed_bin_default() {
-        local legacy
-        legacy="$(airplanes_path /usr/bin/airplanes-feeder)"
-        if [[ -x "$legacy" ]]; then
-            printf '%s' "$legacy"
+        local opt_bin legacy_bin
+        opt_bin="$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
+        legacy_bin="$(airplanes_path /usr/bin/airplanes-feeder)"
+        if [[ -x "$opt_bin" ]]; then
+            printf '%s' "$opt_bin"
+        elif [[ -x "$legacy_bin" ]]; then
+            printf '%s' "$legacy_bin"
         else
-            printf '%s' "$(airplanes_path /usr/local/share/airplanes/feed-airplanes)"
+            printf '%s' "$opt_bin"
         fi
     }
 
@@ -339,12 +345,12 @@ IMAGE_INSTALL=0
 if airplanes_is_image_install; then
     IMAGE_INSTALL=1
 fi
-IMAGE_SERVICE_LAYOUT=0
-if [[ "$IMAGE_INSTALL" == "1" ]] || airplanes_is_build_mode; then
-    IMAGE_SERVICE_LAYOUT=1
-fi
-
 mkdir -p "$IPATH"
+# Mutable runtime state (git checkout, lastlog, readsb/mlat build trees,
+# version stamps) lives under $STATE=/var/lib/airplanes/runtime, separate
+# from the read-only payload under $IPATH. getGIT clones into $GIT=$STATE/git
+# and $LOGFILE=$STATE/lastlog, so the parent must exist first.
+mkdir -p "$STATE"
 rm -f "$LOGFILE"
 touch "$LOGFILE"
 
@@ -381,11 +387,6 @@ if [[ "$1" != "test" ]] && { [[ ! -f "$IPATH/update.sh" ]] || ! diff "$GIT/updat
     bash "$IPATH/update.sh" "$@"
     exit $?
 fi
-if [[ "$IMAGE_SERVICE_LAYOUT" == "1" ]]; then
-    # Images ship these units in /etc/systemd/system, which overrides /lib.
-    SYSTEMD_DIR="$(airplanes_path /etc/systemd/system)"
-fi
-
 # Migration helpers: legacy retirements, env-file rewrites, manifest-based
 # pruning, finalize symlinks. See scripts/lib/update-migrations.sh for the
 # function definitions and the migration ordering contract.
@@ -598,8 +599,20 @@ fi
 if [[ -d "$IPATH/lib" ]]; then
     prune_installed_script_artifacts "$IPATH/lib" "$GIT/scripts/lib" historical_daemon_libs
 fi
+# apl-feed dispatcher: the real CLI lands under $BIN (the consolidated
+# FHS prefix, alongside the feed binary), matching where the runtime
+# overlay installs it. $LOCAL_BIN/apl-feed is a stable symlink shim into
+# it so the webconfig-pinned /usr/local/bin/apl-feed argv path keeps
+# working. apl-feed.sh resolves its modules via an absolute fallback, so
+# the symlink shim is safe.
+mkdir -p "$BIN"
+install -m 0755 "$GIT/scripts/apl-feed.sh" "$BIN/apl-feed"
 mkdir -p "$LOCAL_BIN"
-install -m 0755 "$GIT/scripts/apl-feed.sh" "$LOCAL_BIN/apl-feed"
+# Relative symlink target (mirrors create-uuid.sh's compat symlink) so it
+# resolves both on-device (ROOT=/) and under AIRPLANES_ROOT (image build /
+# chroot). An absolute "$BIN/apl-feed" would bake the root-prefixed build path;
+# an absolute "/opt/..." would escape the rootfs during build.
+ln -sfn ../../../opt/airplanes/current/bin/apl-feed "$LOCAL_BIN/apl-feed"
 
 # Daemon user/group. Renamed from "airplanes" to avoid collision with what
 # users typically pick as their console/SSH login on a fresh image flash.
@@ -633,13 +646,16 @@ fi
 
 MLAT_REPO="${AIRPLANES_MLAT_REPO:-https://github.com/airplanes-live/mlat-client}"
 MLAT_BRANCH="${AIRPLANES_MLAT_BRANCH:-master}"
-MLAT_GIT="$IPATH/mlat-client-git"
+MLAT_GIT="$STATE/mlat-client-git"
 
+# The mlat_version stamp is mutable build state, so it lives under $STATE
+# (passed as the ipath arg) rather than alongside the read-only payload in
+# $IPATH. The venv itself stays at $VENV=$IPATH/venv.
 install_mlat_client \
     "$MLAT_REPO" \
     "$MLAT_BRANCH" \
     "$VENV" \
-    "$IPATH" \
+    "$STATE" \
     "$MLAT_GIT" \
     "$LOGFILE" \
     "$REINSTALL" \
@@ -676,7 +692,7 @@ else
     # The daemon classifies disabled-by-config and self-disables via
     # sleep+exit; systemd Restart=always re-runs it. This keeps the
     # daemon-owned state-file pattern coherent: apl-feed status and the
-    # dashboards trust the daemon's published /run/airplanes-mlat/state
+    # dashboards trust the daemon's published /run/airplanes/mlat/state
     # rather than re-deriving the predicate from feed.env.
     systemctl enable airplanes-mlat >> "$LOGFILE" || true
     systemctl restart airplanes-mlat || true
@@ -701,15 +717,19 @@ else
     if airplanes_is_legacy_os; then
         READSB_BRANCH="jessie"
     fi
-    READSB_GIT="$IPATH/readsb-git"
-    READSB_BIN="$IPATH/feed-airplanes"
+    READSB_GIT="$STATE/readsb-git"
+    READSB_BIN="$BIN/feed-airplanes"
 
+    # The feed binary lands in $BIN (the consolidated prefix bin/), matching
+    # the overlay's /opt/airplanes/current/bin/feed-airplanes. The build tree
+    # and the readsb_version stamp are mutable state under $STATE.
+    mkdir -p "$BIN"
     build_readsb_feed_client \
         "$READSB_REPO" \
         "$READSB_BRANCH" \
         "$READSB_GIT" \
         "$READSB_BIN" \
-        "$IPATH" \
+        "$STATE" \
         "$LOGFILE" \
         "$REINSTALL"
 fi
@@ -739,7 +759,7 @@ echo 94
 
 if ! airplanes_is_build_mode; then
     systemctl is-active airplanes-feed &>/dev/null || {
-        rm -f "$IPATH/readsb_version"
+        rm -f "$STATE/readsb_version"
         echo "---------------------------------"
         journalctl -u airplanes-feed | tail -n10
         echo "---------------------------------"
@@ -754,7 +774,7 @@ echo 96
 
 if ! airplanes_is_build_mode; then
     [[ "${MLAT_DISABLED}" == "1" ]] || systemctl is-active airplanes-mlat &>/dev/null || {
-        rm -f "$IPATH/mlat_version"
+        rm -f "$STATE/mlat_version"
         echo "---------------------------------"
         journalctl -u airplanes-mlat | tail -n10
         echo "---------------------------------"
@@ -815,6 +835,12 @@ fi
 RC_LOCAL="$(airplanes_path /etc/rc.local)"
 MLAT_CLIENT_DEFAULT="$(airplanes_path /etc/default/mlat-client)"
 run_post_update_legacy_cleanup "$RC_LOCAL" "$MLAT_CLIENT_DEFAULT" "$LOGFILE"
+
+# Sweep the pre-FHS install layout (old /usr/local/share/airplanes payload +
+# /lib/systemd/system units) now that the new /opt layout is fully installed
+# and the feeder UUID has been migrated into /etc/airplanes/feeder-id. No-op
+# unless a pre-FHS install is actually present; /etc/airplanes is preserved.
+remove_pre_fhs_layout "$(airplanes_path /usr/local/share/airplanes)" "$(airplanes_path /lib/systemd/system)" "$LOGFILE"
 
 if [[ "$IMAGE_INSTALL" != "1" ]]; then
     finalize_legacy_feed_env_migration "$LEGACY_FEED_ENV" "$FEED_ENV"

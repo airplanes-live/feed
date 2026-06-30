@@ -43,8 +43,10 @@ else
     }
 
     airplanes_init_paths() {
-        IPATH="$(airplanes_path /usr/local/share/airplanes)"
-        GIT="$IPATH/git"
+        PREFIX="$(airplanes_path /opt/airplanes/current)"
+        IPATH="$PREFIX/share/airplanes"
+        STATE="$(airplanes_path /var/lib/airplanes/runtime)"
+        GIT="$STATE/git"
     }
 
     airplanes_is_build_mode() {

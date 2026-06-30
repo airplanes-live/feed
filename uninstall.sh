@@ -12,13 +12,18 @@ airplanes_path() {
     fi
 }
 
-IPATH="$(airplanes_path /usr/local/share/airplanes)"
+PREFIX="$(airplanes_path /opt/airplanes/current)"
+IPATH="$PREFIX/share/airplanes"
+STATE="$(airplanes_path /var/lib/airplanes/runtime)"
+# Payload directory the previous (pre-FHS) layout installed to; removed so an
+# upgrade-then-uninstall doesn't leak the stale tree.
+LEGACY_IPATH="$(airplanes_path /usr/local/share/airplanes)"
 FEEDER_ID="$(airplanes_path /etc/airplanes/feeder-id)"
-LEGACY_UUID="$IPATH/airplanes-uuid"
-# Unit-file directories: manual install (/lib/systemd/system, update.sh
-# default) and image-install / build-mode (/etc/systemd/system, set by
-# update.sh when IMAGE_SERVICE_LAYOUT=1). Iterate both unconditionally; unit
-# names are airplanes-specific and rm -f is a no-op when absent.
+LEGACY_UUID="$STATE/airplanes-uuid"
+# Unit-file directories: units now install to /etc/systemd/system, but
+# pre-FHS manual installs wrote to /lib/systemd/system. Iterate both
+# unconditionally; unit names are airplanes-specific and rm -f is a no-op
+# when absent.
 SYSTEMD_UNIT_DIRS=(
     "$(airplanes_path /lib/systemd/system)"
     "$(airplanes_path /etc/systemd/system)"
@@ -79,7 +84,10 @@ rm -f "$LOCAL_BIN_APL_FEED"
 rm -f "$IMAGE_INSTALL_MARKER"
 # State directories for the diagnostics and config-sync oneshots (last-success
 # timestamp files). Created by systemd's StateDirectory= on first fire of each
-# unit; nothing in them is user-supplied, so remove wholesale.
+# unit; nothing in them is user-supplied, so remove wholesale. Both the new
+# nested layout and the pre-FHS flat dirs are removed.
+rm -rf "$(airplanes_path /var/lib/airplanes/diagnostics)"
+rm -rf "$(airplanes_path /var/lib/airplanes/config-sync)"
 rm -rf "$(airplanes_path /var/lib/airplanes-diagnostics)"
 rm -rf "$(airplanes_path /var/lib/airplanes-config-sync)"
 
@@ -107,6 +115,11 @@ fi
 
 rm -rf "$IPATH"
 mkdir -p "$IPATH"
+# Mutable runtime state (git checkout, build trees, version stamps, legacy
+# uuid symlink) and the pre-FHS payload dir.
+rm -rf "$STATE"
+mkdir -p "$STATE"
+rm -rf "$LEGACY_IPATH"
 
 if [[ ! -f "$FEEDER_ID" && "$LEGACY_FALLBACK_VALID" -eq 1 ]]; then
     mkdir -p "$(dirname "$FEEDER_ID")"

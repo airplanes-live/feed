@@ -128,7 +128,8 @@ SH
     # routes /proc/uptime → $ROOT_DIR/proc/uptime, etc.
     mkdir -p "$ROOT_DIR/proc" "$ROOT_DIR/sys/class/net/eth0" \
              "$ROOT_DIR/sys/class/thermal/thermal_zone0" "$ROOT_DIR/etc/airplanes" \
-             "$ROOT_DIR/usr/local/share/airplanes"
+             "$ROOT_DIR/opt/airplanes/current/share/airplanes" \
+             "$ROOT_DIR/var/lib/airplanes/runtime"
     printf '12345.67 9999.99\n' > "$ROOT_DIR/proc/uptime"
     printf '0.42 0.38 0.41 1/100 12345\n' > "$ROOT_DIR/proc/loadavg"
     cat > "$ROOT_DIR/proc/meminfo" <<'MEM'
@@ -147,9 +148,9 @@ VERSION_ID="12"
 VERSION="12 (bookworm)"
 ID=debian
 OSR
-    printf '0.4.2\n' > "$ROOT_DIR/usr/local/share/airplanes/.version"
-    printf '0a1b2c3d4e5f6a7b8c9d\n' > "$ROOT_DIR/usr/local/share/airplanes/readsb_version"
-    printf 'feedcafe00112233\n' > "$ROOT_DIR/usr/local/share/airplanes/mlat_version"
+    printf '0.4.2\n' > "$ROOT_DIR/opt/airplanes/current/share/airplanes/.version"
+    printf '0a1b2c3d4e5f6a7b8c9d\n' > "$ROOT_DIR/var/lib/airplanes/runtime/readsb_version"
+    printf 'feedcafe00112233\n' > "$ROOT_DIR/var/lib/airplanes/runtime/mlat_version"
 
     # Claim state
     printf '11111111-2222-3333-4444-555555555555\n' > "$ROOT_DIR/etc/airplanes/feeder-id"
@@ -158,9 +159,9 @@ OSR
     chmod 0640 "$ROOT_DIR/etc/airplanes/feeder-claim-secret"
     printf 'REPORT_STATUS=true\n' > "$ROOT_DIR/etc/airplanes/feed.env"
 
-    LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes-diagnostics/diagnostics-last-success"
+    LAST_SUCCESS="$ROOT_DIR/var/lib/airplanes/diagnostics/diagnostics-last-success"
     mkdir -p "$(dirname "$LAST_SUCCESS")"
-    INTENT_ACK="$ROOT_DIR/var/lib/airplanes-diagnostics/diagnostics-intent-acked"
+    INTENT_ACK="$ROOT_DIR/var/lib/airplanes/diagnostics/diagnostics-intent-acked"
 }
 
 teardown() {
@@ -838,7 +839,7 @@ _write_state_file() {
 }
 
 @test "POST body service entry carries state=enabled,reason=ok from state file" {
-    _write_state_file /run/airplanes-mlat/state enabled ok
+    _write_state_file /run/airplanes/mlat/state enabled ok
     run_script
     [ "$status" -eq 0 ]
     run jq -er '.services[] | select(.name=="airplanes-mlat") | .state' "$BODY_LOG"
@@ -848,7 +849,7 @@ _write_state_file() {
 }
 
 @test "POST body service entry carries state=disabled,reason=mlat_enabled_false" {
-    _write_state_file /run/airplanes-mlat/state disabled mlat_enabled_false
+    _write_state_file /run/airplanes/mlat/state disabled mlat_enabled_false
     run_script
     [ "$status" -eq 0 ]
     run jq -er '.services[] | select(.name=="airplanes-mlat") | .state' "$BODY_LOG"
@@ -871,7 +872,7 @@ esac
 exit 0
 SH
     chmod +x "$STUB_DIR/systemctl"
-    _write_state_file /run/dump978-fa/state disabled no_hardware
+    _write_state_file /run/airplanes/dump978-fa/state disabled no_hardware
     run_script
     [ "$status" -eq 0 ]
     run jq -er '.services[] | select(.name=="dump978-fa") | .state' "$BODY_LOG"
@@ -915,7 +916,7 @@ SH
 }
 
 @test "POST body omits state/reason when schema_version is wrong" {
-    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    local rooted="$ROOT_DIR/run/airplanes/mlat/state"
     mkdir -p "$(dirname "$rooted")"
     {
         printf 'schema_version=2\n'
@@ -929,7 +930,7 @@ SH
 }
 
 @test "POST body omits state/reason on corrupt state file (no schema_version)" {
-    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    local rooted="$ROOT_DIR/run/airplanes/mlat/state"
     mkdir -p "$(dirname "$rooted")"
     {
         printf 'state=disabled\n'
@@ -968,7 +969,7 @@ esac
 exit 0
 SH
     chmod +x "$STUB_DIR/systemctl"
-    _write_state_file /run/airplanes-978/state enabled peer_no_hardware
+    _write_state_file /run/airplanes/978/state enabled peer_no_hardware
     run_script
     [ "$status" -eq 0 ]
     run jq -er '.services[] | select(.name=="airplanes-978") | .state' "$BODY_LOG"
@@ -981,7 +982,7 @@ SH
     # Regression guard against a future refactor that hardcodes /run/... —
     # the test seam roots everything under $ROOT_DIR, and the script must
     # route the state file path through root_path() so the seam works.
-    _write_state_file /run/airplanes-mlat/state disabled geo_not_configured
+    _write_state_file /run/airplanes/mlat/state disabled geo_not_configured
     run_script
     [ "$status" -eq 0 ]
     run jq -er '.services[] | select(.name=="airplanes-mlat") | .reason' "$BODY_LOG"
@@ -992,7 +993,7 @@ SH
     # Schema-valid but orphan: only `state=` present. The publisher must
     # refuse to send half a pair — that would let the dashboard see
     # ``state=disabled`` with no reason and fall through to the catchall.
-    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    local rooted="$ROOT_DIR/run/airplanes/mlat/state"
     mkdir -p "$(dirname "$rooted")"
     {
         printf 'schema_version=1\n'
@@ -1009,7 +1010,7 @@ SH
 @test "POST body omits state/reason when state file has reason but no state" {
     # Mirror of the above: orphan reason. All-or-nothing publish keeps the
     # server free of partial pairs even on schema-valid-but-corrupt files.
-    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    local rooted="$ROOT_DIR/run/airplanes/mlat/state"
     mkdir -p "$(dirname "$rooted")"
     {
         printf 'schema_version=1\n'
@@ -1026,7 +1027,7 @@ SH
 @test "POST body omits state/reason when state file value contains CR" {
     # state-writer.sh promises no CR in values; a CR in the on-disk file
     # is a corruption signal and must invalidate the whole record.
-    local rooted="$ROOT_DIR/run/airplanes-mlat/state"
+    local rooted="$ROOT_DIR/run/airplanes/mlat/state"
     mkdir -p "$(dirname "$rooted")"
     {
         printf 'schema_version=1\n'
@@ -1058,11 +1059,11 @@ SH
     # timer + the /api/feeders/stats endpoint). Diagnostics must POST only its
     # device-health payload, never the retired reception endpoint — even with
     # forwarder JSON present on disk.
-    mkdir -p "$ROOT_DIR/run/airplanes-feed"
+    mkdir -p "$ROOT_DIR/run/airplanes/feed"
     printf '{"now": %s, "aircraft": []}\n' "$(date +%s)" \
-        > "$ROOT_DIR/run/airplanes-feed/aircraft.json"
+        > "$ROOT_DIR/run/airplanes/feed/aircraft.json"
     printf '{"total": {"max_distance": 0}}\n' \
-        > "$ROOT_DIR/run/airplanes-feed/stats.json"
+        > "$ROOT_DIR/run/airplanes/feed/stats.json"
     run_script
     [ "$status" -eq 0 ]
     grep -q -- '/api/feeders/diagnostics' "$COMMAND_LOG"

@@ -54,13 +54,13 @@ if ! airplanes_is_build_mode && airplanes_is_image_install; then
     exit 1
 fi
 
-bash "$IPATH/git/configure.sh" "$@"
+bash "$GIT/configure.sh" "$@"
 
 BACKTITLETEXT="${BACKTITLETEXT:-airplanes.live Setup Script}"
 if ! airplanes_is_build_mode; then
     whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "We are now ready to begin setting up your receiver to feed airplanes.live.\n\nDo you wish to proceed?" 9 78 || exit 1
 fi
 
-bash "$IPATH/git/update.sh" "$@"
+bash "$GIT/update.sh" "$@"
 
 exit 0

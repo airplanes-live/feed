@@ -69,8 +69,8 @@ SH
 
     [ "$status" -eq 0 ]
     [ -f "$ROOT_DIR/root/setup-pwd" ]
-    [ "$(cat "$ROOT_DIR/root/setup-pwd")" = "$ROOT_DIR/root/usr/local/share/airplanes/git" ]
-    [ "$(git -C "$ROOT_DIR/root/usr/local/share/airplanes/git" remote get-url origin)" = "$repo" ]
+    [ "$(cat "$ROOT_DIR/root/setup-pwd")" = "$ROOT_DIR/root/var/lib/airplanes/runtime/git" ]
+    [ "$(git -C "$ROOT_DIR/root/var/lib/airplanes/runtime/git" remote get-url origin)" = "$repo" ]
 }
 
 @test "install.sh propagates build mode to setup.sh" {
@@ -131,7 +131,7 @@ SH
 
     [ "$status" -eq 0 ]
     [ -f "$ROOT_DIR/root/standalone-setup-pwd" ]
-    [ "$(cat "$ROOT_DIR/root/standalone-setup-pwd")" = "$ROOT_DIR/root/usr/local/share/airplanes/git" ]
+    [ "$(cat "$ROOT_DIR/root/standalone-setup-pwd")" = "$ROOT_DIR/root/var/lib/airplanes/runtime/git" ]
 }
 
 # __FEED_REF__ template behavior: the source-tree install.sh leaves the

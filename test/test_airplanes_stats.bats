@@ -13,7 +13,7 @@ setup() {
     COMMAND_LOG="$ROOT_DIR/cmd.log"
     BODY_LOG="$ROOT_DIR/body.log"
     HEADER_LOG="$ROOT_DIR/header.log"
-    mkdir -p "$STUB_DIR" "$ROOT_DIR/etc/airplanes" "$ROOT_DIR/run/airplanes-feed"
+    mkdir -p "$STUB_DIR" "$ROOT_DIR/etc/airplanes" "$ROOT_DIR/run/airplanes/feed"
 
     # curl stub: records argv, dumps the --config file (bearer header) to
     # HEADER_LOG, and GUNZIPS the uploaded body (post_gzip_bearer sends
@@ -59,7 +59,7 @@ teardown() {
 # Seed fresh, valid forwarder JSON (aircraft + stats). $1 overrides aircraft.now.
 _seed_forwarder() {
     local now="${1:-$(date +%s)}"
-    local dir="$ROOT_DIR/run/airplanes-feed"
+    local dir="$ROOT_DIR/run/airplanes/feed"
     cat > "$dir/aircraft.json" <<EOF
 {"now": $now, "messages": 1234, "aircraft": [{"hex":"abc123","rssi":-12.3,"lat":52.5,"lon":13.4}]}
 EOF
@@ -69,7 +69,7 @@ EOF
 }
 
 _seed_outline() {
-    cat > "$ROOT_DIR/run/airplanes-feed/outline.json" <<'EOF'
+    cat > "$ROOT_DIR/run/airplanes/feed/outline.json" <<'EOF'
 {"actualRange": {"last24h": {"points": [[52.5, 13.4], [52.6, 13.5], [52.4, 13.3]]}}}
 EOF
 }
@@ -130,7 +130,7 @@ _posted() { grep -q -- '/api/feeders/stats' "$COMMAND_LOG"; }
 
 @test "outline present but truncated → outline omitted, core still sent" {
     _seed_forwarder
-    printf '{ truncated outline' > "$ROOT_DIR/run/airplanes-feed/outline.json"
+    printf '{ truncated outline' > "$ROOT_DIR/run/airplanes/feed/outline.json"
     run_script
     [ "$status" -eq 0 ]
     _posted
@@ -140,7 +140,7 @@ _posted() { grep -q -- '/api/feeders/stats' "$COMMAND_LOG"; }
 
 @test "non-object core doc (array) → no POST, exit 0" {
     _seed_forwarder
-    printf '[1,2,3]\n' > "$ROOT_DIR/run/airplanes-feed/stats.json"
+    printf '[1,2,3]\n' > "$ROOT_DIR/run/airplanes/feed/stats.json"
     run_script
     [ "$status" -eq 0 ]
     if _posted; then return 1; fi
@@ -150,7 +150,7 @@ _posted() { grep -q -- '/api/feeders/stats' "$COMMAND_LOG"; }
     # A half-rewritten readsb file can concatenate two objects. validate_doc must
     # reject the stream rather than upload only the first object.
     _seed_forwarder
-    printf '{"a":1}{"b":2}\n' > "$ROOT_DIR/run/airplanes-feed/stats.json"
+    printf '{"a":1}{"b":2}\n' > "$ROOT_DIR/run/airplanes/feed/stats.json"
     run_script
     [ "$status" -eq 0 ]
     if _posted; then return 1; fi
@@ -167,10 +167,10 @@ _posted() { grep -q -- '/api/feeders/stats' "$COMMAND_LOG"; }
 }
 
 @test "missing aircraft.now → no POST, exit 0" {
-    cat > "$ROOT_DIR/run/airplanes-feed/aircraft.json" <<'EOF'
+    cat > "$ROOT_DIR/run/airplanes/feed/aircraft.json" <<'EOF'
 {"messages": 5, "aircraft": []}
 EOF
-    cat > "$ROOT_DIR/run/airplanes-feed/stats.json" <<'EOF'
+    cat > "$ROOT_DIR/run/airplanes/feed/stats.json" <<'EOF'
 {"total": {"max_distance": 0}}
 EOF
     run_script
@@ -180,10 +180,10 @@ EOF
 }
 
 @test "non-numeric aircraft.now → no POST, exit 0" {
-    cat > "$ROOT_DIR/run/airplanes-feed/aircraft.json" <<'EOF'
+    cat > "$ROOT_DIR/run/airplanes/feed/aircraft.json" <<'EOF'
 {"now": "soon", "aircraft": []}
 EOF
-    cat > "$ROOT_DIR/run/airplanes-feed/stats.json" <<'EOF'
+    cat > "$ROOT_DIR/run/airplanes/feed/stats.json" <<'EOF'
 {"total": {"max_distance": 0}}
 EOF
     run_script
@@ -229,7 +229,7 @@ EOF
 }
 
 @test "forwarder JSON entirely absent → no POST, exit 0" {
-    # No _seed_forwarder — /run/airplanes-feed is empty.
+    # No _seed_forwarder — /run/airplanes/feed is empty.
     run_script
     [ "$status" -eq 0 ]
     if _posted; then return 1; fi
@@ -242,7 +242,7 @@ EOF
     _seed_forwarder
     # A large outline pushes the raw envelope over the test cap; the core-only
     # envelope is well under it, so the uploader drops outline and still POSTs.
-    python3 - "$ROOT_DIR/run/airplanes-feed/outline.json" <<'PY'
+    python3 - "$ROOT_DIR/run/airplanes/feed/outline.json" <<'PY'
 import json, sys
 pts = [[round(52 + i*1e-4, 4), round(13 + i*1e-4, 4)] for i in range(400)]
 json.dump({"actualRange": {"last24h": {"points": pts}}}, open(sys.argv[1], "w"))

@@ -14,7 +14,7 @@ setup() {
     TMPDIR="$ROOT_DIR/tmp"
     mkdir -p "$TMPDIR" \
         "$ROOT_DIR/etc/airplanes" \
-        "$ROOT_DIR/usr/local/share/airplanes" \
+        "$ROOT_DIR/var/lib/airplanes/runtime" \
         "$ROOT_DIR/boot"
     export TMPDIR
     APL_FEED_SECRET_OWNER="$(id -un)"

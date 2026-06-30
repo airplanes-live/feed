@@ -539,6 +539,73 @@ migrate_disable_legacy_mlat_client() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Pre-FHS install-layout migration
+# ---------------------------------------------------------------------------
+
+# Sweep the pre-FHS install layout after a successful upgrade to the /opt
+# layout. Before the FHS move the standalone installer wrote payload and
+# mutable state into /usr/local/share/airplanes (the old $IPATH) and units
+# into /lib/systemd/system. The new install lays everything under
+# /opt/airplanes/current, /var/lib/airplanes/runtime, and /etc/systemd/system,
+# so the old tree is orphaned. /etc/airplanes (feeder identity + config) is
+# never touched, and create-uuid.sh has already migrated any legacy UUID into
+# /etc/airplanes/feeder-id by the time this runs — so this only removes stale
+# files, it does not move data. Re-running on an already-migrated feeder is a
+# no-op (idempotent). File removal always runs so a chroot/build rootfs stays
+# clean; the daemon-reload that drops the now-stale /lib unit definitions is
+# gated on the real system.
+#
+# Args: $1 legacy IPATH (/usr/local/share/airplanes)
+#       $2 legacy systemd dir (/lib/systemd/system)
+#       $3 logfile
+remove_pre_fhs_layout() {
+    local legacy_ipath="$1"
+    local legacy_systemd="$2"
+    local logfile="${3:-/dev/null}"
+
+    local legacy_units=(
+        airplanes-feed.service airplanes-mlat.service
+        airplanes-diagnostics.service airplanes-diagnostics.timer
+        airplanes-stats.service airplanes-stats.timer
+        airplanes-config-sync.service airplanes-config-sync.timer
+    )
+
+    # Skip (and avoid the daemon-reload) only when there is genuinely nothing
+    # left to clean: no legacy IPATH and none of the legacy units. Checking the
+    # full unit list — not just airplanes-feed.service — so a partial earlier
+    # cleanup that left a stale mlat/diagnostics/stats/config-sync unit behind
+    # still gets finished.
+    local unit have_legacy=0
+    [[ -e "$legacy_ipath" ]] && have_legacy=1
+    if (( ! have_legacy )); then
+        for unit in "${legacy_units[@]}"; do
+            if [[ -e "$legacy_systemd/$unit" ]]; then
+                have_legacy=1
+                break
+            fi
+        done
+    fi
+    (( have_legacy )) || return 0
+
+    echo "Removing pre-FHS install layout ($legacy_ipath + $legacy_systemd units)" >> "$logfile" 2>&1
+
+    for unit in "${legacy_units[@]}"; do
+        rm -f "$legacy_systemd/$unit"
+    done
+
+    # Defensive: only ever rm -rf a path that ends in the known legacy IPATH
+    # suffix, so a mis-passed argument can't widen the deletion.
+    if [[ -n "$legacy_ipath" && "$legacy_ipath" == */usr/local/share/airplanes ]]; then
+        rm -rf "$legacy_ipath"
+    fi
+
+    if ! airplanes_is_build_mode && [[ "${AIRPLANES_ROOT:-/}" == "/" ]] \
+        && command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >> "$logfile" 2>&1 || true
+    fi
+}
+
 run_post_update_legacy_cleanup() {
     local rc_local="$1"
     local mlat_client_default="$2"

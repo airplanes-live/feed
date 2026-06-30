@@ -14,7 +14,7 @@ setup() {
     STUB_DIR="$ROOT_DIR/bin"
     mkdir -p "$TMPDIR" "$STUB_DIR" \
         "$ROOT_DIR/etc/airplanes" \
-        "$ROOT_DIR/usr/local/share/airplanes"
+        "$ROOT_DIR/var/lib/airplanes/runtime"
     export TMPDIR
     APL_FEED_SECRET_OWNER="$(id -un)"
     APL_FEED_SECRET_GROUP="$(id -gn)"

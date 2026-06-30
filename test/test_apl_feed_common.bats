@@ -13,7 +13,7 @@ setup() {
     TMPDIR="$ROOT_DIR/tmp"
     mkdir -p "$TMPDIR" \
         "$ROOT_DIR/etc/airplanes" \
-        "$ROOT_DIR/usr/local/share/airplanes" \
+        "$ROOT_DIR/var/lib/airplanes/runtime" \
         "$ROOT_DIR/usr/bin" \
         "$ROOT_DIR/boot"
     export TMPDIR
@@ -94,7 +94,7 @@ run_strict() {
 
 @test "feed_env_path: returns boot config when image marker + boot config present" {
     : > "$ROOT_DIR/boot/airplanes-config.txt"
-    install -m 755 /dev/null "$ROOT_DIR/usr/bin/airplanes-feeder"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     run feed_env_path
     [ "$status" -eq 0 ]
     [ "$output" = "$ROOT_DIR/boot/airplanes-config.txt" ]
@@ -116,24 +116,11 @@ run_strict() {
 
 @test "feed_env_paths: two paths when image marker + boot config present" {
     : > "$ROOT_DIR/boot/airplanes-config.txt"
-    install -m 755 /dev/null "$ROOT_DIR/usr/bin/airplanes-feeder"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     run feed_env_paths
     [ "$status" -eq 0 ]
     [[ "$output" == *"$ROOT_DIR/boot/airplanes-config.txt"* ]]
     [[ "$output" == *"$ROOT_DIR/boot/airplanes-env"* ]]
-}
-
-# Documents drift with airplanes-feed.sh. airplanes-feed.sh treats
-# /etc/airplanes/image-install as an image marker (commit 269994c);
-# common.sh's feed_env_paths does not. With marker-only state (no
-# legacy /usr/bin/airplanes-feeder, no rootfs feed.env), feed_env_paths
-# falls through to the rootfs feed.env fallback.
-@test "feed_env_paths: image-install marker alone does NOT trigger image branch (drift)" {
-    : > "$ROOT_DIR/etc/airplanes/image-install"
-    : > "$ROOT_DIR/boot/airplanes-config.txt"
-    run feed_env_paths
-    [ "$status" -eq 0 ]
-    [ "$output" = "$ROOT_DIR/etc/airplanes/feed.env" ]
 }
 
 # --- feed_env_get ---
@@ -189,7 +176,7 @@ run_strict() {
 
 @test "feed_env_get: last value wins across multi-path output" {
     : > "$ROOT_DIR/boot/airplanes-config.txt"
-    install -m 755 /dev/null "$ROOT_DIR/usr/bin/airplanes-feeder"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     printf 'GAIN=42\n' > "$ROOT_DIR/boot/airplanes-config.txt"
     printf 'GAIN=99\n' > "$ROOT_DIR/boot/airplanes-env"
     run feed_env_get GAIN
@@ -341,14 +328,14 @@ run_strict() {
 
 @test "read_uuid: prefers /etc/airplanes/feeder-id" {
     printf '11111111-2222-3333-4444-555555555555\n' > "$ROOT_DIR/etc/airplanes/feeder-id"
-    printf '99999999-2222-3333-4444-555555555555\n' > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    printf '99999999-2222-3333-4444-555555555555\n' > "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
     run read_uuid
     [ "$status" -eq 0 ]
     [ "$output" = '11111111-2222-3333-4444-555555555555' ]
 }
 
-@test "read_uuid: falls back to legacy /usr/local path" {
-    printf '22222222-2222-3333-4444-555555555555\n' > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+@test "read_uuid: falls back to legacy /var/lib runtime path" {
+    printf '22222222-2222-3333-4444-555555555555\n' > "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
     run read_uuid
     [ "$status" -eq 0 ]
     [ "$output" = '22222222-2222-3333-4444-555555555555' ]

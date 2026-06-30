@@ -6,14 +6,14 @@ After=network-online.target airplanes-feed.service
 [Service]
 Type=oneshot
 User=airplanes-feed
-StateDirectory=airplanes-diagnostics
+StateDirectory=airplanes/diagnostics
 # 0755 so `apl-feed status` run as a non-airplanes-feed-group user can
 # stat the last-success sentinel inside this dir. The file is non-secret
 # (mtime only), and the only thing inside is the `touch`-created marker.
 StateDirectoryMode=0755
-RuntimeDirectory=airplanes-diagnostics
+RuntimeDirectory=airplanes/diagnostics
 RuntimeDirectoryMode=0700
-ExecStart=/usr/local/share/airplanes/airplanes-diagnostics.sh
+ExecStart=/opt/airplanes/current/share/airplanes/airplanes-diagnostics.sh
 TimeoutStartSec=90s
 SyslogIdentifier=airplanes-diagnostics
 NoNewPrivileges=yes

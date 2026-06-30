@@ -711,7 +711,7 @@ GUEST
 cat > "$ROOT_MNT/opt/airplanes-boot-smoke/feed-daemon-stub" <<'GUEST'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'feed-daemon %s\n' "$*" >> /run/airplanes-feed/boot-smoke-feed-daemon.log 2>/dev/null || true
+printf 'feed-daemon %s\n' "$*" >> /run/airplanes/feed/boot-smoke-feed-daemon.log 2>/dev/null || true
 exec sleep infinity
 GUEST
     chmod 0755 "$ROOT_MNT/opt/airplanes-boot-smoke/feed-daemon-stub"
@@ -784,20 +784,20 @@ assert_image_contracts() {
         assert_file /etc/airplanes/feed.env
     fi
     assert_valid_uuid_file /etc/airplanes/feeder-id
-    # The /usr/local/share/airplanes/airplanes-uuid -> feeder-id compat symlink
-    # is required only on the legacy contract. create-uuid.sh lays it down on
-    # any install path that runs update.sh; the overlay-managed new image
-    # instead generates the canonical /etc/airplanes/feeder-id inline at first
-    # boot and deliberately does NOT ship the legacy symlink (the image's own
-    # overlay smoke asserts its absence). We assert presence only on legacy
-    # rather than asserting absence on new, because a hypothetical non-overlay
-    # new install would still run update.sh and create the symlink — the
-    # invariant that actually holds is "required on legacy", not "forbidden on
-    # new". apl-feed resolves feeder-id from the canonical path first
-    # (common.sh's resolver), so the symlink is a back-compat shim, not a
-    # functional dependency on the new contract.
+    # The airplanes-uuid -> feeder-id compat symlink (now under $STATE at
+    # /var/lib/airplanes/runtime/airplanes-uuid) is required only on the legacy
+    # contract. create-uuid.sh lays it down on any install path that runs
+    # update.sh; the overlay-managed new image instead generates the canonical
+    # /etc/airplanes/feeder-id inline at first boot and deliberately does NOT
+    # ship the legacy symlink (the image's own overlay smoke asserts its
+    # absence). We assert presence only on legacy rather than asserting absence
+    # on new, because a hypothetical non-overlay new install would still run
+    # update.sh and create the symlink — the invariant that actually holds is
+    # "required on legacy", not "forbidden on new". apl-feed resolves feeder-id
+    # from the canonical path first (common.sh's resolver), so the symlink is a
+    # back-compat shim, not a functional dependency on the new contract.
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
-        assert_symlink_target /usr/local/share/airplanes/airplanes-uuid '../../../../etc/airplanes/feeder-id'
+        assert_symlink_target /var/lib/airplanes/runtime/airplanes-uuid '../../../../etc/airplanes/feeder-id'
         assert_exec /usr/bin/airplanes-feeder
         # update.sh installs itself to IPATH on any install path that runs it.
         # The overlay-managed new image deliberately does NOT ship update.sh:
@@ -805,22 +805,22 @@ assert_image_contracts() {
         # and update.sh refuses to run there anyway (overlay guard, EX_CONFIG).
         # It is neither staged into the overlay tree nor a managed_paths entry.
         # Required only on the legacy contract.
-        assert_file /usr/local/share/airplanes/update.sh
+        assert_file /opt/airplanes/current/share/airplanes/update.sh
     else
-        assert_exec /usr/local/share/airplanes/feed-airplanes
+        assert_exec /opt/airplanes/current/bin/feed-airplanes
     fi
     assert_exec /usr/local/bin/apl-feed
-    assert_file /usr/local/share/airplanes/airplanes-feed.sh
-    assert_file /usr/local/share/airplanes/airplanes-mlat.sh
-    assert_file /usr/local/share/airplanes/apl-feed/common.sh
+    assert_file /opt/airplanes/current/share/airplanes/airplanes-feed.sh
+    assert_file /opt/airplanes/current/share/airplanes/airplanes-mlat.sh
+    assert_file /opt/airplanes/current/share/airplanes/apl-feed/common.sh
     assert_file /etc/systemd/system/airplanes-feed.service
     assert_file /etc/systemd/system/airplanes-mlat.service
     assert_file /etc/systemd/system/airplanes-first-run.service
-    assert_contains /etc/systemd/system/airplanes-feed.service 'ExecStart=/usr/local/share/airplanes/airplanes-feed.sh'
+    assert_contains /etc/systemd/system/airplanes-feed.service 'ExecStart=/opt/airplanes/current/share/airplanes/airplanes-feed.sh'
     assert_regex /etc/systemd/system/airplanes-feed.service '^After=.*airplanes-first-run.service'
-    assert_contains /etc/systemd/system/airplanes-mlat.service 'ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh'
+    assert_contains /etc/systemd/system/airplanes-mlat.service 'ExecStart=/opt/airplanes/current/share/airplanes/airplanes-mlat.sh'
     assert_regex /etc/systemd/system/airplanes-mlat.service '^After=.*airplanes-first-run.service'
-    assert_contains /usr/local/share/airplanes/airplanes-feed.sh 'feed2.airplanes.live,64004'
+    assert_contains /opt/airplanes/current/share/airplanes/airplanes-feed.sh 'feed2.airplanes.live,64004'
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
         assert_not_exists /etc/airplanes/feed.env
         [[ -L /etc/default/airplanes ]] || fail "/etc/default/airplanes is not a symlink"
@@ -857,30 +857,37 @@ disable_mlat_for_boot_smoke() {
 prepare_mlat_fixture() {
     local mlat_version
     disable_mlat_for_boot_smoke
-    install -d -m 0755 /usr/local/share/airplanes/venv/bin
-    if [[ ! -x /usr/local/share/airplanes/venv/bin/mlat-client ]]; then
-        cat > /usr/local/share/airplanes/venv/bin/mlat-client <<'SH'
+    # The venv lives at $IPATH/venv under the /opt payload prefix; the
+    # mlat_version stamp is mutable build state under $STATE. Seed both so
+    # update.sh's version-match fast path skips the rebuild.
+    install -d -m 0755 /opt/airplanes/current/share/airplanes/venv/bin
+    install -d -m 0755 /var/lib/airplanes/runtime
+    if [[ ! -x /opt/airplanes/current/share/airplanes/venv/bin/mlat-client ]]; then
+        cat > /opt/airplanes/current/share/airplanes/venv/bin/mlat-client <<'SH'
 #!/usr/bin/env bash
 sleep 3600
 SH
-        chmod 0755 /usr/local/share/airplanes/venv/bin/mlat-client
+        chmod 0755 /opt/airplanes/current/share/airplanes/venv/bin/mlat-client
     fi
     mlat_version="$(git --git-dir=/opt/airplanes-boot-smoke/mlat.git rev-parse refs/heads/master)"
-    printf '%s\n' "$mlat_version" > /usr/local/share/airplanes/mlat_version
+    printf '%s\n' "$mlat_version" > /var/lib/airplanes/runtime/mlat_version
 }
 
 prepare_readsb_fixture() {
     local readsb_version
-    install -d -m 0755 /usr/local/share/airplanes
-    if [[ ! -x /usr/bin/airplanes-feeder && ! -x /usr/local/share/airplanes/feed-airplanes ]]; then
-        cat > /usr/local/share/airplanes/feed-airplanes <<'SH'
+    # A built feed binary lands in the /opt payload bin/; the readsb_version
+    # stamp is mutable build state under $STATE.
+    install -d -m 0755 /opt/airplanes/current/bin
+    install -d -m 0755 /var/lib/airplanes/runtime
+    if [[ ! -x /usr/bin/airplanes-feeder && ! -x /opt/airplanes/current/bin/feed-airplanes ]]; then
+        cat > /opt/airplanes/current/bin/feed-airplanes <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
-        chmod 0755 /usr/local/share/airplanes/feed-airplanes
+        chmod 0755 /opt/airplanes/current/bin/feed-airplanes
     fi
     readsb_version="$(git --git-dir=/opt/airplanes-boot-smoke/readsb.git rev-parse refs/heads/dev)"
-    printf '%s\n' "$readsb_version" > /usr/local/share/airplanes/readsb_version
+    printf '%s\n' "$readsb_version" > /var/lib/airplanes/runtime/readsb_version
 }
 
 run_feed_update() {
@@ -901,12 +908,12 @@ run_feed_update() {
 feed_binary_path() {
     # The feed binary lives in different places per contract: legacy images
     # ship an image-baked binary at /usr/bin/airplanes-feeder; new-contract
-    # installs build the binary into /usr/local/share/airplanes/feed-airplanes.
+    # installs build the binary into /opt/airplanes/current/bin/feed-airplanes.
     # Idempotency assertions need the right one.
     if [[ "$IMAGE_CONTRACT" == "legacy" ]]; then
         printf '%s\n' /usr/bin/airplanes-feeder
     else
-        printf '%s\n' /usr/local/share/airplanes/feed-airplanes
+        printf '%s\n' /opt/airplanes/current/bin/feed-airplanes
     fi
 }
 
@@ -916,7 +923,7 @@ snapshot_post_update_state() {
     #   - feeder-id content hash (UUID must survive reboot byte-stable)
     local feed_bin mlat_bin
     feed_bin="$(feed_binary_path)"
-    mlat_bin=/usr/local/share/airplanes/venv/bin/mlat-client
+    mlat_bin=/opt/airplanes/current/share/airplanes/venv/bin/mlat-client
     stat -c '%Y %n' "$feed_bin" "$mlat_bin" > "$STATE_DIR/snapshot-mtimes"
     sha256sum /etc/airplanes/feeder-id > "$STATE_DIR/snapshot-feeder-id"
 }
@@ -968,7 +975,7 @@ assert_binaries_unchanged() {
     post_snap="$STATE_DIR/snapshot-mtimes-post-rerun"
     local feed_bin mlat_bin
     feed_bin="$(feed_binary_path)"
-    mlat_bin=/usr/local/share/airplanes/venv/bin/mlat-client
+    mlat_bin=/opt/airplanes/current/share/airplanes/venv/bin/mlat-client
     stat -c '%Y %n' "$feed_bin" "$mlat_bin" > "$post_snap"
     if ! diff -q "$pre_snap" "$post_snap" >/dev/null; then
         echo "pre-rerun snapshot:" >&2
@@ -1023,8 +1030,8 @@ case "$phase" in
         # via sleep+exit per the daemon classifier in rules/architecture.md),
         # so is-active is a safe assertion across both branches.
         assert_service_healthy airplanes-mlat.service
-        assert_state_file_schema_v1 /run/airplanes-feed/state
-        assert_state_file_schema_v1 /run/airplanes-mlat/state
+        assert_state_file_schema_v1 /run/airplanes/feed/state
+        assert_state_file_schema_v1 /run/airplanes/mlat/state
         assert_uuid_stable_across_reboot
 
         if is_overlay_managed_image; then
@@ -1041,7 +1048,7 @@ case "$phase" in
             post_reboot_snap="$STATE_DIR/snapshot-mtimes-post-reboot"
             stat -c '%Y %n' \
                 "$(feed_binary_path)" \
-                /usr/local/share/airplanes/venv/bin/mlat-client \
+                /opt/airplanes/current/share/airplanes/venv/bin/mlat-client \
                 > "$post_reboot_snap"
             if ! diff -q "$STATE_DIR/snapshot-mtimes" "$post_reboot_snap" >/dev/null; then
                 echo "pre-reboot snapshot:" >&2

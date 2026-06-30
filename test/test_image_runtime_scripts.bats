@@ -17,9 +17,15 @@ teardown() {
 
 write_image_config() {
     local root="$1"
-    mkdir -p "$root/boot" "$root/usr/bin"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    mkdir -p "$root/boot" "$root/etc/airplanes" "$root/opt/airplanes/current/bin"
+    # Image install is signalled by the marker file, not the presence of a
+    # feed binary at a magic path. The feed binary now lands at the same
+    # consolidated /opt path for both image and standalone installs; tests
+    # that need to observe argv overwrite this exit-0 stub with a logging
+    # stub at the same path.
+    : > "$root/etc/airplanes/image-install"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/opt/airplanes/current/bin/feed-airplanes"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
     # Represents post-migration boot config: USER preserved for legacy
     # consumers, MLAT_USER + MLAT_ENABLED added by airplanes-webconfig's
     # migrate-config.sh so the new daemon sees the split schema.
@@ -60,12 +66,12 @@ MLAT_ENABLED=true
 MLAT_PRIVATE=false
 UAT_INPUT=""
 EOF
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
     [ "$status" -eq 0 ]
@@ -88,12 +94,12 @@ MLAT_ENABLED=true
 MLAT_PRIVATE=false
 UAT_INPUT="127.0.0.1:30978"
 EOF
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
     [ "$status" -eq 0 ]
@@ -104,12 +110,12 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/args.log"
     write_image_config "$root"
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
 
@@ -133,7 +139,7 @@ SH
     # --write-json feeds the stats uploader (airplanes-stats.sh). It must target
     # the forwarder's own RuntimeDirectory, never the image decoder's /run/readsb,
     # and must not pull in globe-index shards.
-    grep -q -- "--write-json $root/run/airplanes-feed" "$arg_log"
+    grep -q -- "--write-json $root/run/airplanes/feed" "$arg_log"
     if grep -q -- '/run/readsb' "$arg_log"; then
         return 1
     fi
@@ -154,7 +160,7 @@ SH
     # No image feed binary and no image-install marker → IMAGE_INSTALL=0, the
     # forwarder sources /etc/airplanes/feed.env and uses the built feed-airplanes
     # binary. The stats JSON contract must be identical to the image branch.
-    mkdir -p "$root/etc/airplanes" "$root/usr/local/share/airplanes"
+    mkdir -p "$root/etc/airplanes" "$root/opt/airplanes/current/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 LATITUDE="52.52"
 LONGITUDE="13.40"
@@ -163,16 +169,16 @@ MLAT_USER="manual-feeder"
 MLAT_ENABLED=true
 MLAT_PRIVATE=false
 EOF
-    cat > "$root/usr/local/share/airplanes/feed-airplanes" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/local/share/airplanes/feed-airplanes"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
     [ "$status" -eq 0 ]
-    grep -q -- "--write-json $root/run/airplanes-feed" "$arg_log"
+    grep -q -- "--write-json $root/run/airplanes/feed" "$arg_log"
     if grep -q -- '/run/readsb' "$arg_log"; then
         return 1
     fi
@@ -190,12 +196,12 @@ INPUT="127.0.0.1:30005"
 MLATSERVER="feed.airplanes.live:31090"
 JSON_OPTIONS="--write-json /run/readsb --write-json=/run/readsb --json-location-accuracy 2"
 EOF
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
     [ "$status" -eq 0 ]
@@ -203,7 +209,7 @@ SH
     # regardless of any earlier --write-json injected via JSON_OPTIONS.
     local args
     args="$(cat "$arg_log")"
-    [[ "$args" == *"--write-json $root/run/airplanes-feed" ]]
+    [[ "$args" == *"--write-json $root/run/airplanes/feed" ]]
 }
 
 @test "airplanes-mlat.sh: image-side MLAT_PRIVATE=true → mlat-client gets --privacy" {
@@ -211,7 +217,7 @@ SH
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
     write_image_config "$root"
-    mkdir -p "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$stub_bin/nc" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -220,12 +226,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -244,7 +250,7 @@ SH
     local stub_bin="$ROOT_DIR/bin"
     write_image_config "$root"
     sed -i -e 's/MLAT_PRIVATE=true/MLAT_PRIVATE=false/' "$root/boot/airplanes-config.txt"
-    mkdir -p "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$stub_bin/nc" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -253,12 +259,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -277,7 +283,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     install_legacy_mlat_translation_lib "$root"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
@@ -298,12 +304,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -315,7 +321,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -335,12 +341,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -357,7 +363,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -378,12 +384,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -402,7 +408,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     install_legacy_mlat_translation_lib "$root"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
@@ -423,12 +429,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -440,7 +446,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -460,12 +466,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -483,10 +489,11 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/boot" "$root/usr/bin" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/boot" "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     install_legacy_mlat_translation_lib "$root"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    # Image install is signalled by the marker; with a boot config and no
+    # feed.env the daemon takes the BOOT_CONFIG source branch.
+    : > "$root/etc/airplanes/image-install"
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="52"
 LONGITUDE="13"
@@ -508,12 +515,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -526,7 +533,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -547,12 +554,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -562,11 +569,11 @@ SH
     fi
 }
 
-@test "airplanes-feed.sh detects new-contract image via marker without /usr/bin/airplanes-feeder" {
+@test "airplanes-feed.sh detects new-contract image via the image-install marker" {
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/args.log"
-    local feed_bin="$root/usr/local/share/airplanes/feed-airplanes"
-    mkdir -p "$root/etc/airplanes" "$root/usr/local/share/airplanes"
+    local feed_bin="$root/opt/airplanes/current/bin/feed-airplanes"
+    mkdir -p "$root/etc/airplanes" "$root/opt/airplanes/current/bin"
     : > "$root/etc/airplanes/image-install"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
@@ -600,11 +607,11 @@ SH
     fi
 }
 
-@test "airplanes-feed.sh stays in manual-install branch when neither marker nor legacy binary present" {
+@test "airplanes-feed.sh stays in manual-install branch when the image-install marker is absent" {
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/args.log"
-    local feed_bin="$root/usr/local/share/airplanes/feed-airplanes"
-    mkdir -p "$root/etc/airplanes" "$root/usr/local/share/airplanes"
+    local feed_bin="$root/opt/airplanes/current/bin/feed-airplanes"
+    mkdir -p "$root/etc/airplanes" "$root/opt/airplanes/current/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -640,9 +647,9 @@ SH
 # file is written.
 install_state_writer_lib() {
     local root="$1"
-    install -d -m 0755 "$root/usr/local/share/airplanes/lib"
+    install -d -m 0755 "$root/opt/airplanes/current/share/airplanes/lib"
     install -m 0644 "$BATS_TEST_DIRNAME/../scripts/lib/state-writer.sh" \
-        "$root/usr/local/share/airplanes/lib/state-writer.sh"
+        "$root/opt/airplanes/current/share/airplanes/lib/state-writer.sh"
 }
 
 # Same as install_state_writer_lib but for the legacy-key translation
@@ -650,9 +657,9 @@ install_state_writer_lib() {
 # from PRIVACY / MLAT_MARKER.
 install_legacy_mlat_translation_lib() {
     local root="$1"
-    install -d -m 0755 "$root/usr/local/share/airplanes/lib"
+    install -d -m 0755 "$root/opt/airplanes/current/share/airplanes/lib"
     install -m 0644 "$BATS_TEST_DIRNAME/../scripts/lib/legacy-mlat-translation.sh" \
-        "$root/usr/local/share/airplanes/lib/legacy-mlat-translation.sh"
+        "$root/opt/airplanes/current/share/airplanes/lib/legacy-mlat-translation.sh"
 }
 
 # Set up an mlat run with stubbed nc/sleep/mlat-client so the daemon
@@ -662,7 +669,7 @@ install_legacy_mlat_translation_lib() {
 setup_mlat_runtime() {
     local root="$1"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$stub_bin/nc" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -671,12 +678,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 }
 
 write_feed_env() {
@@ -708,20 +715,20 @@ write_feed_env() {
         PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    [ -f "$root/run/airplanes-mlat/state" ]
-    grep -qx 'schema_version=1' "$root/run/airplanes-mlat/state"
-    grep -qx 'service=airplanes-mlat' "$root/run/airplanes-mlat/state"
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=ok' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_enabled=true' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_user=alice' "$root/run/airplanes-mlat/state"
-    grep -qx 'latitude=52' "$root/run/airplanes-mlat/state"
-    grep -qx 'longitude=13' "$root/run/airplanes-mlat/state"
-    grep -qx 'altitude=35' "$root/run/airplanes-mlat/state"
-    grep -qE '^decided_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$root/run/airplanes-mlat/state"
+    [ -f "$root/run/airplanes/mlat/state" ]
+    grep -qx 'schema_version=1' "$root/run/airplanes/mlat/state"
+    grep -qx 'service=airplanes-mlat' "$root/run/airplanes/mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'reason=ok' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_enabled=true' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_user=alice' "$root/run/airplanes/mlat/state"
+    grep -qx 'latitude=52' "$root/run/airplanes/mlat/state"
+    grep -qx 'longitude=13' "$root/run/airplanes/mlat/state"
+    grep -qx 'altitude=35' "$root/run/airplanes/mlat/state"
+    grep -qE '^decided_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$root/run/airplanes/mlat/state"
     # Default MLATSERVER → endpoint keys carry the default and flag it.
-    grep -qx 'mlat_server=feed.airplanes.live:31090' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_server_is_default=true' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_server=feed.airplanes.live:31090' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_server_is_default=true' "$root/run/airplanes/mlat/state"
     # mlat-client was invoked.
     [ -f "$arg_log" ]
 }
@@ -745,8 +752,8 @@ write_feed_env() {
         PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'mlat_server=feed.airplanes.test:31090' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_server_is_default=false' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_server=feed.airplanes.test:31090' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_server_is_default=false' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh publishes empty endpoint keys for a charset-invalid MLATSERVER" {
@@ -768,8 +775,8 @@ write_feed_env() {
         PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'mlat_server=' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_server_is_default=' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_server=' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_server_is_default=' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh writes state=disabled,reason=mlat_enabled_false when MLAT_ENABLED=false" {
@@ -791,8 +798,8 @@ write_feed_env() {
         PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=mlat_enabled_false' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=disabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'reason=mlat_enabled_false' "$root/run/airplanes/mlat/state"
     [[ "$output" == *'MLAT DISABLED'* ]]
     # mlat-client was NOT invoked.
     [ ! -f "$arg_log" ]
@@ -815,7 +822,7 @@ write_feed_env() {
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'reason=mlat_enabled_false' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=mlat_enabled_false' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh writes state=disabled,reason=geo_not_configured when GEO_CONFIGURED=false" {
@@ -836,9 +843,9 @@ write_feed_env() {
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
-    grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=disabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'reason=geo_not_configured' "$root/run/airplanes/mlat/state"
+    grep -qx 'geo_configured=false' "$root/run/airplanes/mlat/state"
 }
 
 # ---- disabled branch: config watch loop -----------------------------------
@@ -866,14 +873,13 @@ SH
     [[ "$output" == *'MLAT DISABLED'* ]]
 }
 
-# Write a legacy-image layout: no feed.env, the airplanes-feeder binary
-# marker present, and a post-migration-schema boot config that classifies
+# Write a legacy-image layout: no feed.env, the image-install marker
+# present, and a post-migration-schema boot config that classifies
 # as disabled. The wrapper then takes the BOOT_CONFIG source branch.
 write_legacy_disabled_boot_config() {
     local root="$1"
-    mkdir -p "$root/boot" "$root/usr/bin"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    mkdir -p "$root/boot" "$root/etc/airplanes"
+    : > "$root/etc/airplanes/image-install"
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
 MLAT_USER="legacy-feeder"
 MLAT_ENABLED=false
@@ -944,7 +950,7 @@ SH
         PATH="$ROOT_DIR/bin:$PATH" timeout 2 bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 124 ]
-    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=disabled' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh: disabled watch — invalid interval falls back to 60" {
@@ -989,8 +995,8 @@ SH
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
-    grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
+    grep -qx 'reason=geo_not_configured' "$root/run/airplanes/mlat/state"
+    grep -qx 'geo_configured=false' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh fallback heals legacy equator user (LATITUDE=0, LONGITUDE!=0) → GEO_CONFIGURED=true" {
@@ -1012,8 +1018,8 @@ SH
 
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'geo_configured=true' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh fallback heals legacy prime-meridian user (LATITUDE!=0, LONGITUDE=0)" {
@@ -1032,8 +1038,8 @@ SH
 
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'geo_configured=true' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh derives GEO_CONFIGURED=true from non-zero coords (legacy feed.env)" {
@@ -1052,7 +1058,7 @@ SH
 
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
-    grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
+    grep -qx 'geo_configured=true' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh derives GEO_CONFIGURED=false from decimal-zero pair (0.00000/0.00000)" {
@@ -1074,7 +1080,7 @@ SH
 
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
-    grep -qx 'geo_configured=false' "$root/run/airplanes-mlat/state"
+    grep -qx 'geo_configured=false' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh: explicit GEO_CONFIGURED wins over legacy coord derivation" {
@@ -1097,8 +1103,8 @@ SH
 
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'geo_configured=true' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'geo_configured=true' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh: empty MLAT_USER + canonical feeder-id → state=enabled, MLAT_USER=Anonymous-<short>, mlat-client gets --user" {
@@ -1121,9 +1127,9 @@ SH
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=ok' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_user=Anonymous-0a1b2c3d' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'reason=ok' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_user=Anonymous-0a1b2c3d' "$root/run/airplanes/mlat/state"
     # mlat-client must receive the substituted value, not an empty --user.
     grep -q -- '--user Anonymous-0a1b2c3d' "$arg_log"
 }
@@ -1148,9 +1154,9 @@ SH
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=ok' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'reason=ok' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes/mlat/state"
     grep -q -- '--user Anonymous' "$arg_log"
 }
 
@@ -1166,8 +1172,8 @@ SH
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh: empty MLAT_USER + truncated feeder-id (not a UUID) → MLAT_USER=Anonymous" {
@@ -1184,8 +1190,8 @@ SH
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh: empty MLAT_USER + feeder-id is a symlink → MLAT_USER=Anonymous (refuses to follow)" {
@@ -1203,8 +1209,8 @@ SH
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=enabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_user=Anonymous' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh: empty MLAT_USER + feeder-id with CR/LF in canonical UUID → strips CR/LF, MLAT_USER=Anonymous-<short>" {
@@ -1221,7 +1227,7 @@ SH
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'mlat_user=Anonymous-0a1b2c3d' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_user=Anonymous-0a1b2c3d' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh exits 64 with schema-strict guard when boot config has legacy USER but no MLAT_USER" {
@@ -1232,9 +1238,10 @@ SH
     local root="$ROOT_DIR/root"
     install_state_writer_lib "$root"
     setup_mlat_runtime "$root"
-    mkdir -p "$root/boot" "$root/usr/bin"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$root/usr/bin/airplanes-feeder"
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    mkdir -p "$root/boot" "$root/etc/airplanes"
+    # Marker routes the daemon into the boot-config branch so it sees the
+    # un-migrated legacy USER= without an accompanying MLAT_USER.
+    : > "$root/etc/airplanes/image-install"
     cat > "$root/boot/airplanes-config.txt" <<'EOF'
 LATITUDE="52.52000"
 LONGITUDE="13.40500"
@@ -1248,7 +1255,7 @@ EOF
     [[ "$output" == *"legacy USER= schema detected"* ]]
     [[ "$output" == *"Update Webconfig"* ]]
     # State file is not written: we exit before classifier runs.
-    [ ! -f "$root/run/airplanes-mlat/state" ]
+    [ ! -f "$root/run/airplanes/mlat/state" ]
 }
 
 @test "airplanes-mlat.sh exits 64 with state=misconfigured when ALTITUDE empty + MLAT_ENABLED=true" {
@@ -1272,9 +1279,9 @@ EOF
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 64 ]
-    grep -qx 'state=misconfigured' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=altitude_empty' "$root/run/airplanes-mlat/state"
-    grep -qx 'altitude=' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=misconfigured' "$root/run/airplanes/mlat/state"
+    grep -qx 'reason=altitude_empty' "$root/run/airplanes/mlat/state"
+    grep -qx 'altitude=' "$root/run/airplanes/mlat/state"
     [[ "$output" == *"ALTITUDE is empty"* ]]
 }
 
@@ -1300,8 +1307,8 @@ EOF
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'state=disabled' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=geo_not_configured' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=disabled' "$root/run/airplanes/mlat/state"
+    grep -qx 'reason=geo_not_configured' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh exits 64 with reason=mlat_private_invalid for hand-edited bad MLAT_PRIVATE" {
@@ -1322,9 +1329,9 @@ EOF
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 64 ]
-    grep -qx 'state=misconfigured' "$root/run/airplanes-mlat/state"
-    grep -qx 'reason=mlat_private_invalid' "$root/run/airplanes-mlat/state"
-    grep -qx 'mlat_private=yes' "$root/run/airplanes-mlat/state"
+    grep -qx 'state=misconfigured' "$root/run/airplanes/mlat/state"
+    grep -qx 'reason=mlat_private_invalid' "$root/run/airplanes/mlat/state"
+    grep -qx 'mlat_private=yes' "$root/run/airplanes/mlat/state"
     [[ "$output" == *"MLAT_PRIVATE must be 'true' or 'false'"* ]]
 }
 
@@ -1346,7 +1353,7 @@ EOF
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'mlat_private=true' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_private=true' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh state file publishes mlat_private=false when MLAT_PRIVATE absent (runtime default)" {
@@ -1366,7 +1373,7 @@ EOF
     run env AIRPLANES_ROOT="$root" PATH="$ROOT_DIR/bin:$PATH" bash "$MLAT_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'mlat_private=false' "$root/run/airplanes-mlat/state"
+    grep -qx 'mlat_private=false' "$root/run/airplanes/mlat/state"
 }
 
 @test "airplanes-mlat.sh runs without state-writer lib (defensive source falls through to stub)" {
@@ -1390,7 +1397,7 @@ EOF
     [ "$status" -eq 0 ]
     # Daemon still invoked mlat-client; no state file because lib was missing.
     [ -f "$arg_log" ]
-    [ ! -f "$root/run/airplanes-mlat/state" ]
+    [ ! -f "$root/run/airplanes/mlat/state" ]
 }
 
 @test "airplanes-feed.sh writes state=enabled,reason=ok with effective config" {
@@ -1398,29 +1405,29 @@ EOF
     local arg_log="$ROOT_DIR/feed-args.log"
     install_state_writer_lib "$root"
     write_image_config "$root"
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
 
     [ "$status" -eq 0 ]
-    [ -f "$root/run/airplanes-feed/state" ]
-    grep -qx 'schema_version=1' "$root/run/airplanes-feed/state"
-    grep -qx 'service=airplanes-feed' "$root/run/airplanes-feed/state"
-    grep -qx 'state=enabled' "$root/run/airplanes-feed/state"
-    grep -qx 'reason=ok' "$root/run/airplanes-feed/state"
-    grep -qx 'latitude=52.52000' "$root/run/airplanes-feed/state"
-    grep -qx 'longitude=13.40500' "$root/run/airplanes-feed/state"
-    grep -qx 'input=127.0.0.1:30005' "$root/run/airplanes-feed/state"
-    grep -q -- "feed_bin=$root/usr/bin/airplanes-feeder" "$root/run/airplanes-feed/state"
+    [ -f "$root/run/airplanes/feed/state" ]
+    grep -qx 'schema_version=1' "$root/run/airplanes/feed/state"
+    grep -qx 'service=airplanes-feed' "$root/run/airplanes/feed/state"
+    grep -qx 'state=enabled' "$root/run/airplanes/feed/state"
+    grep -qx 'reason=ok' "$root/run/airplanes/feed/state"
+    grep -qx 'latitude=52.52000' "$root/run/airplanes/feed/state"
+    grep -qx 'longitude=13.40500' "$root/run/airplanes/feed/state"
+    grep -qx 'input=127.0.0.1:30005' "$root/run/airplanes/feed/state"
+    grep -q -- "feed_bin=$root/opt/airplanes/current/bin/feed-airplanes" "$root/run/airplanes/feed/state"
     # Default TARGET → endpoint keys carry the default and flag it as such.
-    grep -qx 'target_host=feed.airplanes.live' "$root/run/airplanes-feed/state"
-    grep -qx 'target_port=30004' "$root/run/airplanes-feed/state"
-    grep -qx 'target_is_default=true' "$root/run/airplanes-feed/state"
+    grep -qx 'target_host=feed.airplanes.live' "$root/run/airplanes/feed/state"
+    grep -qx 'target_port=30004' "$root/run/airplanes/feed/state"
+    grep -qx 'target_is_default=true' "$root/run/airplanes/feed/state"
 }
 
 @test "airplanes-feed.sh publishes a non-default TARGET endpoint to the state file" {
@@ -1435,19 +1442,19 @@ SH
         'MLAT_USER="image-feeder"' \
         'MLAT_ENABLED=true' \
         'TARGET="--net-connector feed.airplanes.test,30004,beast_reduce_plus_out"'
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
 
     [ "$status" -eq 0 ]
-    grep -qx 'target_host=feed.airplanes.test' "$root/run/airplanes-feed/state"
-    grep -qx 'target_port=30004' "$root/run/airplanes-feed/state"
-    grep -qx 'target_is_default=false' "$root/run/airplanes-feed/state"
+    grep -qx 'target_host=feed.airplanes.test' "$root/run/airplanes/feed/state"
+    grep -qx 'target_port=30004' "$root/run/airplanes/feed/state"
+    grep -qx 'target_is_default=false' "$root/run/airplanes/feed/state"
 }
 
 @test "airplanes-feed.sh parses --net-connector=host TARGET form and flags a non-default port" {
@@ -1462,20 +1469,20 @@ SH
         'MLAT_USER="image-feeder"' \
         'MLAT_ENABLED=true' \
         'TARGET="--net-connector=feed.airplanes.live,9999,beast_reduce_plus_out"'
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
 
     [ "$status" -eq 0 ]
     # Default host on a non-default port is still a non-default endpoint.
-    grep -qx 'target_host=feed.airplanes.live' "$root/run/airplanes-feed/state"
-    grep -qx 'target_port=9999' "$root/run/airplanes-feed/state"
-    grep -qx 'target_is_default=false' "$root/run/airplanes-feed/state"
+    grep -qx 'target_host=feed.airplanes.live' "$root/run/airplanes/feed/state"
+    grep -qx 'target_port=9999' "$root/run/airplanes/feed/state"
+    grep -qx 'target_is_default=false' "$root/run/airplanes/feed/state"
 }
 
 @test "airplanes-feed.sh publishes empty endpoint keys for an unparseable TARGET" {
@@ -1490,21 +1497,21 @@ SH
         'MLAT_USER="image-feeder"' \
         'MLAT_ENABLED=true' \
         'TARGET="no connector flag here"'
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
 
     [ "$status" -eq 0 ]
     # Present-but-empty keys signal "configured but unparseable" to
     # consumers, distinct from key-absent (older daemon, no state).
-    grep -qx 'target_host=' "$root/run/airplanes-feed/state"
-    grep -qx 'target_port=' "$root/run/airplanes-feed/state"
-    grep -qx 'target_is_default=' "$root/run/airplanes-feed/state"
+    grep -qx 'target_host=' "$root/run/airplanes/feed/state"
+    grep -qx 'target_port=' "$root/run/airplanes/feed/state"
+    grep -qx 'target_is_default=' "$root/run/airplanes/feed/state"
 }
 
 @test "airplanes-mlat.sh: RESULTS bundle default routes to 30104 + 31015 + 30157" {
@@ -1517,7 +1524,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -1537,12 +1544,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -1566,7 +1573,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -1587,12 +1594,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -1617,7 +1624,7 @@ SH
     local root="$ROOT_DIR/root"
     local arg_log="$ROOT_DIR/mlat-args.log"
     local stub_bin="$ROOT_DIR/bin"
-    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/usr/local/share/airplanes/venv/bin"
+    mkdir -p "$root/etc/airplanes" "$stub_bin" "$root/opt/airplanes/current/share/airplanes/venv/bin"
     cat > "$root/etc/airplanes/feed.env" <<'EOF'
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -1638,12 +1645,12 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-    cat > "$root/usr/local/share/airplanes/venv/bin/mlat-client" <<'SH'
+    cat > "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/usr/local/share/airplanes/venv/bin/mlat-client"
+    chmod +x "$stub_bin/nc" "$stub_bin/sleep" "$root/opt/airplanes/current/share/airplanes/venv/bin/mlat-client"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" PATH="$stub_bin:$PATH" bash "$MLAT_SCRIPT"
 
@@ -1678,12 +1685,12 @@ USER="canonical-feed-env"
 MLATSERVER="feed.airplanes.live:31090"
 TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed2.airplanes.live,64004"
 EOF
-    cat > "$root/usr/bin/airplanes-feeder" <<'SH'
+    cat > "$root/opt/airplanes/current/bin/feed-airplanes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARG_LOG"
 exit 0
 SH
-    chmod +x "$root/usr/bin/airplanes-feeder"
+    chmod +x "$root/opt/airplanes/current/bin/feed-airplanes"
 
     run env AIRPLANES_ROOT="$root" ARG_LOG="$arg_log" bash "$FEED_SCRIPT"
 

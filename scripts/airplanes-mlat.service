@@ -6,9 +6,9 @@ After=network-online.target airplanes-first-run.service
 
 [Service]
 User=airplanes-feed
-RuntimeDirectory=airplanes-mlat
+RuntimeDirectory=airplanes/mlat
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/local/share/airplanes/airplanes-mlat.sh
+ExecStart=/opt/airplanes/current/share/airplanes/airplanes-mlat.sh
 Type=simple
 Restart=always
 RestartSec=30

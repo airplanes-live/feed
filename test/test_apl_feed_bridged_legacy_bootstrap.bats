@@ -2,8 +2,8 @@
 
 # End-to-end regression for the bridged-legacy bootstrap path:
 # `apl-feed mlat enable` / `apl-feed mlat disable` / `apl-feed 978 enable`
-# / `apl-feed 978 disable` on a box where /usr/bin/airplanes-feeder is
-# present, /boot/airplanes-config.txt is populated by the legacy PHP
+# / `apl-feed 978 disable` on a box where the /etc/airplanes/image-install
+# marker is present, /boot/airplanes-config.txt is populated by the legacy PHP
 # webconfig, and /etc/airplanes/feed.env does NOT yet exist. The writer
 # adapters call feed_env_ensure_canonical_for_write() before invoking
 # apl_feed_apply, which calls apl_feed_import_legacy_config to seed the
@@ -60,11 +60,10 @@ STUB
     PATH="$STUB_DIR:$PATH"
     export PATH
 
-    # Bridged-legacy shape: airplanes-feeder installed, no canonical
+    # Bridged-legacy shape: image-install marker present, no canonical
     # feed.env, legacy boot config carrying operational keys.
-    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot" "$ROOT_DIR/etc/airplanes"
-    : > "$ROOT_DIR/usr/bin/airplanes-feeder"
-    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    mkdir -p "$ROOT_DIR/boot" "$ROOT_DIR/etc/airplanes"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     cat > "$ROOT_DIR/boot/airplanes-config.txt" <<EOF
 LATITUDE=52.5
 LONGITUDE=13.4
@@ -156,9 +155,8 @@ source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/configure-validators.sh"
 source "'"$BATS_TEST_DIRNAME"'/../scripts/lib/feed-env-keys.sh"
 source "'"$BATS_TEST_DIRNAME"'/../scripts/apl-feed/common.sh"
 ROOT='"$ROOT_DIR"'
-mkdir -p "$ROOT/usr/bin" "$ROOT/boot"
-: > "$ROOT/usr/bin/airplanes-feeder"
-chmod +x "$ROOT/usr/bin/airplanes-feeder"
+mkdir -p "$ROOT/etc/airplanes" "$ROOT/boot"
+: > "$ROOT/etc/airplanes/image-install"
 : > "$ROOT/boot/airplanes-config.txt"
 apl_feed_import_legacy_config() { return 1; }
 feed_env_ensure_canonical_for_write

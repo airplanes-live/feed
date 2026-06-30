@@ -36,7 +36,7 @@
 # metacharacters. Parse line-by-line with KEY=VALUE split on first `=`.
 #
 # Usage:
-#   airplanes_write_state /run/airplanes-mlat/state \
+#   airplanes_write_state /run/airplanes/mlat/state \
 #       service=airplanes-mlat \
 #       state=disabled \
 #       reason=mlat_enabled_false \

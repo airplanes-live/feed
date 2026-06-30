@@ -41,7 +41,7 @@ case "\$1" in
     is-active) echo active ;;
     # Ownership gate in the apply lib reads `systemctl cat` output and
     # only restarts units that ExecStart our wrappers.
-    cat) printf 'ExecStart=/usr/local/share/airplanes/%s.sh\n' "\${@: -1}" ;;
+    cat) printf 'ExecStart=/opt/airplanes/current/share/airplanes/%s.sh\n' "\${@: -1}" ;;
 esac
 exit 0
 STUB
@@ -670,15 +670,14 @@ EOF
 }
 
 @test "bridged-legacy: _mlat_apply targets canonical feed.env, not boot config" {
-    # Reproduce the bridged-legacy reader-fallback shape: airplanes-feeder
-    # is installed, /boot/airplanes-config.txt exists, /etc/airplanes/
-    # feed.env does not. Before feed_env_write_path() was introduced,
+    # Reproduce the bridged-legacy reader-fallback shape: the
+    # /etc/airplanes/image-install marker is present,
+    # /boot/airplanes-config.txt exists, /etc/airplanes/feed.env does not. Before feed_env_write_path() was introduced,
     # _mlat_apply called feed_env_path() and would have asked the apply
     # library to rewrite /boot/airplanes-config.txt itself.
     rm -rf "$ROOT_DIR/etc/airplanes"
-    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
-    : > "$ROOT_DIR/usr/bin/airplanes-feeder"
-    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    mkdir -p "$ROOT_DIR/etc/airplanes" "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
 LATITUDE=52.5
 USER=alice

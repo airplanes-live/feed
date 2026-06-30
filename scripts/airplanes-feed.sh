@@ -14,11 +14,14 @@ BOOT_CONFIG="$(airplanes_path /boot/airplanes-config.txt)"
 BOOT_ENV="$(airplanes_path /boot/airplanes-env)"
 FEED_ENV="$(airplanes_path /etc/airplanes/feed.env)"
 FEEDER_ID_FILE="$(airplanes_path /etc/airplanes/feeder-id)"
-IMAGE_FEED_BIN="$(airplanes_path /usr/bin/airplanes-feeder)"
 IMAGE_INSTALL_MARKER="$(airplanes_path /etc/airplanes/image-install)"
 
+# An image install is signalled by the /etc/airplanes/image-install marker
+# (new overlay image) or the baked /usr/bin/airplanes-feeder binary (a legacy
+# image, which predates the marker). The flag lets the feeder fall back to its
+# /boot config when no feed.env is present and selects the image decoder tuning.
 IMAGE_INSTALL=0
-if [[ -x "$IMAGE_FEED_BIN" || -f "$IMAGE_INSTALL_MARKER" ]]; then
+if [[ -f "$IMAGE_INSTALL_MARKER" || -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]; then
     IMAGE_INSTALL=1
 fi
 
@@ -60,10 +63,12 @@ if [[ "${MODEAC:-}" == "yes" ]]; then
     MODEAC_OPTION="--modeac"
 fi
 
-if [[ -x "$IMAGE_FEED_BIN" ]]; then
-    DEFAULT_FEED_BIN="$IMAGE_FEED_BIN"
-else
-    DEFAULT_FEED_BIN="$(airplanes_path /usr/local/share/airplanes/feed-airplanes)"
+# Prefer the consolidated /opt feed binary; fall back to a legacy image's
+# baked /usr/bin/airplanes-feeder when /opt has no binary. AIRPLANES_FEED_BIN
+# overrides both. Mirrors airplanes_image_feed_bin_default in the installer.
+DEFAULT_FEED_BIN="$(airplanes_path /opt/airplanes/current/bin/feed-airplanes)"
+if [[ ! -x "$DEFAULT_FEED_BIN" && -x "$(airplanes_path /usr/bin/airplanes-feeder)" ]]; then
+    DEFAULT_FEED_BIN="$(airplanes_path /usr/bin/airplanes-feeder)"
 fi
 FEED_BIN="${AIRPLANES_FEED_BIN:-$DEFAULT_FEED_BIN}"
 
@@ -122,7 +127,7 @@ unset _target_rest
 
 # State writer (defensive: a partial install where this script is in
 # place but the lib isn't yet must not take down the daemon).
-STATE_WRITER="$(airplanes_path /usr/local/share/airplanes/lib/state-writer.sh)"
+STATE_WRITER="$(airplanes_path /opt/airplanes/current/share/airplanes/lib/state-writer.sh)"
 if [[ -r "$STATE_WRITER" ]]; then
     # shellcheck source=lib/state-writer.sh
     source "$STATE_WRITER"
@@ -135,7 +140,7 @@ fi
 # (effective config + binary path) for consumers. Forward-compatible
 # with future signals (e.g. an explicit FEED_ENABLED=false toggle
 # would add a reason token without bumping schema_version).
-STATE_FILE="$(airplanes_path /run/airplanes-feed/state)"
+STATE_FILE="$(airplanes_path /run/airplanes/feed/state)"
 mkdir -p "$(dirname "$STATE_FILE")"
 airplanes_write_state "$STATE_FILE" \
     "service=airplanes-feed" \

@@ -149,8 +149,8 @@ mock_url() {
 
 @test "reads UUID from legacy local path as fallback" {
     rm "$ROOT_DIR/etc/airplanes/feeder-id"
-    mkdir -p "$ROOT_DIR/usr/local/share/airplanes"
-    echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > "$ROOT_DIR/usr/local/share/airplanes/airplanes-uuid"
+    mkdir -p "$ROOT_DIR/var/lib/airplanes/runtime"
+    echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > "$ROOT_DIR/var/lib/airplanes/runtime/airplanes-uuid"
     run timeout 2 "$SCRIPT" claim register --root "$ROOT_DIR" \
         --website-url "http://127.0.0.1:1" --dry-run
     [ "$status" -eq 0 ]

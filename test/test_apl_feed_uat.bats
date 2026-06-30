@@ -48,14 +48,14 @@ case "\$1" in
     cat)
         unit="\${@: -1}"
         # Foreign units (e.g. FlightAware's dump978-fa on a PiAware box)
-        # exist but ExecStart a path outside /usr/local/share/airplanes/,
+        # exist but ExecStart a path outside /opt/airplanes/current/share/airplanes/,
         # so the apply lib's ownership gate must skip them.
         if grep -Fxq "\$unit" "$FOREIGN_UNITS_FILE" 2>/dev/null; then
             printf 'ExecStart=/usr/bin/%s\n' "\$unit"
             exit 0
         fi
         if grep -Fxq "\$unit" "$INSTALLED_UNITS_FILE" 2>/dev/null; then
-            printf 'ExecStart=/usr/local/share/airplanes/%s.sh\n' "\$unit"
+            printf 'ExecStart=/opt/airplanes/current/share/airplanes/%s.sh\n' "\$unit"
             exit 0
         fi
         exit 1
@@ -101,7 +101,7 @@ mark_unit_installed() {
 }
 
 # A unit that exists on the host but belongs to a third-party package
-# (ExecStart outside /usr/local/share/airplanes/), e.g. FlightAware's
+# (ExecStart outside /opt/airplanes/current/share/airplanes/), e.g. FlightAware's
 # dump978-fa on a PiAware install.
 mark_unit_foreign() {
     printf '%s\n' "$1" >> "$FOREIGN_UNITS_FILE"
@@ -420,9 +420,8 @@ EOF
     # key (UAT_INPUT) that apl_feed_import_legacy_config understands so
     # this fixture is also a valid input to that command.
     rm -rf "$ROOT_DIR/etc/airplanes"
-    mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/boot"
-    : > "$ROOT_DIR/usr/bin/airplanes-feeder"
-    chmod +x "$ROOT_DIR/usr/bin/airplanes-feeder"
+    mkdir -p "$ROOT_DIR/etc/airplanes" "$ROOT_DIR/boot"
+    : > "$ROOT_DIR/etc/airplanes/image-install"
     cat > "$ROOT_DIR/boot/airplanes-config.txt" <<'EOF'
 UAT_INPUT=127.0.0.1:30978
 EOF

@@ -26,14 +26,14 @@ setup() {
     FEED_ENV="$ROOT_DIR/etc/airplanes/feed.env"
     LOCK_FILE="$ROOT_DIR/run/airplanes/feed-env.lock"
 
-    # `cat` answers with an ExecStart under /usr/local/share/airplanes/ so
+    # `cat` answers with an ExecStart under /opt/airplanes/current/share/airplanes/ so
     # the apply lib's unit-ownership gate treats every unit as ours by
     # default; the foreign-unit tests override this stub per-test.
     cat > "$STUB_DIR/systemctl" <<STUB
 #!/usr/bin/env bash
 printf 'systemctl %s\n' "\$*" >> "$SYSTEMCTL_LOG"
 if [ "\$1" = cat ]; then
-    printf 'ExecStart=/usr/local/share/airplanes/%s.sh\n' "\${@: -1}"
+    printf 'ExecStart=/opt/airplanes/current/share/airplanes/%s.sh\n' "\${@: -1}"
 fi
 exit 0
 STUB
@@ -368,7 +368,7 @@ if [ "\$1" = cat ]; then
     unit="\${@: -1}"
     case " $foreign " in
         *" \$unit "*) printf 'ExecStart=/usr/bin/%s\n' "\$unit" ;;
-        *) printf 'ExecStart=/usr/local/share/airplanes/%s.sh\n' "\$unit" ;;
+        *) printf 'ExecStart=/opt/airplanes/current/share/airplanes/%s.sh\n' "\$unit" ;;
     esac
 fi
 exit 0

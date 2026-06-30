@@ -4,8 +4,8 @@
 # fall back to a stub that always returns 1 so the MLAT path degrades to
 # systemd-only rendering. The path is BASH_SOURCE-relative so it
 # resolves identically in source tree (scripts/apl-feed/.. -> scripts/lib)
-# and production install (/usr/local/share/airplanes/apl-feed/.. ->
-# /usr/local/share/airplanes/lib).
+# and production install (/opt/airplanes/current/share/airplanes/apl-feed/.. ->
+# /opt/airplanes/current/share/airplanes/lib).
 _status_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 _state_reader="$_status_dir/../lib/state-reader.sh"
 if [[ -r "$_state_reader" ]]; then
@@ -228,7 +228,7 @@ status_finish() {
 # bracket).
 _derive_backend_endpoints() {
     local state_file value
-    state_file="$(root_path /run/airplanes-feed/state)"
+    state_file="$(root_path /run/airplanes/feed/state)"
     if value="$(airplanes_read_state "$state_file" target_host)"; then
         STATUS_FEED_TARGET_PRESENT=1
         STATUS_FEED_TARGET_HOST="$value"
@@ -242,7 +242,7 @@ _derive_backend_endpoints() {
             STATUS_FEED_TARGET_INVALID='false'
         fi
     fi
-    state_file="$(root_path /run/airplanes-mlat/state)"
+    state_file="$(root_path /run/airplanes/mlat/state)"
     if value="$(airplanes_read_state "$state_file" mlat_server)"; then
         STATUS_MLAT_SERVER_PRESENT=1
         STATUS_MLAT_SERVER="$value"
@@ -352,7 +352,7 @@ _render_systemd_state() {
 
 # mlat_status_line — replaces the old mlat_disabled_by_config + the
 # matching service_status_line call in feed_status. Reads the daemon's
-# published decision from /run/airplanes-mlat/state when the unit is
+# published decision from /run/airplanes/mlat/state when the unit is
 # active or transitioning; falls through to systemd-derived rendering
 # otherwise. Special-cases failed-with-exit-64 (the strict misconfig
 # fail from airplanes-mlat.sh — today only fires for an invalid
@@ -368,7 +368,7 @@ mlat_status_line() {
     local active_state
     active_state="$(systemctl show --property=ActiveState --value "$unit" 2>/dev/null || true)"
     local state_file
-    state_file="$(root_path /run/airplanes-mlat/state)"
+    state_file="$(root_path /run/airplanes/mlat/state)"
 
     case "$active_state" in
         active|activating|reloading)
@@ -410,14 +410,14 @@ mlat_status_line() {
 }
 
 # _mlat_privacy_suffix — read the daemon's published privacy posture
-# from /run/airplanes-mlat/state and render the inline suffix appended
+# from /run/airplanes/mlat/state and render the inline suffix appended
 # to a "running" MLAT line. Empty string when the state file is
 # unreadable, the value is missing, or the value is unrecognised (an
 # unknown value is surfaced separately via _mlat_privacy_unknown_value
 # so forward-schema visibility isn't lost when the suffix is folded in).
 _mlat_privacy_suffix() {
     local state_file mlat_private
-    state_file="$(root_path /run/airplanes-mlat/state)"
+    state_file="$(root_path /run/airplanes/mlat/state)"
     if ! mlat_private="$(airplanes_read_state "$state_file" mlat_private 2>/dev/null)"; then
         return 0
     fi
@@ -432,7 +432,7 @@ _mlat_privacy_suffix() {
 # surface as a warn line. Empty when absent or recognised.
 _mlat_privacy_unknown_value() {
     local state_file mlat_private
-    state_file="$(root_path /run/airplanes-mlat/state)"
+    state_file="$(root_path /run/airplanes/mlat/state)"
     if ! mlat_private="$(airplanes_read_state "$state_file" mlat_private 2>/dev/null)"; then
         return 0
     fi
@@ -749,12 +749,12 @@ claim_registration_status_line() {
 # diagnostics_status_line — render the airplanes-diagnostics push state.
 # Reads the REPORT_STATUS toggle from feed.env, then consults the systemd
 # unit (if a bad config caused an exit-64 failure on the last run) and
-# the mtime of /var/lib/airplanes-diagnostics/diagnostics-last-success.
+# the mtime of /var/lib/airplanes/diagnostics/diagnostics-last-success.
 diagnostics_status_line() {
     local label="Diagnostics push"
     local unit="airplanes-diagnostics.service"
     local last_success_file
-    last_success_file="$(root_path /var/lib/airplanes-diagnostics/diagnostics-last-success)"
+    last_success_file="$(root_path /var/lib/airplanes/diagnostics/diagnostics-last-success)"
 
     local raw lower
     raw="$(feed_env_get REPORT_STATUS 2>/dev/null || true)"
@@ -835,14 +835,14 @@ diagnostics_status_line() {
 # config_sync_status_line — render the airplanes-config-sync remote-config
 # state. Reads the REMOTE_CONFIG_ENABLED opt-in from feed.env, then consults
 # the systemd unit (exit-64 hard-config failures) and the mtime of
-# /var/lib/airplanes-config-sync/config-sync-last-success. The sentinel is
+# /var/lib/airplanes/config-sync/config-sync-last-success. The sentinel is
 # touched on every successful sync (owned or unowned heartbeat), so it tracks
 # liveness regardless of whether the feeder is account-claimed.
 config_sync_status_line() {
     local label="Remote config"
     local unit="airplanes-config-sync.service"
     local last_success_file
-    last_success_file="$(root_path /var/lib/airplanes-config-sync/config-sync-last-success)"
+    last_success_file="$(root_path /var/lib/airplanes/config-sync/config-sync-last-success)"
 
     local raw lower
     raw="$(feed_env_get REMOTE_CONFIG_ENABLED 2>/dev/null || true)"

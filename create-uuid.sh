@@ -22,8 +22,14 @@ normalize_uuid() {
 }
 
 read_existing_uuid() {
-    local candidate raw
-    for candidate in "$FEEDER_ID_FILE" "$LEGACY_UUID_FILE" "$BOOT_UUID_FILE"; do
+    local candidate raw pre_fhs_uuid
+    # Pre-FHS installs kept the legacy UUID under the old $IPATH at
+    # /usr/local/share/airplanes/airplanes-uuid. LEGACY_UUID_FILE now points at
+    # the new $STATE location, so include the old path explicitly — otherwise an
+    # upgrade across the FHS layout move would lose feeder identity before it has
+    # been migrated into /etc/airplanes/feeder-id.
+    pre_fhs_uuid="$(airplanes_path /usr/local/share/airplanes/airplanes-uuid)"
+    for candidate in "$FEEDER_ID_FILE" "$LEGACY_UUID_FILE" "$pre_fhs_uuid" "$BOOT_UUID_FILE"; do
         [[ -f "$candidate" ]] || continue
         raw="$(normalize_uuid "$candidate")"
         if valid_uuid "$raw"; then

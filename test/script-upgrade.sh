@@ -14,12 +14,12 @@ dump_diag() {
         cp -a /etc/default/airplanes "$DIAG_DIR/etc-default-airplanes" 2>/dev/null || true
     fi
     cp /tmp/systemctl.log "$DIAG_DIR/systemctl.log" 2>/dev/null || true
-    cp /usr/local/share/airplanes/lastlog "$DIAG_DIR/lastlog" 2>/dev/null || true
-    cp -a /run/airplanes-feed "$DIAG_DIR/run-airplanes-feed" 2>/dev/null || true
-    cp -a /run/airplanes-mlat "$DIAG_DIR/run-airplanes-mlat" 2>/dev/null || true
-    git -C /usr/local/share/airplanes/git remote -v > "$DIAG_DIR/git-remote.txt" 2>&1 || true
-    git -C /usr/local/share/airplanes/git rev-parse HEAD > "$DIAG_DIR/git-head.txt" 2>&1 || true
-    ls -la /lib/systemd/system/ > "$DIAG_DIR/systemd-units.txt" 2>&1 || true
+    cp /var/lib/airplanes/runtime/lastlog "$DIAG_DIR/lastlog" 2>/dev/null || true
+    cp -a /run/airplanes/feed "$DIAG_DIR/run-airplanes-feed" 2>/dev/null || true
+    cp -a /run/airplanes/mlat "$DIAG_DIR/run-airplanes-mlat" 2>/dev/null || true
+    git -C /var/lib/airplanes/runtime/git remote -v > "$DIAG_DIR/git-remote.txt" 2>&1 || true
+    git -C /var/lib/airplanes/runtime/git rev-parse HEAD > "$DIAG_DIR/git-head.txt" 2>&1 || true
+    ls -la /etc/systemd/system/ > "$DIAG_DIR/systemd-units.txt" 2>&1 || true
 }
 
 on_exit() {
@@ -163,6 +163,9 @@ export AIRPLANES_PACKAGE_MANAGER=apt
 # the mount, then redirect the in-update.sh re-fetch at the same mount so
 # the pin holds end-to-end.
 echo "=== Phase 1: install source from $AIRPLANES_SOURCE_REPO ==="
+# Phase 1 installs origin/main (the PRE-FHS layout), so it must use main's own
+# old paths: main's setup.sh/update.sh hardcode /usr/local/share/airplanes/git.
+# The candidate (Phase 3) installs the new /opt layout and migrates this away.
 mkdir -p /usr/local/share/airplanes
 git clone --branch main "$AIRPLANES_SOURCE_REPO" /usr/local/share/airplanes/git
 
@@ -267,13 +270,13 @@ env -i bash -c '
 '
 
 grep -q 'feed\.airplanes\.live,30004,beast_reduce_plus_out,feed2\.airplanes\.live,64004' \
-    /usr/local/share/airplanes/airplanes-feed.sh \
+    /opt/airplanes/current/share/airplanes/airplanes-feed.sh \
     || { echo "FAIL: failover TARGET literal missing in installed airplanes-feed.sh default" >&2; exit 1; }
 
-grep -q 'feed\.airplanes\.live:31090' /usr/local/share/airplanes/airplanes-mlat.sh \
+grep -q 'feed\.airplanes\.live:31090' /opt/airplanes/current/share/airplanes/airplanes-mlat.sh \
     || { echo "FAIL: MLATSERVER literal missing in installed airplanes-mlat.sh default" >&2; exit 1; }
 
-grep -rq '/api/feeders/secret' /usr/local/share/airplanes/ \
+grep -rq '/api/feeders/secret' /opt/airplanes/current/share/airplanes/ \
     || { echo "FAIL: /api/feeders/secret reference missing" >&2; exit 1; }
 
 # 4C. Daemon state-file pattern
@@ -285,16 +288,16 @@ cp /etc/airplanes/feed.env /tmp/feed.env.snapshot
 # than passing inline env (which would be wiped by the unset).
 sed -i '/^MLAT_ENABLED=/d' /etc/airplanes/feed.env
 echo 'MLAT_ENABLED=false' >> /etc/airplanes/feed.env
-mkdir -p /run/airplanes-mlat
-timeout 3 bash /usr/local/share/airplanes/airplanes-mlat.sh || true
+mkdir -p /run/airplanes/mlat
+timeout 3 bash /opt/airplanes/current/share/airplanes/airplanes-mlat.sh || true
 
-[[ -f /run/airplanes-mlat/state ]] \
-    || { echo "FAIL: /run/airplanes-mlat/state not written" >&2; exit 1; }
-grep -q '^schema_version=1$'          /run/airplanes-mlat/state \
+[[ -f /run/airplanes/mlat/state ]] \
+    || { echo "FAIL: /run/airplanes/mlat/state not written" >&2; exit 1; }
+grep -q '^schema_version=1$'          /run/airplanes/mlat/state \
     || { echo "FAIL: airplanes-mlat state missing schema_version=1" >&2; exit 1; }
-grep -q '^state=disabled$'            /run/airplanes-mlat/state \
+grep -q '^state=disabled$'            /run/airplanes/mlat/state \
     || { echo "FAIL: airplanes-mlat state not 'disabled'" >&2; exit 1; }
-grep -q '^reason=mlat_enabled_false$' /run/airplanes-mlat/state \
+grep -q '^reason=mlat_enabled_false$' /run/airplanes/mlat/state \
     || { echo "FAIL: airplanes-mlat reason not 'mlat_enabled_false' (classifier order regression?)" >&2; exit 1; }
 
 # Restore for C.2
@@ -302,15 +305,15 @@ cp /tmp/feed.env.snapshot /etc/airplanes/feed.env
 
 # C.2 — airplanes-feed in enabled state. Stub the feed binary so exec succeeds
 # quickly and the script terminates (otherwise we'd block on a real binary).
-mkdir -p /run/airplanes-feed
+mkdir -p /run/airplanes/feed
 AIRPLANES_FEED_BIN=/bin/true \
-    timeout 3 bash /usr/local/share/airplanes/airplanes-feed.sh || true
+    timeout 3 bash /opt/airplanes/current/share/airplanes/airplanes-feed.sh || true
 
-[[ -f /run/airplanes-feed/state ]] \
-    || { echo "FAIL: /run/airplanes-feed/state not written" >&2; exit 1; }
-grep -q '^schema_version=1$' /run/airplanes-feed/state \
+[[ -f /run/airplanes/feed/state ]] \
+    || { echo "FAIL: /run/airplanes/feed/state not written" >&2; exit 1; }
+grep -q '^schema_version=1$' /run/airplanes/feed/state \
     || { echo "FAIL: airplanes-feed state missing schema_version=1" >&2; exit 1; }
-grep -q '^state=enabled$'    /run/airplanes-feed/state \
+grep -q '^state=enabled$'    /run/airplanes/feed/state \
     || { echo "FAIL: airplanes-feed state not 'enabled'" >&2; exit 1; }
 
 # ---- Phase 5: disabled-USER second subcase ----
@@ -330,7 +333,7 @@ echo 'USER=0' >> /etc/airplanes/feed.env
 # branch (which would self-replace away from candidate).
 AIRPLANES_FEED_REPO="$AIRPLANES_CANDIDATE_REPO" \
 AIRPLANES_FEED_BRANCH=dev \
-    bash /usr/local/share/airplanes/git/update.sh
+    bash /var/lib/airplanes/runtime/git/update.sh
 
 env -i bash -c '
     set -euo pipefail

@@ -6,9 +6,9 @@ After=network-online.target airplanes-first-run.service
 
 [Service]
 User=airplanes-feed
-RuntimeDirectory=airplanes-feed
+RuntimeDirectory=airplanes/feed
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/local/share/airplanes/airplanes-feed.sh
+ExecStart=/opt/airplanes/current/share/airplanes/airplanes-feed.sh
 Type=simple
 Restart=always
 RestartSec=30
