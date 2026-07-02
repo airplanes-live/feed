@@ -82,6 +82,12 @@ NET_OPTIONS="${NET_OPTIONS:-"--net-heartbeat 60 --net-ro-size 1280 --net-ro-inte
 
 if [[ "$IMAGE_INSTALL" == "1" ]]; then
     FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-"--net-ro-interval 0.2"}"
+    # --max-range 450 appears in BOTH this default and JSON_OPTIONS' default,
+    # so a new-image cmdline carries it twice (same value; readsb takes the
+    # last). The overlap is deliberate, not a dedupe target: legacy images
+    # ship their own JSON_OPTIONS via /boot/airplanes-env WITHOUT --max-range,
+    # so this copy is the only range cap there; standalone installs take the
+    # JSON_OPTIONS default instead (FEED_IMAGE_OPTIONS is empty for them).
     FEED_IMAGE_OPTIONS="${FEED_IMAGE_OPTIONS:-"--db-file=none --max-range 450"}"
 else
     FEED_NET_OPTIONS="${FEED_NET_OPTIONS:-$NET_OPTIONS}"
