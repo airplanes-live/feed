@@ -41,7 +41,7 @@ OK    Feeder ID            11111111-2222-3333-4444-555555555555
 OK    Claim secret         present
 OK    Website claim        registered, not yet claimed
 OK    Server reception     currently receiving (last data seen 1m ago)
-OK    MLAT service         running (name: public)
+OK    MLAT service         running (public name)
 OK    Diagnostics push     enabled (default), last push 4m ago
 
 Result: feeding looks healthy

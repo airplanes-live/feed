@@ -422,8 +422,8 @@ _mlat_privacy_suffix() {
         return 0
     fi
     case "$mlat_private" in
-        true)  printf ' (name: private)' ;;
-        false) printf ' (name: public)' ;;
+        true)  printf ' (private name)' ;;
+        false) printf ' (public name)' ;;
     esac
 }
 
