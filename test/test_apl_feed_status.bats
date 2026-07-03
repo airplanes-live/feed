@@ -462,24 +462,24 @@ STUB
 # mlat_status_line when decision=enabled and active_state=active, so the
 # data-flow output stays compact (one line per concern).
 
-@test "mlat_status_line: enabled + active + mlat_private=true → 'running (name: private)'" {
+@test "mlat_status_line: enabled + active + mlat_private=true → 'running (private name)'" {
     write_mlat_state enabled ok true
     stub_systemctl_active_state active
     status_init
     STATUS_OUTPUT_JSON=0
     run mlat_status_line
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'running (name: private)'* ]]
+    [[ "$output" == *'running (private name)'* ]]
 }
 
-@test "mlat_status_line: enabled + active + mlat_private=false → 'running (name: public)'" {
+@test "mlat_status_line: enabled + active + mlat_private=false → 'running (public name)'" {
     write_mlat_state enabled ok false
     stub_systemctl_active_state active
     status_init
     STATUS_OUTPUT_JSON=0
     run mlat_status_line
     [[ "$output" == *'OK'* ]]
-    [[ "$output" == *'running (name: public)'* ]]
+    [[ "$output" == *'running (public name)'* ]]
 }
 
 @test "mlat_status_line: enabled + active + mlat_private missing → bare 'running' (no suffix)" {
@@ -490,7 +490,8 @@ STUB
     run mlat_status_line
     [[ "$output" == *'OK'* ]]
     [[ "$output" == *'running'* ]]
-    [[ "$output" != *'(name:'* ]]
+    [[ "$output" != *'(public name)'* ]]
+    [[ "$output" != *'(private name)'* ]]
 }
 
 @test "mlat_status_line: disabled + mlat_private=true → 'disabled by config' (no privacy suffix when disabled)" {
@@ -503,7 +504,8 @@ STUB
     run mlat_status_line
     [[ "$output" == *'OK'* ]]
     [[ "$output" == *'disabled by config (MLAT_ENABLED=false)'* ]]
-    [[ "$output" != *'(name:'* ]]
+    [[ "$output" != *'(public name)'* ]]
+    [[ "$output" != *'(private name)'* ]]
 }
 
 @test "mlat_status_line: enabled + activating + mlat_private=true → 'starting up' (no suffix mid-transition)" {
@@ -516,7 +518,8 @@ STUB
     run mlat_status_line
     [[ "$output" == *'CHECK'* ]]
     [[ "$output" == *'starting up (activating)'* ]]
-    [[ "$output" != *'(name:'* ]]
+    [[ "$output" != *'(public name)'* ]]
+    [[ "$output" != *'(private name)'* ]]
 }
 
 @test "mlat_status_line: enabled + active + unknown mlat_private value → 'running' + warn 'unknown value' (forward-compat)" {
@@ -531,7 +534,8 @@ STUB
     run mlat_status_line
     [[ "$output" == *'OK'* ]]
     [[ "$output" == *'running'* ]]
-    [[ "$output" != *'running (name:'* ]]
+    [[ "$output" != *'(public name)'* ]]
+    [[ "$output" != *'(private name)'* ]]
     [[ "$output" == *'CHECK'* ]]
     [[ "$output" == *'MLAT name privacy'* ]]
     [[ "$output" == *'unknown value: futureschema'* ]]
