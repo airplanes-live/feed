@@ -23,4 +23,4 @@ mv -f /tmp/airplanes-uuid "$IPATH/airplanes-uuid"
 set +x
 
 echo -----
-echo "airplanes.live feed scripts have been uninstalled!"
+echo "Airplanes.live feed scripts have been uninstalled!"

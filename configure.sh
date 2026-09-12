@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #####################################################################################
-#                        airplanes.live SETUP SCRIPT                                #
+#                        Airplanes.live SETUP SCRIPT                                #
 #####################################################################################
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                                                   #
-# Copyright (c) 2023 AirDG                                                          #
+# Copyright (c) 2023-2026 AirDG LLC                                                 #
 #                                                                                   #
 # Permission is hereby granted, free of charge, to any person obtaining a copy      #
 # of this software and associated documentation files (the "Software"), to deal     #
@@ -43,13 +43,13 @@ function abort() {
 
 ## WHIPTAIL DIALOGS
 
-BACKTITLETEXT="airplanes.live Setup Script"
+BACKTITLETEXT="Airplanes.live Setup Script"
 
-whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "Thanks for choosing to share your data with airplanes.live!\n\nairplanes.live is a co-op of ADS-B/Mode S/MLAT feeders from around the world. This script will configure your current ADS-B receiver to feed data to airplanes.live.\n\nWould you like to continue setup?" 13 78 || abort
+whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "Thanks for choosing to share your data with Airplanes.live!\n\nAirplanes.live is a co-op of ADS-B/Mode S/MLAT feeders from around the world. This script will configure your current ADS-B receiver to feed data to Airplanes.live.\n\nWould you like to continue setup?" 13 78 || abort
 
-ADSBFIUSERNAME=$(whiptail --backtitle "$BACKTITLETEXT" --title "Feeder MLAT Name" --nocancel --inputbox "\nPlease enter a unique name to be shown on the MLAT map (the pin will be offset for privacy)\n\nExample: \"william34-london\", \"william34-jersey\", etc.\nDisable MLAT: enter a zero: 0" 12 78 3>&1 1>&2 2>&3) || abort
+APLUSERNAME=$(whiptail --backtitle "$BACKTITLETEXT" --title "Feeder MLAT Name" --nocancel --inputbox "\nPlease enter a unique name to be shown on the MLAT map (the pin will be offset for privacy)\n\nExample: \"william34-london\", \"william34-jersey\", etc.\nDisable MLAT: enter a zero: 0" 12 78 3>&1 1>&2 2>&3) || abort
 
-NOSPACENAME="$(echo -n -e "${ADSBFIUSERNAME}" | tr -c '[a-zA-Z0-9]_\- ' '_')"
+NOSPACENAME="$(echo -n -e "${APLUSERNAME}" | tr -c '[a-zA-Z0-9]_\- ' '_')"
 
 if [[ "$NOSPACENAME" != 0 ]]; then
     whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" \

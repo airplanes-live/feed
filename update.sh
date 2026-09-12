@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #####################################################################################
-#                        airplanes.live SETUP SCRIPT                                #
+#                        Airplanes.live SETUP SCRIPT                                #
 #####################################################################################
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                                                   #
-# Copyright (c) 2023 AirDG                                                          #
+# Copyright (c) 2023-2026 AirDG LLC                                                 #
 #                                                                                   #
 # Permission is hereby granted, free of charge, to any person obtaining a copy      #
 # of this software and associated documentation files (the "Software"), to deal     #
@@ -44,7 +44,7 @@ fi
 
 if [ -f /boot/airplanes-config.txt ]; then
     echo --------
-    echo "You are using the airplanes.live image, the feed setup script does not need to be installed."
+    echo "You are using the Airplanes.live image, the feed setup script does not need to be installed."
     echo --------
     exit 1
 fi
@@ -270,7 +270,7 @@ fi
 
 echo 70
 
-# SETUP FEEDER TO SEND DUMP1090 DATA TO airplanes.live
+# SETUP FEEDER TO SEND DUMP1090 DATA TO Airplanes.live
 
 READSB_REPO="https://github.com/airplanes-live/readsb.git"
 READSB_BRANCH="dev"
@@ -362,7 +362,7 @@ echo 96
 }
 
 # Remove old method of starting the feed scripts if present from rc.local
-# Kill the old airplanes.live scripts in case they are still running from a previous install including spawned programs
+# Kill the old Airplanes.live scripts in case they are still running from a previous install including spawned programs
 for name in airplanes-netcat_maint.sh airplanes-socat_maint.sh airplanes-mlat_maint.sh; do
     if grep -qs -e "$name" /etc/rc.local; then
         sed -i -e "/$name/d" /etc/rc.local || true
@@ -373,7 +373,7 @@ for name in airplanes-netcat_maint.sh airplanes-socat_maint.sh airplanes-mlat_ma
     fi
 done
 
-# in case the mlat-client service using /etc/default/mlat-client as config is using airplanes.live as a host, disable the service
+# in case the mlat-client service using /etc/default/mlat-client as config is using Airplanes.live as a host, disable the service
 if grep -qs 'SERVER_HOSTPORT.*feed.airplanes.live' /etc/default/mlat-client &>/dev/null; then
     systemctl disable --now mlat-client >> $LOGFILE 2>&1 || true
 fi
@@ -390,7 +390,7 @@ echo "---------------------"
 ## SETUP COMPLETE
 
 ENDTEXT="
-Thanks for choosing to share your data with airplanes.live!
+Thanks for choosing to share your data with Airplanes.live!
 
 Check https://airplanes.live/myfeed/ for feeder status!
 
@@ -398,7 +398,7 @@ Your feed should be active within 5 minutes, you can confirm by running the foll
 netstat -t -n | grep -E '30004|31090'
 
 Question? Issues? Go here:
-https://discord.gg/jfVRF2XRwF
+https://discord.gg/adsb
 
 Web interface to show the data transmitted? Run this command:
 sudo bash /usr/local/share/airplanes/git/install-or-update-interface.sh
@@ -433,10 +433,10 @@ https://github.com/wiedehopf/adsb-scripts/wiki/Automatic-installation-for-readsb
 fi
 
 if ! timeout 5 nc -z "$INPUT_IP" "$INPUT_PORT" && command -v nc &>/dev/null; then
-    #whiptail --title "airplanes.live Setup Script" --msgbox "$ENDTEXT2" 24 73
+    #whiptail --title "Airplanes.live Setup Script" --msgbox "$ENDTEXT2" 24 73
     echo -e "$ENDTEXT2"
 else
     # Display the thank you message box.
-    #whiptail --title "airplanes.live Setup Script" --msgbox "$ENDTEXT" 24 73
+    #whiptail --title "Airplanes.live Setup Script" --msgbox "$ENDTEXT" 24 73
     echo -e "$ENDTEXT"
 fi

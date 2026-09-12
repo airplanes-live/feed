@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #####################################################################################
-#                        airplanes.live SETUP SCRIPT                                #
+#                        Airplanes.live SETUP SCRIPT                                #
 #####################################################################################
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                                                   #
-# Copyright (c) 2023 AirDG                                                          #
+# Copyright (c) 2023-2026 AirDG LLC                                                 #
 #                                                                                   #
 # Permission is hereby granted, free of charge, to any person obtaining a copy      #
 # of this software and associated documentation files (the "Software"), to deal     #
@@ -43,7 +43,7 @@ fi
 
 if [ -f /boot/airplanes-config.txt ]; then
     echo --------
-    echo "You are using the airplanes.live image, the feed setup script does not need to be installed."
+    echo "You are using the Airplanes.live image, the feed setup script does not need to be installed."
     echo "You should already be feeding."
     echo "If the feed isn't working, check/correct the configuration using nano:"
     echo --------
@@ -57,7 +57,7 @@ fi
 
 bash "$IPATH/git/configure.sh"
 
-whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "We are now ready to begin setting up your receiver to feed airplanes.live.\n\nDo you wish to proceed?" 9 78 || exit 1
+whiptail --backtitle "$BACKTITLETEXT" --title "$BACKTITLETEXT" --yesno "We are now ready to begin setting up your receiver to feed Airplanes.live.\n\nDo you wish to proceed?" 9 78 || exit 1
 
 bash "$IPATH/git/update.sh"
 

@@ -1,6 +1,6 @@
-# airplanes.live feed client
+# Airplanes.live feed client
 
-- These scripts aid in setting up your current ADS-B receiver to feed [airplanes.live](https://airplanes.live/).
+- These scripts aid in setting up your current ADS-B receiver to feed [Airplanes.live](https://airplanes.live/).
 - This will not disrupt any existing feed clients already present.
 - When setting up new feeders, a decoder such as [readsb](https://github.com/wiedehopf/adsb-scripts/wiki/Automatic-installation-for-readsb) must be installed separately.
 
@@ -16,7 +16,7 @@ sudo bash /tmp/feed.sh
 ```
 
 ## 3: Use netstat to check that your feed is working
-The feed IP for airplanes.live is 78.46.234.18
+The feed IP for Airplanes.live is 78.46.234.18
 
 ```
 netstat -t -n | grep -E '30004|31090'
@@ -72,7 +72,7 @@ curl -L -o /tmp/feed.sh https://raw.githubusercontent.com/airplanes-live/feed/ma
 sudo bash /tmp/feed.sh
 ```
 
-### Disable / Enable airplanes.live MLAT-results in your main decoder interface (readsb / dump1090-fa)
+### Disable / Enable Airplanes.live MLAT-results in your main decoder interface (readsb / dump1090-fa)
 
 This is enabled by default. You probably don't need to change that.
 
