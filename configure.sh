@@ -62,46 +62,52 @@ else
         \n\n For some local functions the approximate location is still useful, it won't be sent to the server." 12 78 || abort
 fi
 
-#((-90 <= RECEIVERLATITUDE <= 90))
-LAT_OK=0
-until [ $LAT_OK -eq 1 ]; do
-    RECEIVERLATITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Latitude ${RECEIVERLATITUDE}" --nocancel --inputbox "\nEnter the latitude of your antenna in degrees with 5 decimal places.\n(Example: 32.36291)" 12 78 3>&1 1>&2 2>&3) || abort
-    LAT_OK=`awk -v LAT="$RECEIVERLATITUDE" 'BEGIN {printf (LAT<90 && LAT>-90 ? "1" : "0")}'`
-done
+# Option to use gpsd or manual coordinates
+USE_GPSD="false"
+if whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Location Source" --yesno "Would you like to use gpsd to automatically fetch your antenna location from a GPS receiver instead of entering coordinates manually?" 10 78; then
+    USE_GPSD="true"
+    RECEIVERLATITUDE="gpsd"
+    RECEIVERLONGITUDE="gpsd"
+    RECEIVERALTITUDE="gpsd"
+else
+    #((-90 <= RECEIVERLATITUDE <= 90))
+    LAT_OK=0
+    until [ $LAT_OK -eq 1 ]; do
+        RECEIVERLATITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Latitude ${RECEIVERLATITUDE}" --nocancel --inputbox "\nEnter the latitude of your antenna in degrees with 5 decimal places.\n(Example: 32.36291)" 12 78 3>&1 1>&2 2>&3) || abort
+        LAT_OK=`awk -v LAT="$RECEIVERLATITUDE" 'BEGIN {printf (LAT<90 && LAT>-90 ? "1" : "0")}'`
+    done
 
-
-#((-180<= RECEIVERLONGITUDE <= 180))
-LON_OK=0
-until [ $LON_OK -eq 1 ]; do
+    #((-180<= RECEIVERLONGITUDE <= 180))
+    LON_OK=0
+    until [ $LON_OK -eq 1 ]; do
     RECEIVERLONGITUDE=$(whiptail --backtitle "$BACKTITLETEXT" --title "Antenna Longitude ${RECEIVERLONGITUDE}" --nocancel --inputbox "\nEnter the longitude of your antenna in degrees with 5 decimal places.\n(Example: -64.71492)" 12 78 3>&1 1>&2 2>&3) || abort
-    LON_OK=`awk -v LON="$RECEIVERLONGITUDE" 'BEGIN {printf (LON<180 && LON>-180 ? "1" : "0")}'`
-done
+        LON_OK=`awk -v LON="$RECEIVERLONGITUDE" 'BEGIN {printf (LON<180 && LON>-180 ? "1" : "0")}'`
+    done
 
-ALT=0
-until [[ "$NOSPACENAME" == 0 ]] || [[ $ALT =~ ^(-?[0-9]*)ft$ ]] || [[ $ALT =~ ^(-?[0-9]*)m$ ]]; do
-    ALT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Altitude above sea level (at the antenna):" \
-        --nocancel --inputbox \
-"\nEnter the altitude of your antenna, above sea level, including the unit with no spaces:\n\n\
-in feet like this:                   255ft\n\
-or in meters like this:               78m\n" \
-        12 78 3>&1 1>&2 2>&3) || abort
-done
+    ALT=0
+    until [[ "$NOSPACENAME" == 0 ]] || [[ $ALT =~ ^(-?[0-9]*)ft$ ]] || [[ $ALT =~ ^(-?[0-9]*)m$ ]]; do
+        ALT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Altitude above sea level (at the antenna):" \
+            --nocancel --inputbox \
+    "\nEnter the altitude of your antenna, above sea level, including the unit with no spaces:\n\n\
+    in feet like this:                   255ft\n\
+    or in meters like this:               78m\n" \
+            12 78 3>&1 1>&2 2>&3) || abort
+    done
 
-if [[ $ALT =~ ^-(.*)ft$ ]]; then
-        NUM=${BASH_REMATCH[1]}
-        NEW_ALT=`echo "$NUM" "3.28" | awk '{printf "-%0.2f", $1 / $2 }'`
-        ALT=$NEW_ALT
+    if [[ $ALT =~ ^-(.*)ft$ ]]; then
+            NUM=${BASH_REMATCH[1]}
+            NEW_ALT=`echo "$NUM" "3.28" | awk '{printf "-%0.2f", $1 / $2 }'`
+            ALT=$NEW_ALT
+    fi
+    if [[ $ALT =~ ^-(.*)m$ ]]; then
+            NEW_ALT="-${BASH_REMATCH[1]}"
+            ALT=$NEW_ALT
+    fi
+
+    RECEIVERALTITUDE="$ALT"
 fi
-if [[ $ALT =~ ^-(.*)m$ ]]; then
-        NEW_ALT="-${BASH_REMATCH[1]}"
-        ALT=$NEW_ALT
-fi
-
-RECEIVERALTITUDE="$ALT"
 
 #RECEIVERPORT=$(whiptail --backtitle "$BACKTITLETEXT" --title "Receiver Feed Port" --nocancel --inputbox "\nChange only if you were assigned a custom feed port.\nFor most all users it is required this port remain set to port 30005." 10 78 "30005" 3>&1 1>&2 2>&3)
-
-
 
 INPUT="127.0.0.1:30005"
 INPUT_TYPE="dump1090"
@@ -115,13 +121,18 @@ tee /etc/default/airplanes >/dev/null <<EOF
 INPUT="$INPUT"
 REDUCE_INTERVAL="0.5"
 
-# feed name for checking MLAT sync 
+# feed name for checking MLAT sync
 # also displayed on the MLAT map
 USER="$NOSPACENAME"
 
+# Determine USE_GPS value based on whether gpsd was chosen
+if [[ "$USE_GPSD" == "true" ]]; then
+    USE_GPS="--use-gpsd"
+else
+    USE_GPS=""
+fi
 LATITUDE="$RECEIVERLATITUDE"
 LONGITUDE="$RECEIVERLONGITUDE"
-
 ALTITUDE="$RECEIVERALTITUDE"
 
 # this is the source for 978 data, use port 30978 from dump978 --raw-port
@@ -142,4 +153,3 @@ TARGET="--net-connector feed.airplanes.live,30004,beast_reduce_plus_out,feed.air
 NET_OPTIONS="--net-heartbeat 60 --net-ro-size 1280 --net-ro-interval 0.2 --net-ro-port 0 --net-sbs-port 0 --net-bi-port 30187 --net-bo-port 0 --net-ri-port 0 --write-json-every 1 --uuid-file /usr/local/share/airplanes/airplanes-uuid"
 JSON_OPTIONS="--max-range 450 --json-location-accuracy 2 --range-outline-hours 24"
 EOF
-

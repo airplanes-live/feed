@@ -37,6 +37,7 @@ exec /usr/local/share/airplanes/venv/bin/mlat-client \
     --lat "$LATITUDE" \
     --lon "$LONGITUDE" \
     --alt "$ALTITUDE" \
+    $USE_GPS \
     $PRIVACY \
     --uuid-file=$UUID_FILE \
     $RESULTS $RESULTS1 $RESULTS2 $RESULTS3 $RESULTS4
